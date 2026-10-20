@@ -37,6 +37,14 @@ export function recorderChoices(id) {
 }
 const takeFile = (stamp) => join(takeDir(stamp), 'take.json');
 const readTake = (stamp) => (STAMP.test(stamp || '') ? readJSON(takeFile(stamp), null) : null);
+// Paused, disconnected and unfinished recordings also block a restart until saved or dismissed.
+// A five-second chunk timeout cannot prove that the creator has finished recording.
+export function recorderBusy() {
+  if (finishing.size) return true;
+  const root = settings().recordingsDir;
+  if (!root || !existsSync(root)) return false;
+  return readdirSync(root).some((n) => { const t = readTake(n); return t?.recorder === 'browser' && !t.finished && !t.dismissed; });
+}
 const saveTake = (stamp, t) => writeJSON(takeFile(stamp), { ...t, updated: Date.now() });
 const partName = (stamp, track, t) => `${stamp}_${track}.${t.tracks[track].ext}.part`;
 

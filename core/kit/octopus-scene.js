@@ -25,8 +25,8 @@
   if (window.Octopus && window.Octopus.kit >= 3) return;
   const root = new URL(window.STUDIO_ROOT || './', location.href);
   const http = location.protocol.startsWith('http');
-  // Synchronous reads, so the first seek already has the moves. file:// needs Chromium's
-  // --allow-file-access-from-files (the house r.cjs renderers pass it).
+  // Synchronous reads, so the first seek already has the moves. The app's rendering
+  // sandbox serves only this project's permitted assets, with CORS for an opaque origin.
   function read(rel) {
     try {
       const x = new XMLHttpRequest();
@@ -222,7 +222,7 @@
     meta.name = 'studio-kit'; meta.content = '3';
     document.head.append(meta);
     addEventListener('message', async (e) => {
-      if (e.origin !== location.origin || !e.data || e.data.type !== 'studio:seek') return;
+      if (e.source !== parent || parent === window || !e.data || e.data.type !== 'studio:seek') return;
       const m = e.data;
       try { await window.ready; } catch {}
       late();
@@ -232,8 +232,8 @@
       try { window.seek(m.t, m.layer == null ? undefined : m.layer); } catch (err) { error = String(err && err.message || err); }
       S.measuring = false; S.noKeys = false;
       parent.postMessage({ type: 'studio:drawn', req: m.req, t: m.t, layer: m.layer, scene: S.scene, hits: S.hits, error, layers: S.layers, kit: S.kit,
-        size: [document.documentElement.scrollWidth, document.documentElement.scrollHeight] }, location.origin);
+        size: [document.documentElement.scrollWidth, document.documentElement.scrollHeight] }, e.origin === 'null' ? '*' : e.origin);
     });
-    addEventListener('load', () => parent.postMessage({ type: 'studio:kit', layers: S.layers, kit: S.kit }, location.origin));
+    addEventListener('load', () => parent.postMessage({ type: 'studio:kit', layers: S.layers, kit: S.kit }, '*'));
   }
 })();

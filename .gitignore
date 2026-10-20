@@ -38,6 +38,16 @@ __pycache__/
 /recordings/
 /projects/
 
+# Creator-owned studio configuration and skills belong outside the app checkout.
+# Generic starter templates under starter/ remain versioned.
+/preferences/
+/memory/
+/skills/custom/
+/skills/overrides/
+/.studio/
+/BRAND.md
+/STYLE.md
+
 # Agents' and editors' local folders, OS files, logs
 /.claude/
 /.codex/

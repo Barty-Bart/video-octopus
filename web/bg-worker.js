@@ -4,6 +4,7 @@ import { painterFor } from './look.js';
 
 onmessage = async ({ data: { token, job, k, n } }) => {
   try {
+    if (job.bg.kind === 'code') throw new Error('Generated backgrounds require the isolated iframe renderer.');
     const p = await painterFor(job.bg, { url: () => job.src });
     const c = new OffscreenCanvas(job.W, job.H), g = c.getContext('2d');
     for (let f = k; f < job.frames; f += n) {

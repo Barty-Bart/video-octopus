@@ -1,0 +1,33 @@
+name: Windows release verification
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/release-blocker-fixes]
+    paths: [.github/workflows/fresh-install.yml]
+permissions:
+  contents: read
+jobs:
+  fresh-install:
+    name: Windows install and export regressions
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Supply the README Node prerequisite
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify Node preflight and the Windows launcher
+        shell: bash
+        run: node --test --test-reporter=tap test/runtime-requirement.test.mjs
+      - name: Install browser test driver outside the application
+        shell: bash
+        run: npm install --prefix "$RUNNER_TEMP/octopus-browser" --no-audit --no-fund playwright@1.58.2
+      - name: Follow first launch and export the original failing fixture
+        shell: bash
+        run: node test/fresh-install.mjs
+      - name: Exercise Windows plain, sequence, shot and layer exports
+        shell: bash
+        run: node test/windows-verification.mjs

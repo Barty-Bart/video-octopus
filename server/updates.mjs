@@ -6,14 +6,38 @@
 import { existsSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
-import { APP_DIR, LOCAL_DIR, readJSON, writeJSON, childPathEnv, tildePath, IS_WIN } from './util.mjs';
-import { section } from './settings.mjs';
+import { APP_DIR, LOCAL_DIR, readJSON, writeJSON, childPathEnv, tildePath, IS_WIN, settings } from './util.mjs';
+import { section, settingsChanged } from './settings.mjs';
 import { starterView, applyStarter } from './starter-sync.mjs';
 import { loginState, setLogin } from './login-item.mjs';
+import { syncSkills, skillsView, compareSkill } from './managed-skills.mjs';
+import { readSkillPreferences } from './skill-preferences.mjs';
+import { activityView, beginMaintenance, endMaintenance, maintenanceActive } from './maintenance.mjs';
 
 export const RESTART_CODE = 75;
 const CACHE = join(LOCAL_DIR, 'updates.json'); // the last quiet check: { checkedAt, triedAt, offline, behind }
 const DAY = 24 * 3600e3;
+let skillError = null;
+let restartPending = false;
+
+// Run before accepting requests after every launch (including a crash/restart during an update).
+// Only hash-owned helper scripts auto-sync. Preferences, instructions, library and projects do not.
+export function activateStudioSkills() {
+  const studio = settings().studio;
+  if (!studio) return;
+  try {
+    applyStarter(studio, { prefixes: ['tools/'] });
+    const result = syncSkills({ studio });
+    skillError = result.ok ? null : result.error;
+    const cache = readJSON(CACHE, {});
+    if (cache.pending && !skillError) writeJSON(CACHE, { ...cache, pending: null, activatedAt: new Date().toISOString() });
+    return result;
+  } catch (e) { skillError = e.message; console.error('skill activation:', e.message); return { ok: false, error: e.message }; }
+}
+export function managedSkillsView() {
+  const view = skillsView({ studio: settings().studio });
+  return skillError ? { ...view, ok: false, error: skillError, pending: Math.max(1, view.pending) } : view;
+}
 
 // git in a folder, never asking for a password (no terminal here): a remote that wants one simply fails. The output is
 // trimmed only at the end (git status lines start with a space).
@@ -88,6 +112,15 @@ export async function pullUpdate(dir = APP_DIR) {
   if (c.reason) return { updated: false, ...pick(c) };
   if (c.offline) return { updated: false, ...pick(c), text: `Couldn't reach ${c.upstream.split('/')[0]} (${c.fetchError || 'offline?'}). Nothing changed; try again when you're online.` };
   if (!c.behind) return { updated: false, ...pick(c), text: 'Video Octopus is up to date.' };
+  // A release that needs a different runtime/install step must not surprise the running editor.
+  const packageFile = await git(dir, ['show', '@{u}:package.json']);
+  let incoming;
+  try { incoming = packageFile.ok && JSON.parse(packageFile.out); } catch {}
+  const current = readJSON(join(dir, 'package.json'), {});
+  if (!incoming || ['dependencies', 'optionalDependencies'].some((k) => JSON.stringify(incoming[k] || {}) !== JSON.stringify(current[k] || {})) ||
+      JSON.stringify(incoming.engines || {}) !== JSON.stringify(current.engines || {})) {
+    return { updated: false, ...pick(c), text: 'This release changes runtime requirements. Read its installation instructions and update manually; the running app and your studio were left unchanged.' };
+  }
   const p = await git(dir, ['pull', '--no-rebase', '--ff-only', '--quiet'], 180000);
   if (!p.ok) return { updated: false, ...pick(c), text: `git pull didn't update: ${lastLine(p.err)}`, how: `Run git pull --ff-only in ${shell} in ${dir} to see the whole message.` };
   const after = await repoInfo(dir);
@@ -146,11 +179,13 @@ export async function updateCount() {
 async function updatesView() {
   const app = await checkUpdates(APP_DIR, { fetch: false });
   const last = readJSON(CACHE, {});
+  const preferences = readSkillPreferences({ studio: settings().studio });
   return { app: pick(app), lastCheck: last.checkedAt || null, auto: section('updates').auto, restart: await restartView(app),
-    starter: starterView(), login: loginState(), bootId: BOOT.id };
+    starter: starterView(), skills: managedSkillsView(),
+    preferences: { status: preferences.status, path: preferences.path, diagnostics: preferences.diagnostics },
+    activity: activityView(), login: loginState(), bootId: BOOT.id, pending: last.pending || null, restartPending };
 }
 
-let pulling = false;
 export async function updatesRoute(req, res, url, { send, body, restart }) {
   const p = url.pathname;
   if (p !== '/api/app/updates' && !p.startsWith('/api/app/updates/')) return false;
@@ -165,19 +200,51 @@ export async function updatesRoute(req, res, url, { send, body, restart }) {
       return send(res, 200, { app: pick(c), lastCheck: c.offline ? readJSON(CACHE, {}).checkedAt || null : c.checkedAt }), true;
     }
     if (p === '/api/app/updates/pull') {
-      if (pulling) throw new Error('An update is running already.');
-      let r;
-      try { pulling = true; r = await pullUpdate(APP_DIR); } finally { pulling = false; }
-      // After an app update, the starter files it brought are shown as a dry run; the creator applies them.
-      return send(res, 200, { ...r, restart: await restartView(await repoInfo(APP_DIR)), starter: starterView() }), true;
+      beginMaintenance('Updating Video Octopus.');
+      let changed = false;
+      try {
+        const r = await pullUpdate(APP_DIR);
+        changed = r.updated;
+        if (changed) {
+          restartPending = true;
+          // Keep work paused until the new process starts. Never reconcile new skills with old, loaded server code.
+          writeJSON(CACHE, { ...readJSON(CACHE, {}), pending: { from: r.from, to: r.to, phase: 'restart', at: new Date().toISOString() } });
+          settingsChanged('skills');
+        }
+        send(res, 200, { ...r, restarting: changed && supervised(), bootId: BOOT.id,
+          restart: await restartView(await repoInfo(APP_DIR)), skills: managedSkillsView() });
+        if (changed && supervised()) setTimeout(() => restart(), 300);
+        return true;
+      } finally { if (!changed) endMaintenance(); }
     }
     if (p === '/api/app/updates/restart') {
       if (!supervised()) return send(res, 200, { restarting: false, how: (await restartView()).how }), true;
-      send(res, 200, { restarting: true });
+      if (!maintenanceActive()) beginMaintenance('Restarting Video Octopus.');
+      // An in-progress pull owns maintenance too; it schedules its own restart after git completes.
+      else if (!restartPending) throw new Error('An update is still in progress. Wait for it to finish.');
+      send(res, 200, { restarting: true, bootId: BOOT.id });
       setTimeout(() => restart(), 300); // the answer goes out first
       return true;
     }
-    if (p === '/api/app/updates/starter') return send(res, 200, b.apply ? applyStarter() : starterView()), true;
+    if (p === '/api/app/updates/skills') {
+      const studio = settings().studio;
+      if (b.action === 'compare') return send(res, 200, compareSkill({ studio, id: b.id, revision: b.revision })), true;
+      beginMaintenance('Updating studio skills.');
+      try {
+        if (b.action === 'refresh') applyStarter(studio, { prefixes: ['tools/'] });
+        const view = syncSkills({ studio, action: b });
+        skillError = null;
+        settingsChanged('skills'); // close idle processes; the next turn resumes with the chosen publication
+        return send(res, 200, view), true;
+      } catch (e) { skillError = e.message; throw e; }
+      finally { endMaintenance(); }
+    }
+    if (p === '/api/app/updates/starter') {
+      if (!b.apply) return send(res, 200, starterView()), true;
+      beginMaintenance('Updating other starter files.');
+      try { const result = applyStarter(); settingsChanged('skills'); return send(res, 200, result), true; }
+      finally { endMaintenance(); }
+    }
     if (p === '/api/app/updates/login') {
       if (typeof b.on !== 'boolean') throw new Error('Say on: true or on: false.');
       return send(res, 200, await setLogin(b.on)), true;

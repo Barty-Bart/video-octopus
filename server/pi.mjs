@@ -13,6 +13,8 @@ import { ChatSession, userEvent } from './claude.mjs';
 import { settings, state, setProjectState, shellPath, childPathEnv, expandHome, npmProgram, startError, IS_WIN, APP_DIR } from './util.mjs';
 import { childEnv, settingsBrief, section } from './settings.mjs';
 import { logUse } from './usage.mjs';
+import { activeSkillRoot } from './managed-skills.mjs';
+import { assertNotUpdating } from './maintenance.mjs';
 
 const EXTENSION = join(APP_DIR, 'core', 'pi', 'octopus-extension.js');
 const run = (bin, args, env, ms = 15000) => new Promise((done) => {
@@ -70,6 +72,8 @@ export class PiSession extends ChatSession {
   }
 
   async start() {
+    assertNotUpdating();
+    const skillRoot = activeSkillRoot({ studio: settings().studio });
     const info = await piInfo();
     if (!info.installed) throw new Error(info.error || `pi is not installed on this computer (${info.install}), or pick another agent in Settings → Agent & model.`);
     const s = settings(), c = section('claude', s), extra = await childEnv();
@@ -78,10 +82,10 @@ export class PiSession extends ChatSession {
     const cwd = this.cwd?.() || s.studio;
     const st = state().projects[this.id] || {};
     const saved = st.engine === 'pi' && st.sessionId && existsSync(st.sessionId) ? st.sessionId : null;
-    const skills = s.studio && existsSync(join(s.studio, '.claude', 'skills')) ? ['--skill', join(s.studio, '.claude', 'skills')] : [];
+    const skills = skillRoot ? ['--skill', skillRoot] : [];
     const model = endpoint ? ['--provider', 'studio', '--model', c.piModel] : c.piModel ? ['--model', c.piModel] : [];
     const args = ['--mode', 'rpc', '-e', EXTENSION, ...skills, ...model,
-      '--append-system-prompt', [this.context(), settingsBrief(extra)].filter(Boolean).join('\n'),
+      '--append-system-prompt', [this.currentContext(), settingsBrief(extra)].filter(Boolean).join('\n'),
       ...(saved ? ['--session', saved] : [])];
     this.resumed = Boolean(saved);
     const env = await childPathEnv({
@@ -218,7 +222,10 @@ export class PiSession extends ChatSession {
   }
 
   async send(text, { echo = true, brief = null } = {}) {
+    assertNotUpdating();
+    activeSkillRoot({ studio: settings().studio });
     this.lastSend = text;
+    this.setBusy(true);
     if (!this.proc) {
       try { await this.start(); } catch (e) { this.emit({ t: 'error', text: e.message }); this.kill(); return; }
     }

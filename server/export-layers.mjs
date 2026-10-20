@@ -17,7 +17,7 @@
 import { spawn, execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative, basename, extname } from 'node:path';
-import { studioTool, writeJSON, readJSON, settings, h264 } from './util.mjs';
+import { studioTool, writeJSON, readJSON, settings, h264, videoDecodeArgs } from './util.mjs';
 import { roles as projectRoles, probe, lockedCut, appendWorklog, projectMeta } from './studio.mjs';
 import { exportInfo } from './export.mjs';
 import { backgroundPlan, logTrialUse } from './backgrounds.mjs';
@@ -33,6 +33,7 @@ import { keptShots, planTakePart, sceneKey } from '../web/exportshots.js';
 import { startShift } from './export-shots.mjs';
 
 const jobs = new Map(); // project id -> running layers / timeline job
+export const layersBusy = () => jobs.size > 0;
 const HEAD = ['-y', '-v', 'error', '-nostats', '-progress', 'pipe:1'];
 const COLOR = ['-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-color_range', 'tv'];
 const ENC = {
@@ -148,7 +149,7 @@ export function planParts(id, dir, body) {
   const useCut = body.useCut !== false;
   const cut = info.cut ? lockedCut(dir) : null;
   const cutSegs = cut ? snapSegments(cut.segments, info.duration) : null;
-  const seq = body.blocks === false ? null : sequenceForExport(dir, { useCut });
+  const seq = body.blocks === false ? null : sequenceForExport(dir, { useCut, readOnly: body.timelineOnly === true });
   const take = { screen: info.sources.screen && `source/${info.sources.screen}`, cam: info.sources.cam && `source/${info.sources.cam}`,
     audio: info.sources.audio && `source/${info.sources.audio}` }; // audio: a mic-only take (no cards, just its sound)
   const takeSounds = () => {
@@ -186,7 +187,9 @@ export function planParts(id, dir, body) {
   if (!parts.length) throw new Error('Nothing to export yet: add a recording first.');
   let at = 0;
   parts.forEach((p, k) => { p.tag = `p${two(k)}`; p.frames = Math.round(p.total * FPS); p.start = at; at += p.frames; });
-  const shots = shotParts(dir, { parts, layout, info, cutSegs: useCut ? cutSegs : null, pngs: body.pngs });
+  // Text exports use only the final timeline; visual shot planning can settle and
+  // write project state, so leave it to the existing video/layer export path.
+  const shots = body.timelineOnly === true ? {} : shotParts(dir, { parts, layout, info, cutSegs: useCut ? cutSegs : null, pngs: body.pngs });
   return { layout, info, parts, frames: at, cutSegs, cut, useCut, seq, take, ...shots };
 }
 
@@ -309,7 +312,7 @@ function cardArgs(job, part, i, out, enc) {
   const png = (key) => `${job.rel}/${part.tag}_${key}.png`;
   const still = (key) => input(['-loop', '1', '-framerate', String(FPS), '-t', secs(part.frames), '-i', png(key)]);
   const sk = seekOf(job, part);
-  const vIn = input([...sk.args, '-hwaccel', 'videotoolbox', '-i', fileOfLayer(part, ly)]);
+  const vIn = input([...sk.args, ...videoDecodeArgs(), '-i', fileOfLayer(part, ly)]);
   const kIn = still(`mask${i}`);
   const uIn = part.has.has(`under${i}`) ? still(`under${i}`) : null;
   const oIn = part.has.has(`over${i}`) ? still(`over${i}`) : null;
@@ -332,7 +335,7 @@ function matteArgs(job, part, i, masks, out) {
   let n = 0;
   const input = (l) => { args.push(...l); return n++; };
   const sk = seekOf(job, part);
-  const vIn = input([...sk.args, '-hwaccel', 'videotoolbox', '-i', part.src.cam]);
+  const vIn = input([...sk.args, ...videoDecodeArgs(), '-i', part.src.cam]);
   // (-t only when the stretch ends over a second before the sequence does: image2 with -t drops its very last image)
   const j0 = sk.X ? Math.floor((sk.X * masks.rate.num) / masks.rate.den + 1e-9) : 0; // images skipped (one tick each)
   const seqEnd = (masks.count * masks.rate.den) / masks.rate.num, until = part.segs?.length ? part.segs[part.segs.length - 1][1] : Infinity;
@@ -505,10 +508,10 @@ async function scenePass(job, plan, scene, sceneT, { render, separate, onProgres
   const nw = Math.max(1, Math.min(render ? 4 : 2, Math.ceil(N / 300)));
   const workers = [];
   job.closers.add(() => workers.forEach((w) => w.close()));
-  const first = await openScene({ file: join(job.dir, scene.file), W, H });
+  const first = await openScene({ file: join(job.dir, scene.file), W, H, root: job.dir });
   workers.push(first);
   const layers = first.info.layers?.length ? first.info.layers : scene.layers;
-  for (let i = 1; i < nw; i++) workers.push(await openScene({ file: join(job.dir, scene.file), W, H }));
+  for (let i = 1; i < nw; i++) workers.push(await openScene({ file: join(job.dir, scene.file), W, H, root: job.dir }));
   if (job.cancelled) throw new Error('stopped');
   // Work goes to whichever browser is free.
   const runAll = async (tasks, fn) => {

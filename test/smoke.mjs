@@ -17,7 +17,7 @@ import { createServer as httpServer } from 'node:http';
 const APP = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = Number(process.env.SMOKE_PORT || 4899);
 const BASE = `http://127.0.0.1:${PORT}`;
-const ROOT = mkdtempSync(join(tmpdir(), 'studio-smoke-'));
+const ROOT = mkdtempSync(join(realpathSync(tmpdir()), 'studio-smoke-'));
 // A first run: no studio yet. "Create my studio" makes one from starter/ (recordings go in <studio>/recordings).
 const STUDIO = join(ROOT, 'Video Octopus'), REC = join(STUDIO, 'recordings'), LOCAL = join(ROOT, 'local');
 mkdirSync(LOCAL, { recursive: true });
@@ -32,11 +32,16 @@ writeFileSync(join(LOCAL, 'settings.json'), JSON.stringify({ setup: { done: true
 const results = [];
 // SMOKE_ONLY=<regex>: run only the checks whose name matches (and the ones they need, e.g. "server starts|zooms").
 const ONLY = process.env.SMOKE_ONLY ? new RegExp(process.env.SMOKE_ONLY, 'i') : null;
+// Skip unavailable dependencies explicitly without suppressing grouped fixture setup.
+const SKIP = process.env.SMOKE_SKIP ? new RegExp(process.env.SMOKE_SKIP, 'i') : null;
 const check = async (name, fn) => {
   if (ONLY && !ONLY.test(name)) return;
+  if (SKIP?.test(name)) { results.push({ name, skipped: true, note: 'Excluded by SMOKE_SKIP', ms: 0 }); return; }
+  if (process.env.SMOKE_PROGRESS) console.log(`RUN  ${name}`);
   const t = Date.now();
-  try { const note = await fn(); results.push({ name, ok: true, note: note || '', ms: Date.now() - t }); }
+  try { const note = await fn(); results.push({ name, ok: !/^skipped\b/i.test(note || ''), skipped: /^skipped\b/i.test(note || ''), note: note || '', ms: Date.now() - t }); }
   catch (e) { results.push({ name, ok: false, note: e.message, ms: Date.now() - t }); }
+  if (process.env.SMOKE_PROGRESS) console.log(JSON.stringify(results.at(-1)));
 };
 const must = (cond, msg) => { if (!cond) throw new Error(msg); };
 // Words that must never ship in core/ or starter/: home-folder paths, plus any listed one per line in
@@ -195,10 +200,10 @@ try {
     return `${readdirSync(join(STUDIO, '.claude', 'skills')).join(', ')} · tools: ${readdirSync(join(STUDIO, 'tools')).join(', ')} · Setup: ${setup.checks.map((x) => x.title).join(' / ')}`;
   });
 
-  await check('object separation is a core skill: in a fresh studio, generic (nothing private, no one creator\'s look), starter version 5', async () => {
+  await check('object separation is a core skill: in a fresh studio, generic (nothing private, no one creator\'s look), starter version 6', async () => {
     const dir = join(STUDIO, '.claude', 'skills', 'object-separation');
-    must(readFileSync(join(APP, 'starter', 'VERSION'), 'utf8').trim() === '5', 'starter/VERSION is not 5');
-    must(JSON.parse(readFileSync(join(STUDIO, '.studio', 'starter.json'), 'utf8')).version === '5', 'the fresh studio is not on starter version 5');
+    must(readFileSync(join(APP, 'starter', 'VERSION'), 'utf8').trim() === '6', 'starter/VERSION is not 6');
+    must(JSON.parse(readFileSync(join(STUDIO, '.studio', 'starter.json'), 'utf8')).version === '6', 'the fresh studio is not on starter version 6');
     const md = readFileSync(join(dir, 'SKILL.md'), 'utf8'), py = readFileSync(join(dir, 'scripts', 'objsep.py'), 'utf8');
     must(/^---\nname: object-separation\ndescription: .{80,}/.test(md), 'SKILL.md front matter');
     // What the skill must say: where its outputs go, how a scene uses the masks, the models, that it never downloads.
@@ -216,7 +221,7 @@ try {
     must(!bad.length, `private or old words in: ${bad.join(', ')}`);
     const help = spawnSync(PY, [join(dir, 'scripts', 'objsep.py'), '--help'], { encoding: 'utf8', env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' } });
     must(help.status === 0 && /separate/.test(help.stdout), `objsep.py --help: ${help.status} ${help.stderr.slice(-300)}`);
-    return `${readdirSync(dir).join(', ')} · scripts: ${readdirSync(join(dir, 'scripts')).join(', ')} · starter 5`;
+    return `${readdirSync(dir).join(', ')} · scripts: ${readdirSync(join(dir, 'scripts')).join(', ')} · starter 6`;
   });
 
   await check('Setup: ffmpeg and ffprobe found', async () => {
@@ -1256,7 +1261,6 @@ try {
   const cropsIn = (job) => [...job.ffmpeg[job.ffmpeg.indexOf('-filter_complex') + 1].matchAll(/crop=(\d+):(\d+):(\d+):(\d+),scale=(\d+):(\d+)/g)].map((m) => m.slice(1).map(Number));
   const wantCrop = (ly, d) => [Math.round(ly.crop.w * d[0]), Math.round(ly.crop.h * d[1]), 2 * Math.round((ly.crop.x * d[0]) / 2), 2 * Math.round((ly.crop.y * d[1]) / 2), ly.box.w, ly.box.h];
   await check('export: a cropped and zoomed screen in every layout (ffmpeg crop = the canvas; a real 2 s render)', async () => {
-    if (process.platform !== 'darwin') return 'skipped: the export decodes with VideoToolbox (Mac only)';
     mkdirSync(join(REC, bandTake), { recursive: true });
     execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=0x2050c0:s=1280x720:r=30,drawbox=x=0:y=0:w=1280:h=72:color=0xff0000:t=fill,drawbox=x=0:y=662:w=1280:h=58:color=0xffff00:t=fill',
       '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000', '-t', '2', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'pcm_s16le', join(REC, bandTake, `${bandTake}_screen.mov`)]);
@@ -1279,7 +1283,6 @@ try {
   });
 
   await check('export pixels: the cropped band is gone, a custom border colour is in the MP4', async () => {
-    if (process.platform !== 'darwin') return 'skipped: the export decodes with VideoToolbox (Mac only)';
     must(cropId, 'no crop project');
     // Control: no crop, the red band is the top of the picture.
     const a = await exportOnce(cropId, { aspect: '16:9', preset: 'screen' });
@@ -1304,7 +1307,6 @@ try {
   });
 
   await check('Layers export: the screen card is cut with the same crop', async () => {
-    if (process.platform !== 'darwin') return 'skipped: the export decodes with VideoToolbox (Mac only)';
     must(cropId, 'no crop project');
     const { compose, normalize } = await import(new URL('../web/layout.js', import.meta.url).href);
     const layout = normalize({ aspect: '16:9', preset: 'pip', pad: 4, screen: { crop: { t: 0.12, b: 0.1 }, zoom: 1.25, focus: { x: 0.5, y: 0.5 } } }, 'tutorial');
@@ -1379,7 +1381,7 @@ try {
     } else return 'skipped (no system voice on Linux)';
     const out = join(ROOT, 'speech_tr');
     // Both passes in one run (the rough cut's filler pass into its own folder), the model loaded once.
-    const log = execFileSync(PY, [join(STUDIO, '.claude', 'skills', 'transcribe', 'scripts', 'transcribe.py'), wav, '--model', 'tiny.en', '--out', out, '--fill-out', `${out}_fill`], { encoding: 'utf8', timeout: 600000 });
+    const log = execFileSync(PY, [join(STUDIO, '.claude', 'skills', 'transcribe', 'scripts', 'transcribe.py'), wav, '--engine', 'faster-whisper', '--model', 'tiny.en', '--out', out, '--fill-out', `${out}_fill`], { encoding: 'utf8', timeout: 600000 });
     words = JSON.parse(readFileSync(join(out, 'words.json'), 'utf8'));
     const text = words.map((w) => w[2]).join(' ').toLowerCase();
     must(words.length >= 6 && /studio|test|transcri/.test(text), `heard: ${text}`);
@@ -1427,6 +1429,19 @@ try {
     writeFileSync(join(CBD, 'work', 'tr', 'words.json'), JSON.stringify(CB_WORDS));
     writeFileSync(join(CBD, 'work', 'edl_fixed.json'), JSON.stringify({ segments_sec: [[0.2, 3.9]] }));
     writeFileSync(join(CBD, 'work', 'edl_manual.json'), pyEdl(join(CBD, 'source', 'cb_webcam.mp4')));
+    // The app now owns two deliberately separate listeners: its editor and the asset-only
+    // rendering sandbox. Identify the latter from the trusted page's actual frame policy,
+    // then require that exact baseline rather than allowing an arbitrary second listener.
+    const host = await fetch(BASE + '/');
+    await host.text();
+    const framePolicy = (host.headers.get('content-security-policy') || '').split(';').map((s) => s.trim()).find((s) => s.startsWith('frame-src '));
+    const frameSources = framePolicy?.split(/\s+/).slice(1) || [];
+    must(host.ok && frameSources.length === 2 && frameSources.includes("'self'"), `unexpected editor frame policy: ${framePolicy || 'none'}`);
+    const sandbox = new URL(frameSources.find((s) => s !== "'self'"));
+    must(sandbox.protocol === 'http:' && sandbox.hostname === '127.0.0.1' && sandbox.port && sandbox.port !== String(PORT)
+      && sandbox.pathname === '/' && !sandbox.search && !sandbox.hash && !sandbox.username && !sandbox.password, `unexpected rendering origin: ${sandbox.origin}`);
+    const baseline = listening(server.pid), expected = [`127.0.0.1:${PORT}`, sandbox.host].sort();
+    if (baseline) must(JSON.stringify([...baseline].sort()) === JSON.stringify(expected), `expected editor + isolated rendering listeners ${expected.join(', ')}; found ${baseline.join(', ')}`);
     return withoutPython(async () => {
       const py = (await api('/api/app/setup/check?id=python')).json;
       must(py?.state === 'fail' && (ON_WIN || ran().some((l) => l.startsWith('python3 '))), `Python should be unavailable now: ${py?.state} ${py?.detail} · ran: ${ran().join(' | ')}`);
@@ -1439,14 +1454,16 @@ try {
       for (const f of ['studio.js', 'studio.css']) must((await fetch(`${BASE}/cut-editor/${f}`)).ok, `no /cut-editor/${f}`);
       const d = await api(`/api/projects/${CB}/cut/data.json`);
       must(d.status === 200 && d.json?.pps === 200, `data: ${d.status} ${d.text.slice(0, 200)}`);
-      // Started: ffmpeg (the waveform) and ffprobe (the frame rate), nothing else; listening: Video Octopus's own port only.
+      // Only waveform/frame-rate tools start; opening the Cut Editor adds no listener to the
+      // already-identified editor + isolated rendering baseline.
       const progs = ran(), ports = listening(server.pid);
       if (!ON_WIN) must(progs.length && progs.every((l) => /^ff(mpeg|probe) /.test(l)) && progs.some((l) => l.startsWith('ffmpeg ')), `programs started: ${progs.join(' | ') || 'none'}`);
-      if (ports) must(ports.length === 1 && ports[0].endsWith(`:${PORT}`), `the server listens on ${ports.join(', ')}`);
+      if (baseline) must(ports && JSON.stringify([...ports].sort()) === JSON.stringify([...baseline].sort()), `Cut Editor changed the listeners: before ${baseline.join(', ')}; after ${ports?.join(', ') || 'unavailable'}`);
+      else must(!ports, 'listener inspection became available only after the Cut Editor opened');
       const { duration, peaks, rms } = d.json;
       must(Math.abs(duration - 4) < 0.15 && Math.abs(peaks.length - Math.floor(duration * 200)) <= 1 && rms.length === peaks.length && Math.max(...peaks) === 1,
         `the waveform: ${duration} s, ${peaks.length} peaks, ${rms.length} rms, top ${Math.max(...peaks)}`);
-      return `${r.url} · ${peaks.length} peaks (${duration.toFixed(2)} s)${ON_WIN ? '' : ` · started: ${progs.map((l) => l.split(' ')[0]).join(', ')}`}${ports ? ` · listening: ${ports.join(', ')}` : ''}`;
+      return `${r.url} · ${peaks.length} peaks (${duration.toFixed(2)} s)${ON_WIN ? '' : ` · started: ${progs.map((l) => l.split(' ')[0]).join(', ')}`}${ports ? ` · unchanged editor + isolated rendering listeners: ${ports.join(', ')}` : ' · listener inspection unavailable (no lsof)'}`;
     });
   });
 
@@ -1852,7 +1869,10 @@ try {
         saveSection('claude', { lean: false }); res.planFull = await startOnce('src-plan-full');
         saveSection('claude', { ccSource: 'ollama', ccModel: 'qwen3-coder:30b' }); res.ollamaForced = await startOnce('src-ollama-forced');
         saveSection('claude', { ccSource: 'plan', ccModel: '', lean: true });
-        console.log(JSON.stringify(res)); process.exit(0);`, { ...SECRETS, FAKE_CLAUDE_OUT: out });
+        // The five launch argument lists include full system context and can exceed a pipe buffer.
+        // Finish only after stdout has flushed; process.exit immediately after console.log truncates it.
+        await new Promise((done, fail) => process.stdout.write(JSON.stringify(res) + '\\n', (error) => error ? fail(error) : done()));
+        process.exit(0);`, { ...SECRETS, FAKE_CLAUDE_OUT: out });
       const leak = (o) => JSON.stringify(o).includes('sk-ant-');
       must(!r.ollama.error && !leak(r.ollama) && r.ollama.env.ANTHROPIC_BASE_URL === 'http://127.0.0.1:11434' && r.ollama.env.ANTHROPIC_AUTH_TOKEN === 'ollama', `ollama: ${JSON.stringify(r.ollama).slice(0, 400)}`);
       const a = r.ollama.argv, i = a.indexOf('--model');
@@ -2039,9 +2059,10 @@ try {
       const own = s.starterPlan(${JSON.stringify(bare)}, o), ownApply = s.applyStarter(${JSON.stringify(bare)}, o);
       console.log(JSON.stringify({ plan, done, again, own, ownApply }));`);
     const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-    must(eq(r.plan.update, ['memory/preferences.md', 'tools/cut.py']) && eq(r.plan.add, ['new.md', 'tools/join/check.py']) && eq(r.plan.keep, ['CLAUDE.md']) && eq(r.plan.deleted, ['skills/old.md']),
+    must(eq(r.plan.update, ['tools/cut.py']) && eq(r.plan.add, ['new.md', 'tools/join/check.py']) && eq(r.plan.keep, ['CLAUDE.md']) && eq(r.plan.deleted, ['skills/old.md']),
       `dry run: ${JSON.stringify(r.plan)}`);
-    must(read('memory/preferences.md') === 'p2' && read('tools/cut.py') === 't2', 'unchanged files were not updated');
+    must(read('memory/preferences.md') === 'p1', 'creator-owned preferences were overwritten');
+    must(read('tools/cut.py') === 't2', 'unchanged app-owned tool was not updated');
     must(read('CLAUDE.md') === 'mine' && readFileSync(join(studio, '.studio', 'updates', 'CLAUDE.md'), 'utf8') === 'c2', 'the changed file was not kept, or its new version is not in .studio/updates');
     must(read('new.md') === 'n2' && read('tools/join/check.py') === 'j2', 'new files were not added');
     must(!existsSync(join(studio, 'skills', 'old.md')), 'a deleted file came back');
@@ -2049,7 +2070,7 @@ try {
     const man = JSON.parse(read('.studio/starter.json'));
     must(man.version === '2' && man.files['tools/cut.py'] === sha('t2') && man.files['new.md'] === sha('n2') && man.files['CLAUDE.md'] === sha('c2') && man.files['skills/old.md'] === sha('o1'), `manifest: ${JSON.stringify(man)}`);
     must(r.again.pending === 0 && eq(r.again.waiting, ['CLAUDE.md']), `a second run still has work: ${r.again.text}`);
-    must(/2 starter files updated; 2 added; 1 kept as you changed it: new version in \.studio\/updates\/CLAUDE\.md/.test(r.done.text), r.done.text);
+    must(/1 starter file updated; 2 added; 1 kept as you changed it: new version in \.studio\/updates\/CLAUDE\.md/.test(r.done.text), r.done.text);
     must(r.own.reason === 'no-manifest' && r.ownApply.reason === 'no-manifest' && eq(readdirSync(bare), ['CLAUDE.md']), 'a studio without starter.json was touched');
     return r.done.text;
   });
@@ -2838,7 +2859,6 @@ try {
     return { ...exportPngs(main), ...extra(main), looks };
   };
   await check('shots export: an old project with block layouts exports the same looks after the move, shot by shot (real render)', async () => {
-    if (process.platform !== 'darwin') return 'skipped: the export decodes with VideoToolbox (Mac only)';
     const P = await spGet();
     const r = await api(`/api/projects/${shotsProject}/export`, { layout: P.layout, useCut: false, pngs: shotPngs(P) });
     must(r.status === 200 && r.json?.out, `export: ${r.text}`);
@@ -2869,7 +2889,6 @@ try {
   };
   let sx = null;
   await check('shots export: each shot in its look on the locked cut; a hidden camera, the cut frame, a crossfade, the voice (real render)', async () => {
-    if (process.platform !== 'darwin') return 'skipped: the export decodes with VideoToolbox (Mac only)';
     mkdirSync(join(SX, 'source'), { recursive: true });
     mkdirSync(join(SX, 'work'), { recursive: true });
     execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=0x2050c0:s=640x360:r=30,drawbox=x=0:y=0:w=640:h=36:color=0xff0000:t=fill',
@@ -2929,7 +2948,6 @@ try {
   });
 
   await check('shots export: Layers follow the shots (the camera empty while hidden, crops per shot), the timeline file is cut there', async () => {
-    if (process.platform !== 'darwin') return 'skipped: the export decodes with VideoToolbox (Mac only)';
     must(sx, 'no shots export');
     const P = (await api(`/api/projects/${sxId}`)).json;
     const pngs = shotPngs(P, (sc) => ({ bgOnly: png(sc.W, sc.H, () => [23, 23, 26, 255]) }));
@@ -2962,7 +2980,6 @@ try {
   });
 
   await check('shots export: no shots, or shots with the video’s look, export exactly as before (one ffmpeg)', async () => {
-    if (process.platform !== 'darwin') return 'skipped: the export decodes with VideoToolbox (Mac only)';
     must(sx, 'no shots export');
     // Shots that change nothing (Shot 2 with the video's own preset, Claude's proposal) are the plain export.
     writeFileSync(join(SX, 'work/shots.json'), JSON.stringify({ v: 1, shots: [{ id: 's1', start: 0 }, { id: 's2', start: 4, look: { preset: 'pip' }, in: { type: 'fade' } },
@@ -3017,7 +3034,6 @@ try {
   };
   let zx = null;
   await check('zooms export: kept camera and screen zooms frame by frame = zoomAt, proposals left out; slide and zoom transitions = xfade, frame by frame (real render)', async () => {
-    if (process.platform !== 'darwin') return 'skipped: the export decodes with VideoToolbox (Mac only)';
     zxSources();
     let P = (await api(`/api/projects/${zxId}`)).json;
     await until(async () => { P = (await api(`/api/projects/${zxId}`)).json; return P?.export?.dims?.cam && P.export.dims.screen; }, 30000, 'the fixture take');
@@ -3177,7 +3193,7 @@ try {
   // zoom inspector and the transition popover.
   if (process.env.PLAYWRIGHT_PATH) {
     await check('zooms and proposals through the page: preview = export (zooms, slide, zoom transition), proposals out until Keep it, Z + a box, the zoom inspector, the transition popover (headless Chrome)', async () => {
-      if (!zx) return 'skipped: no zooms export (Mac only)';
+      if (!zx) return 'skipped: no zooms export fixture';
       try {
         const out = execFileSync(process.execPath, [join(APP, 'test', 'zooms.e2e.mjs')], { env: { ...process.env, STUDIO_URL: BASE, ZX_OUT: zx.out }, encoding: 'utf8', timeout: 600000 });
         return out.trim().split('\n').pop();
@@ -3188,7 +3204,6 @@ try {
   // Export → Video with a built block (server/built.mjs): the intro Claude rendered plays for the intro's frames, the
   // canvas after it, the voice runs on in one piece, and the intro's sound cue plays only when its render is in.
   await check('export with a built intro: its render for the intro, the canvas after, one voice, its whoosh only with it (real render)', async () => {
-    if (process.platform !== 'darwin') return 'skipped: the export decodes with VideoToolbox (Mac only)';
     must(sx, 'no shots export');
     const name = sxId;
     // The take: 12 s, cut [0, 6] + [6.5, 12] (11.5 s). Blocks: Intro = take 0–4 (the cut's first 4 s), Main body after.
@@ -3671,9 +3686,10 @@ try {
 // ---- report ----
 const pad = (s, n) => String(s).padEnd(n);
 console.log(`\nStudio smoke test · ${process.platform} · Node ${process.version}\n`);
-for (const r of results) console.log(`${r.ok ? 'PASS' : 'FAIL'}  ${pad(r.name, 58)} ${pad(`${(r.ms / 1000).toFixed(1)} s`, 8)} ${r.note}`);
-const failed = results.filter((r) => !r.ok);
+for (const r of results) console.log(`${r.skipped ? 'SKIP' : r.ok ? 'PASS' : 'FAIL'}  ${pad(r.name, 58)} ${pad(`${(r.ms / 1000).toFixed(1)} s`, 8)} ${r.note}`);
+const failed = results.filter((r) => !r.ok && !r.skipped), skipped = results.filter((r) => r.skipped);
 if (failed.length) console.log(`\nServer log (last lines):\n${log.split('\n').slice(-40).join('\n')}`);
 try { rmSync(ROOT, { recursive: true, force: true }); } catch {}
-console.log(`\n${results.length - failed.length}/${results.length} passed`);
+if (process.env.SMOKE_REPORT) writeFileSync(process.env.SMOKE_REPORT, JSON.stringify({ platform: process.platform, node: process.version, results }, null, 2));
+console.log(`\n${results.length - failed.length - skipped.length} passed, ${failed.length} failed, ${skipped.length} skipped`);
 process.exit(failed.length ? 1 : 0);

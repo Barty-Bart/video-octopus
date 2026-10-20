@@ -159,6 +159,7 @@ export function sourceLine(s) {
 
 // ---- the download: one at a time per family, in the background; the page polls downloadState() ----
 const jobs = new Map(); // family -> job
+export const downloadsBusy = () => [...jobs.values()].some((j) => j.state === 'downloading');
 const jobView = (j) => (j ? { state: j.state, size: j.size, got: j.got, total: j.total, from: j.from, error: j.error || null, cache: hfHub() } : { state: 'idle', cache: hfHub() });
 export const downloadState = (family) => jobView(jobs.get(family));
 const mbOf = (n) => fmtBytes(Math.max(0, n));

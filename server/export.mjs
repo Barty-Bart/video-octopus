@@ -9,7 +9,7 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync, chmodSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
-import { studioTool, writeJSON, settings, h264 } from './util.mjs';
+import { studioTool, writeJSON, settings, h264, videoDecodeArgs } from './util.mjs';
 import { backgroundPlan, logTrialUse } from './backgrounds.mjs';
 import { roles, probe, lockedCut, appendWorklog, projectMeta } from './studio.mjs';
 import { compose, normalize, snapSegments, FPS } from '../web/layout.js';
@@ -22,6 +22,7 @@ import { burnCaptions } from './export-words.mjs';
 import { shotsPlan, exportShots } from './export-shots.mjs';
 
 const jobs = new Map(); // project id -> running job
+export const exportsBusy = () => jobs.size > 0;
 
 // Which files are the screen and the camera on the canvas. A lone file without _screen/_webcam is the camera.
 // A mic-only take (<stamp>_audio.wav) has neither: only its sound, under the layout's background.
@@ -133,14 +134,14 @@ export function startExport(id, dir, body, emit) {
   const bgPlan = backgroundPlan(id, dir, layout, { W, H, total, jobRel });
   const sel = segs ? segs.map(([a, b]) => `gte(t,${(a - half).toFixed(5)})*lt(t,${(b - half).toFixed(5)})`).join('+') : null;
 
-  // Inputs: the videos (hardware decode), then the still PNG layers, held for the length of the export.
+  // Inputs: the videos, then the still PNG layers, held for the length of the export.
   const args = ['-y', '-v', 'error', '-nostats', '-progress', 'pipe:1'];
   let n = 0;
   const input = (list) => { args.push(...list); return n++; };
   const fileOf = (ly) => (ly.role === 'layer' ? ly.file : info.sources[ly.role]);
   const dimsOf = (ly) => (ly.role === 'layer' ? info.dims.files[ly.file] : info.dims[ly.role]);
   const vid = {};
-  for (const ly of scene.layers) vid[fileOf(ly)] ??= input(['-hwaccel', 'videotoolbox', '-i', `source/${fileOf(ly)}`]);
+  for (const ly of scene.layers) vid[fileOf(ly)] ??= input([...videoDecodeArgs(), '-i', `source/${fileOf(ly)}`]);
   const still = (name) => input(['-loop', '1', '-framerate', String(FPS), '-t', total.toFixed(3), '-i', `${jobRel}/${name}.png`]);
   const bgIn = bgPlan ? input(bgPlan.input) : null;
   const baseIn = still('base');
@@ -359,7 +360,7 @@ function exportSequence(id, dir, body, emit, seq) {
     const fileOf = (ly) => (ly.role === 'layer' ? `source/${ly.file}` : part.src[ly.role]);
     const dimsOf = (ly) => (ly.role === 'layer' ? part.dims.files[ly.file] : part.dims[ly.role]);
     const vid = {};
-    for (const ly of scene.layers) vid[fileOf(ly)] ??= input(['-hwaccel', 'videotoolbox', '-i', fileOf(ly)]);
+    for (const ly of scene.layers) vid[fileOf(ly)] ??= input([...videoDecodeArgs(), '-i', fileOf(ly)]);
     const still = (key) => input(['-loop', '1', '-framerate', String(FPS), '-t', total.toFixed(3), '-i', `${jobRel}/${part.tag}_${key}.png`]);
     const bgIn = bgPlan ? input(bgPlan.input) : null;
     const baseIn = still('base');

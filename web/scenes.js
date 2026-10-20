@@ -10,6 +10,7 @@ import { makeTimeline } from './timeline.js';
 import { makeSceneTimeline } from './scenetimeline.js';
 import { makeCutTrim, cutMapper, sec } from './cuttrim.js';
 import { makeCompare, previousOf, versionName } from './compare.js';
+import { sandboxURL } from './sandbox-painter.js';
 
 const LS = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch {} return null; };
 const mmss = (s) => { const m = /^(\d+):(\d+(?:\.\d+)?)$/.exec(String(s).trim()); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
@@ -116,6 +117,23 @@ export function motionMarks(pts, dt) {
 }
 
 // The scene's HTML, one iframe per layer stacked bottom to top, drawn at a moment through the scene kit.
+const sceneWord = (v) => typeof v === 'string' ? v.slice(0, 300) : null;
+function sceneReply(data) {
+  const box = (o) => o && ['x', 'y', 'w', 'h'].every((k) => Number.isFinite(o[k]) && Math.abs(o[k]) <= 1e7)
+    ? Object.fromEntries(['x', 'y', 'w', 'h'].map((k) => [k, o[k]])) : null;
+  const hits = (Array.isArray(data.hits) ? data.hits : []).slice(0, 5000).flatMap((v) => {
+    const b = box(v), id = sceneWord(v?.id); if (!b || !id) return [];
+    const h = { ...b, id, label: sceneWord(v.label) || id, scene: sceneWord(v.scene), layer: sceneWord(v.layer), parent: sceneWord(v.parent), keyed: Boolean(v.keyed), text: Boolean(v.text) };
+    if (box(v.m)) h.m = box(v.m);
+    for (const k of ['in', 'out', 'o']) if (Number.isFinite(v[k])) h[k] = v[k];
+    if (v.ov) h.ov = Object.fromEntries(['dx', 'dy', 'scale', 'o'].filter((k) => Number.isFinite(v.ov[k])).map((k) => [k, v.ov[k]]));
+    return [h];
+  });
+  return { type: 'studio:drawn', req: data.req, t: data.t, layer: sceneWord(data.layer), scene: sceneWord(data.scene), hits,
+    error: sceneWord(data.error), kit: Number.isInteger(data.kit) ? data.kit : 0,
+    layers: (Array.isArray(data.layers) ? data.layers : [null]).slice(0, 100).map(sceneWord),
+    size: Array.isArray(data.size) && data.size.length === 2 && data.size.every((v) => Number.isFinite(v) && v >= 0 && v <= 1e7) ? data.size : [0, 0] };
+}
 class SceneFrames {
   constructor(host, { src, layers, frame }) {
     this.W = frame[0]; this.H = frame[1];
@@ -123,20 +141,26 @@ class SceneFrames {
     this.wrap = h(`<div class="sf-wrap" aria-hidden="true"></div>`);
     Object.assign(this.wrap.style, { width: `${this.W}px`, height: `${this.H}px` });
     host.append(this.wrap);
+    const source = sandboxURL(src, 'scene');
     this.frames = (layers?.length ? layers : [null]).map((layer) => {
-      const f = h(`<iframe class="sf" tabindex="-1" title="Scene"></iframe>`);
+      const f = h(`<iframe class="sf" sandbox="allow-scripts" referrerpolicy="no-referrer" tabindex="-1" title="Scene"></iframe>`);
       Object.assign(f.style, { width: `${this.W}px`, height: `${this.H}px` });
-      const ready = new Promise((res) => f.addEventListener('load', res, { once: true }));
-      f.src = src;
       this.wrap.append(f);
+      const ready = source.then((url) => new Promise((res, rej) => {
+        if (this.dead) return res();
+        const timer = setTimeout(() => rej(new Error('The scene did not load in 15 seconds.')), 15000);
+        f.addEventListener('load', () => { clearTimeout(timer); res(); }, { once: true });
+        f.src = url;
+      }));
+      ready.catch(() => {}); // draw() reports the failure when this layer is requested.
       return { layer, f, ready };
     });
     this.req = 0;
     this.waiting = new Map();
     this.onMsg = (e) => {
-      if (e.origin !== location.origin || e.data?.type !== 'studio:drawn') return;
+      if (e.origin !== 'null' || e.data?.type !== 'studio:drawn') return;
       const done = this.waiting.get(e.data.req);
-      if (done) { this.waiting.delete(e.data.req); done(e.data); }
+      if (done && e.source === done.source) { this.waiting.delete(e.data.req); clearTimeout(done.timer); done.resolve(sceneReply(e.data)); }
     };
     addEventListener('message', this.onMsg);
     this.ro = new ResizeObserver(() => this.fit());
@@ -147,15 +171,17 @@ class SceneFrames {
   // extra: { measure, noKeys, hidden } for the kit (kit 2): measure what's drawn, leave keys out, hide elements.
   async draw(t, overrides, extra = {}) {
     await Promise.all(this.frames.map((x) => x.ready));
+    if (this.dead) return [];
     const out = await Promise.all(this.frames.map(({ layer, f }) => new Promise((res) => {
-      const req = ++this.req;
-      this.waiting.set(req, res);
-      try { f.contentWindow.postMessage({ type: 'studio:seek', t, layer, overrides, req, ...extra }, location.origin); } catch { res(null); }
-      setTimeout(() => { if (this.waiting.delete(req)) res(null); }, 6000);
+      const req = crypto.randomUUID();
+      const timer = setTimeout(() => { if (this.waiting.delete(req)) res(null); }, 6000);
+      this.waiting.set(req, { source: f.contentWindow, resolve: res, timer });
+      try { f.contentWindow.postMessage({ ...extra, type: 'studio:seek', t, layer, overrides, req }, '*'); }
+      catch { this.waiting.delete(req); clearTimeout(timer); res(null); }
     })));
     return out.filter(Boolean);
   }
-  destroy() { removeEventListener('message', this.onMsg); this.ro.disconnect(); this.wrap.remove(); }
+  destroy() { this.dead = true; for (const w of this.waiting.values()) { clearTimeout(w.timer); w.resolve(null); } this.waiting.clear(); removeEventListener('message', this.onMsg); this.ro.disconnect(); this.wrap.remove(); }
 }
 
 // empty(why): the empty state when there are no scenes yet (web/rail.js: which step makes them, the way there).

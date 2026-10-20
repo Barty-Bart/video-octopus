@@ -188,6 +188,7 @@ export function findChrome() {
 }
 
 const bgJobs = new Map(); // token -> job
+export const backgroundsBusy = () => bgJobs.size > 0;
 
 // Renders `frames` frames of a drawn background into `out` (relative to the project folder).
 // Returns { done: Promise, cancel() }.
@@ -203,7 +204,7 @@ function renderFrames({ id, dir, bg, W, H, frames, out, onProgress }) {
     '--disable-background-networking', '--disable-background-timer-throttling', '--disable-renderer-backgrounding',
     `--user-data-dir=${profile}`, ...(chrome.shell ? [] : ['--headless=new']), url];
   const browser = spawn(chrome.bin, args, { stdio: ['ignore', 'ignore', 'pipe'] });
-  let log = '', ffErr = '';
+  let log = '', ffErr = '', browserExited = false, ffExited = false;
   browser.stderr.on('data', (d) => { log = (log + d).slice(-4000); });
   ff.stderr.on('data', (d) => { ffErr = (ffErr + d).slice(-2000); });
   ff.stdin.on('error', () => {});
@@ -218,13 +219,20 @@ function renderFrames({ id, dir, bg, W, H, frames, out, onProgress }) {
     clearInterval(watch);
     bgJobs.delete(token);
     try { browser.kill('SIGTERM'); } catch {}
-    setTimeout(() => rmSync(profile, { recursive: true, force: true }), 1500);
+    setTimeout(() => {
+      if (!browserExited) { try { browser.kill('SIGKILL'); } catch {} }
+      rmSync(profile, { recursive: true, force: true });
+    }, 1500).unref();
   };
   const fail = (why) => {
     if (state === 'failed' || state === 'done') return;
     state = 'failed';
     cleanup();
+    // A failed renderer may never send another PNG. Close its pipe as well as signalling
+    // FFmpeg, which otherwise can remain blocked reading stdin after SIGTERM.
+    ff.stdin.destroy();
     try { ff.kill('SIGTERM'); } catch {}
+    setTimeout(() => { if (!ffExited) { try { ff.kill('SIGKILL'); } catch {} } }, 1500).unref();
     settle.rej(new Error(why));
   };
   job.fail = fail;
@@ -238,7 +246,11 @@ function renderFrames({ id, dir, bg, W, H, frames, out, onProgress }) {
       job.buf.delete(job.next);
       job.next++;
       onProgress?.(job.next / frames);
-      if (!ff.stdin.write(b)) await new Promise((r) => ff.stdin.once('drain', r));
+      if (!ff.stdin.write(b)) await new Promise((resolve, reject) => {
+        const clear = () => { ff.stdin.off('drain', drained); ff.stdin.off('error', broken); ff.stdin.off('close', closed); };
+        const drained = () => { clear(); resolve(); }, broken = (e) => { clear(); reject(e); }, closed = () => broken(new Error('The background encoder closed.'));
+        ff.stdin.once('drain', drained); ff.stdin.once('error', broken); ff.stdin.once('close', closed);
+      });
     }
   };
   job.end = () => {
@@ -249,10 +261,13 @@ function renderFrames({ id, dir, bg, W, H, frames, out, onProgress }) {
     ff.stdin.end();
   };
   ff.on('exit', (code) => {
+    ffExited = true;
     if (state === 'ending' && code === 0) { state = 'done'; settle.res({ out, frames }); }
     else fail(`Encoding the background failed (ffmpeg ${code}): ${ffErr.trim().split('\n').pop() || ''}`);
   });
-  browser.on('exit', (code) => { setTimeout(() => state === 'running' && fail(`The headless browser quit (${code}). ${log.trim().split('\n').filter((l) => /CONSOLE|ERROR/.test(l)).slice(-2).join(' ')}`), 300); });
+  ff.on('error', (e) => fail(`Could not start the background encoder: ${e.message}`));
+  browser.on('error', (e) => fail(`Could not start the background browser: ${e.message}`));
+  browser.on('exit', (code) => { browserExited = true; setTimeout(() => state === 'running' && fail(`The headless browser quit (${code}). ${log.trim().split('\n').filter((l) => /CONSOLE|ERROR/.test(l)).slice(-2).join(' ')}`), 300); });
   // Nothing for 30 s (the page never loaded, or a worker hung): give up.
   const watch = setInterval(() => { if (Date.now() - job.last > 30000) fail(`The background renderer stopped responding (frame ${job.next} of ${frames}).`); }, 2000);
   bgJobs.set(token, job);

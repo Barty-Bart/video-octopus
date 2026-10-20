@@ -8,6 +8,7 @@ import { join, relative, resolve, isAbsolute, sep } from 'node:path';
 import { createHash } from 'node:crypto';
 import { APP_DIR, expandHome, readJSON, writeJSON, saveSettings, tildePath, IS_MAC, IS_WIN } from './util.mjs';
 import { settingsChanged } from './settings.mjs';
+import { syncSkills } from './managed-skills.mjs';
 
 export const STARTER_DIR = join(APP_DIR, 'starter');
 export const MANIFEST = join('.studio', 'starter.json');
@@ -70,12 +71,14 @@ export function createStudio(target, { use = true } = {}) {
   if (dir === APP_DIR || dir.startsWith(APP_DIR + sep)) throw new Error('Put the studio outside the app\'s own folder, so app updates never touch it.');
   if (existsSync(dir) && !statSync(dir).isDirectory()) throw new Error('There is a file with that name. Pick another folder.');
   if (!existsSync(STARTER_DIR)) throw new Error('The starter studio is missing from the app (its starter/ folder).');
+  const fresh = !existsSync(dir) || readdirSync(dir).length === 0;
   mkdirSync(dir, { recursive: true });
 
   const old = readJSON(join(dir, MANIFEST), null);
   const files = { ...(old?.files || {}) };
   const added = [], kept = [], same = [];
   for (const rel of starterFiles()) {
+    if (rel.startsWith('.claude/skills/')) continue; // managed by stable identity, never by the legacy file copier
     const from = join(STARTER_DIR, ...rel.split('/'));
     const to = join(dir, ...rel.split('/'));
     const hash = sha1(from);
@@ -90,11 +93,13 @@ export function createStudio(target, { use = true } = {}) {
     added.push(rel);
   }
   const now = new Date().toISOString();
+  // Read the original legacy manifest before changing it: missing history is not proof of an untouched skill.
+  const skills = syncSkills({ studio: dir, fresh });
   writeJSON(join(dir, MANIFEST), { version: starterVersion(), created: old?.created || now, ...(old ? { updated: now } : {}), files, kept });
   for (const sub of ['projects', 'recordings']) mkdirSync(join(dir, sub), { recursive: true });
   if (use) {
     saveSettings({ studio: dir, projectsDir: 'projects', recordingsDir: join(dir, 'recordings') });
     settingsChanged('folders');
   }
-  return { studio: dir, shown: tildePath(dir), added: added.length, kept, same: same.length, version: starterVersion() };
+  return { studio: dir, shown: tildePath(dir), added: added.length, kept, same: same.length, version: starterVersion(), skills };
 }

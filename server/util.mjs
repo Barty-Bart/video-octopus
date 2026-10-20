@@ -87,6 +87,10 @@ export function studioTool(name) {
 export const h264 = (rate = '8M') => IS_MAC
   ? ['-c:v', 'h264_videotoolbox', '-b:v', rate]
   : ['-c:v', 'libx264', '-preset', 'veryfast', '-b:v', rate];
+// Export filters consume software frames. VideoToolbox can supply them on Mac;
+// elsewhere use software decoding. Requesting a hardware type absent from the
+// FFmpeg build can fail decoder setup as ENOMEM while binding the filtergraph.
+export const videoDecodeArgs = (platform = process.platform) => platform === 'darwin' ? ['-hwaccel', 'videotoolbox'] : [];
 export const python = () => { const p = studioTool('python'); return p !== 'python' ? p : IS_WIN ? 'python' : 'python3'; };
 
 // The PATH a Terminal would have (login shell), so Claude and skills find the same tools.

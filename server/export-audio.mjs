@@ -17,6 +17,7 @@ import { mixCues, readCues } from './sound.mjs';
 import { FPS } from '../web/layout.js';
 
 const jobs = new Map(); // project id -> running audio export
+export const audioBusy = () => jobs.size > 0;
 const SR = 48000, SPF = SR / FPS; // samples per video frame
 const HEAD = ['-y', '-v', 'error', '-nostats', '-progress', 'pipe:1'];
 const two = (v) => String(v).padStart(2, '0');

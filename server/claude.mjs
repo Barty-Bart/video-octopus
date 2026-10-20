@@ -11,6 +11,9 @@ import { OUTSIDE_REASON } from './outside-hook.mjs';
 import { logUse, setPlanUsage } from './usage.mjs';
 import { childEnv, settingsBrief, section } from './settings.mjs';
 import { ccSource, claudeLaunchNow, sourceBrief, CC_SOURCES } from './claude-source.mjs';
+import { activeSkillRoot, skillSelectionBrief } from './managed-skills.mjs';
+import { skillPreferencesBrief } from './skill-preferences.mjs';
+import { assertNotUpdating } from './maintenance.mjs';
 
 // Tools that can't work inside an app chat (no terminal, no claude.ai, nothing after the turn ends).
 const NOT_IN_CHAT = ['ListAgents', 'SendMessage', 'PushNotification', 'CronCreate', 'CronDelete', 'CronList',
@@ -138,6 +141,8 @@ export class ChatSession {
   }
 
   async start() {
+    assertNotUpdating();
+    activeSkillRoot({ studio: settings().studio });
     const info = await claudeInfo();
     if (!info.installed) throw new Error(info.error || 'Claude Code is not installed on this computer.');
     const s = settings();
@@ -153,7 +158,7 @@ export class ChatSession {
     const mode = this.mode?.() || s.permissionMode || 'manual';
     const args = ['--print', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
       '--permission-prompt-tool', 'stdio', '--permission-mode', mode,
-      '--append-system-prompt', [this.context(), settingsBrief(extra), sourceBrief(launch.src)].filter(Boolean).join('\n'),
+      '--append-system-prompt', [this.currentContext(), settingsBrief(extra), sourceBrief(launch.src)].filter(Boolean).join('\n'),
       '--disallowedTools', NOT_IN_CHAT.join(',')];
     if (sessionId) args.push('--resume', sessionId);
     this.resumed = Boolean(sessionId);
@@ -386,11 +391,21 @@ export class ChatSession {
   // brief: { name, step? } when Video Octopus wrote the message (a step's brief, the change package…): the chat shows it as
   // one compact line ("▶ Clean up") with the text folded away, and names the session after it.
   async send(text, { echo = true, brief = null } = {}) {
+    assertNotUpdating();
+    activeSkillRoot({ studio: settings().studio });
     this.lastSend = text;
-    if (!this.proc) await this.start();
+    this.setBusy(true); // startup/auth discovery also counts as work; updates must not interrupt it
+    try { if (!this.proc) await this.start(); } catch (e) { this.setBusy(false); throw e; }
     if (echo) this.emit(userEvent(text, brief));
     this.setBusy(true);
     this.write({ type: 'user', message: { role: 'user', content: this.withContextUpdate(text) } });
+  }
+
+  // All harnesses use the same current technical availability and creator preferences.
+  // Read on demand: edits and deletions are picked up next turn, without a restart.
+  currentContext() {
+    const studio = settings().studio;
+    return [this.context(), skillSelectionBrief({ studio }), skillPreferencesBrief({ studio })].filter(Boolean).join('\n\n');
   }
 
   // Claude Code keeps a resumed chat's first system prompt (a new --append-system-prompt isn't applied on
@@ -400,12 +415,12 @@ export class ChatSession {
     // What Video Octopus did meanwhile that Claude should know (Undo put files back), once, ahead of the message.
     const notes = (this.studioNotes || []).splice(0);
     const text = notes.length ? `[Video Octopus: ${notes.join(' ')}]\n\n${raw}` : raw;
-    const ctx = this.context(), hash = createHash('sha1').update(ctx).digest('hex').slice(0, 16);
+    const ctx = this.currentContext(), hash = createHash('sha1').update(ctx).digest('hex').slice(0, 16);
     const seen = state().projects[this.id]?.contextHash;
     if (seen === hash) return text;
     setProjectState(this.id, { contextHash: hash });
     if (!seen && !this.resumed) return text; // a new chat has them as its system prompt
-    this.emit({ t: 'note', text: 'Video Octopus sent Claude the project\'s updated instructions with this message.' });
+    this.emit({ t: 'note', text: 'Video Octopus sent the assistant the project\'s updated instructions and preferences with this message.' });
     return `[Video Octopus: the app's instructions for this project changed since this chat began. They now read:]\n${ctx}\n[End of the updated instructions.]\n\n${text}`;
   }
   addStudioNote(text) { (this.studioNotes ||= []).push(text); }

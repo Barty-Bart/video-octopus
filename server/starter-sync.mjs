@@ -1,20 +1,31 @@
 // Starter updates (Settings → Updates → Starter files): when the app's starter/ has newer files than the studio's copy,
 // bring them over without touching what the creator changed. <studio>/.studio/starter.json ({version, created,
 // files: {path: sha1}, kept}, written by Create my studio) says which starter version each file came from:
-//   - unchanged by the creator (its sha1 is the manifest's): updated in place;
+//   - creator-owned preferences, memory and brand/style files: never considered for updates;
+//   - other files unchanged by the creator (its sha1 is the manifest's): updated in place;
 //   - changed by the creator: theirs stays, the new version goes next to it in .studio/updates/<path>;
 //   - new in the starter: added;
 //   - deleted by the creator: stays deleted.
 // A studio with no starter.json wasn't made from the starter (a studio set up by hand is one): it's left alone.
 // starterPlan() is the dry run the page shows first; applyStarter() does it and updates the manifest.
-import { existsSync, mkdirSync, copyFileSync, readdirSync, statSync, readFileSync, constants } from 'node:fs';
-import { join, dirname, relative, sep } from 'node:path';
+import { existsSync, mkdirSync, copyFileSync, readdirSync, statSync, lstatSync, readFileSync, constants } from 'node:fs';
+import { join, dirname, relative, resolve, sep } from 'node:path';
 import { STARTER_DIR, MANIFEST, starterFiles, sha1 } from './starter.mjs';
 import { settings, readJSON, writeJSON, inside, tildePath } from './util.mjs';
 
 export const UPDATES_DIR = join('.studio', 'updates');
 const versionOf = (dir) => { try { return readFileSync(join(dir, 'VERSION'), 'utf8').trim() || '1'; } catch { return '1'; } };
 const at = (root, rel) => join(root, ...rel.split('/'));
+function plainPath(root, rel) {
+  const base = resolve(root), target = resolve(base, rel);
+  if (!target.startsWith(base + sep)) throw new Error('Starter path leaves the studio.');
+  for (let p = target; ; p = dirname(p)) {
+    try { if (lstatSync(p).isSymbolicLink()) throw new Error(`Starter update kept a symbolic link unchanged: ${p}`); }
+    catch (e) { if (e.code !== 'ENOENT') throw e; }
+    if (p === base) break;
+  }
+  return target;
+}
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 // The files waiting in .studio/updates: new starter versions of files the creator changed, until they delete them.
@@ -26,7 +37,7 @@ export function waitingUpdates(studio) {
 }
 
 // The dry run: what an update would do, file by file. Nothing is written.
-export function starterPlan(studio = settings().studio, { starter = STARTER_DIR } = {}) {
+export function starterPlan(studio = settings().studio, { starter = STARTER_DIR, prefixes = null } = {}) {
   if (!studio || !existsSync(studio)) return { ok: false, reason: 'no-studio', text: 'There is no studio folder yet: Setup creates one.' };
   const man = readJSON(join(studio, MANIFEST), null);
   if (!man || typeof man.files !== 'object' || !man.files) return { ok: false, reason: 'no-manifest', studio: tildePath(studio),
@@ -36,10 +47,16 @@ export function starterPlan(studio = settings().studio, { starter = STARTER_DIR 
   const plan = { ok: true, studio: tildePath(studio), from: String(man.version || '1'), to: versionOf(starter),
     update: [], add: [], keep: [], deleted: [], adopt: [], same: 0, hashes: {} };
   for (const rel of starterFiles(starter)) {
+    if (rel.startsWith('.claude/skills/')) continue; // the transactional skill manager owns this entire root
+    // These are initial templates, not vendor-managed files. Even an unchanged or deleted
+    // preference belongs to the creator; never overwrite it or offer a replacement on update.
+    const ownedPath = rel.toLowerCase();
+    if (ownedPath.startsWith('preferences/') || ownedPath.startsWith('memory/') || ['brand.md', 'style.md'].includes(ownedPath)) continue;
+    if (prefixes && !prefixes.some((prefix) => rel.startsWith(prefix))) continue;
     const now = sha1(at(starter, rel)), was = man.files[rel];
     if (was === now) { plan.same++; continue; } // the starter hasn't changed this file since the studio got it
     plan.hashes[rel] = now;
-    const mine = at(studio, rel);
+    const mine = plainPath(studio, rel);
     if (!existsSync(mine)) { (was || kept.has(rel) ? plan.deleted : plan.add).push(rel); continue; }
     const h = sha1(mine);
     if (h === now) plan.adopt.push(rel);               // already the new version: only the manifest changes
@@ -59,14 +76,15 @@ export function starterPlan(studio = settings().studio, { starter = STARTER_DIR 
 const keptWhere = (list) => (list.length === 1 ? `.studio/updates/${list[0]}` : '.studio/updates/');
 
 // Do it: update, add and set aside as the plan says (checked again file by file), then write the manifest.
-export function applyStarter(studio = settings().studio, { starter = STARTER_DIR } = {}) {
-  const plan = starterPlan(studio, { starter });
+export function applyStarter(studio = settings().studio, { starter = STARTER_DIR, prefixes = null } = {}) {
+  const plan = starterPlan(studio, { starter, prefixes });
   if (!plan.ok) return plan;
   const manPath = join(studio, MANIFEST), man = readJSON(manPath, {});
   const files = { ...man.files };
   const done = { updated: [], added: [], kept: [] };
   const put = (rel, to, flags) => {
     if (!inside(studio, to)) throw new Error(`Not inside the studio: ${rel}`);
+    plainPath(studio, relative(studio, to));
     mkdirSync(dirname(to), { recursive: true });
     copyFileSync(at(starter, rel), to, flags);
   };

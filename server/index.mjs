@@ -2,7 +2,8 @@
 import { createServer } from 'node:http';
 import { createReadStream, existsSync, statSync, readdirSync, watch, renameSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, extname, relative, basename } from 'node:path';
+import { join, extname, relative, basename, dirname } from 'node:path';
+import { createSceneSandbox, sandboxOrigin } from './generated-sandbox.mjs';
 import { settings, saveSettings, inside, readJSON, writeJSON, expandHome, reveal, state, patchState, setProjectState, mtime, APP_DIR, LOCAL_DIR } from './util.mjs';
 import { claudeInfo, ChatSession, forReplay } from './claude.mjs';
 import { makeChat, staleChat, foreignSession, enginesView, modelSourceView, engineName, ENGINES } from './engines.mjs';
@@ -13,9 +14,9 @@ import { openCutEditor, cutPlan, cutEditorRoute, closeAll } from './cuteditor.mj
 import { onProjectFiles, syncCutItem, retimeOnSave, syncDocItems, markPackageBase, cutTake, saveCut } from './cutsync.mjs';
 import { cutReviewRoute, markEdits } from './cutreview.mjs';
 import { autoFrame } from './autoframe.mjs';
-import { exportInfo, startExport, cancelExport, stopAllExports, canvasSources } from './export.mjs';
-import { layersRoute, cancelLayers, stopAllLayers, layersRunning, listLayerExports } from './export-layers.mjs';
-import { audioRoute, cancelAudio, stopAllAudio, audioRunning } from './export-audio.mjs';
+import { exportInfo, startExport, cancelExport, stopAllExports, canvasSources, exportsBusy } from './export.mjs';
+import { layersRoute, cancelLayers, stopAllLayers, layersRunning, listLayerExports, layersBusy } from './export-layers.mjs';
+import { audioRoute, cancelAudio, stopAllAudio, audioRunning, audioBusy } from './export-audio.mjs';
 import { textRoute, listTextExports } from './export-text.mjs';
 import { normalize, defaultLayout, newLayers } from '../web/layout.js';
 import { thumbFor } from './thumbs.mjs';
@@ -24,21 +25,23 @@ import { layoutsRoute } from './saved-layouts.mjs';
 import { scenesView, scenesSummary, notesOp, setOverride, applyBrief, kitBrief, updateKit, KIT } from './scenes.mjs';
 import { buildSteps, renderKind } from './built.mjs';
 import { appRoute } from './setup.mjs';
-import { onboardingRoute, ffmpegReady } from './onboarding.mjs';
+import { onboardingRoute, ffmpegReady, setupBusy } from './onboarding.mjs';
 import { createStudio, defaultStudioPath } from './starter.mjs';
-import { assistantRoute, killAssistant } from './assistant.mjs';
+import { assistantRoute, killAssistant, assistantBusy } from './assistant.mjs';
 import { onSettingsChange, restartWhenIdle, section, transcribeHow } from './settings.mjs';
-import { listBackgrounds, useLibraryBackground, saveUpload, saveToLibrary, generateBrief, libraryFile, bgJobRoute } from './backgrounds.mjs';
+import { listBackgrounds, useLibraryBackground, saveUpload, saveToLibrary, generateBrief, libraryFile, bgJobRoute, backgroundsBusy } from './backgrounds.mjs';
 import { kitRoute, libraryRoute, kitContext, kitSummary, KIT_ACTIONS } from './kit.mjs';
 import { saveToLibrary as addToLibrary } from './library.mjs';
 import { blocksRoute, blocksSummary, blocksContext, prepareState, stepBrief, noteStep, receiveBlockTake } from './blocks.mjs';
 import { shotsRoute, readShotsAndZooms, shotsContext, onShotNotes } from './shots.mjs';
-import { recRoute, unfinishedTakes, recorderChoices } from './browser-recorder.mjs';
+import { recRoute, unfinishedTakes, recorderChoices, recorderBusy } from './browser-recorder.mjs';
 import { logUse, usageFromFiles, cutSaved, dashboard, backfill, catchUpUsage, planUsage } from './usage.mjs';
-import { schedulesRoute, startScheduler, stopScheduler, readSchedules } from './schedules.mjs';
+import { schedulesRoute, startScheduler, stopScheduler, readSchedules, schedulesBusy } from './schedules.mjs';
 import { inboxRoute, inboxItems } from './inbox.mjs';
-import { updatesRoute, startUpdateChecks, updateCount, RESTART_CODE } from './updates.mjs';
+import { updatesRoute, startUpdateChecks, updateCount, RESTART_CODE, activateStudioSkills, managedSkillsView } from './updates.mjs';
 import { trackTurns, unfinishedOf, clearUnfinished, undoTurn } from './turns.mjs';
+import { downloadsBusy } from './hfmodels.mjs';
+import { setActivityProbe, beginWrite, assertNotUpdating } from './maintenance.mjs';
 
 const PORT = Number(process.env.PORT || settings().port || 4800);
 const WEB = join(APP_DIR, 'web');
@@ -50,6 +53,13 @@ const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; ch
 
 // ---- per-project chat sessions and event streams ----
 const chats = new Map();
+setActivityProbe(() => [
+  ([...chats.values()].some((c) => c.busy) || assistantBusy()) && 'An agent is working or awaiting your reply.',
+  schedulesBusy() && 'A scheduled run is running or queued.',
+  (exportsBusy() || layersBusy() || audioBusy() || backgroundsBusy()) && 'An export or render is running.',
+  recorderBusy() && 'Save or dismiss unfinished recordings first.',
+  (setupBusy() || downloadsBusy()) && 'An installation or model download is running.',
+].filter(Boolean));
 const streams = new Map(); // project id -> Set(res)
 const watchers = new Map();
 // Which ways of trimming at a cut are on, for the usage log (Settings → Editing: A always, B and C optional).
@@ -63,6 +73,7 @@ const OPTIONAL_KIT_READS = new Set(['work/overrides.json', 'work/production.json
 // Settings, keys or the profile changed: each chat picks them up when it next starts (once it's idle).
 // Appearance is only how the app looks, and Updates only the app's own update check, so the chats carry on.
 onSettingsChange((what) => { if (what === 'appearance' || what === 'updates' || what === 'help') return; for (const c of chats.values()) restartWhenIdle(c); });
+onSettingsChange((what) => { if (what === 'folders') activateStudioSkills(); });
 
 // The project's chat, for a POST (a message, a step, the sessions list, an answer): made on first use, and after an
 // agent switch in Settings the old conversation goes to earlier sessions here. GET routes use peekChat instead.
@@ -261,8 +272,22 @@ async function body(req, limit = 1e6) {
   try { return JSON.parse(raw || '{}'); } catch { return {}; }
 }
 
-function serveFile(req, res, file) {
+async function serveFile(req, res, file, { trusted = false, root = file && dirname(file) } = {}) {
   if (!file || !existsSync(file) || !statSync(file).isFile()) return send(res, 404, { error: 'Not found' });
+  const ext = extname(file).toLowerCase();
+  if (trusted && ['.html', '.htm'].includes(ext)) res.setHeader('Content-Security-Policy', `frame-src 'self' ${await sandboxOrigin()}; object-src 'none'`);
+  // Downloading/viewing a project file must not turn it into editor-origin script. These checks
+  // also cover /media and library routes, including files supplied as HTML/SVG rather than scenes.
+  if (!trusted && ['.html', '.htm', '.svg', '.js', '.mjs'].includes(ext)) {
+    if (['script', 'worker', 'sharedworker', 'serviceworker'].includes(req.headers['sec-fetch-dest'])) return send(res, 403, { error: 'Generated code runs only in the rendering sandbox.' });
+    if (['.html', '.htm'].includes(ext) || (ext === '.svg' && req.headers['sec-fetch-dest'] !== 'image')) {
+      const scope = await createSceneSandbox({ root, file, search: new URL(req.url, `http://127.0.0.1:${PORT}`).search });
+      res.writeHead(302, { Location: scope.url, 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' }); return res.end();
+    }
+    if (ext === '.js' || ext === '.mjs') res.setHeader('Content-Disposition', 'attachment');
+    res.setHeader('Content-Security-Policy', "sandbox allow-scripts; default-src 'none'; style-src 'unsafe-inline'; img-src data:; form-action 'none'; base-uri 'none'");
+  }
+  res.setHeader('X-Content-Type-Options', 'nosniff');
   const size = statSync(file).size;
   const type = TYPES[extname(file).toLowerCase()] || 'application/octet-stream';
   const range = /bytes=(\d*)-(\d*)/.exec(req.headers.range || '');
@@ -282,7 +307,8 @@ function allowed(req) {
   const origin = req.headers.origin;
   const originOk = !origin || [`http://127.0.0.1:${PORT}`, `http://localhost:${PORT}`].includes(origin);
   const writeOk = req.method === 'GET' || req.headers['x-studio'] === '1';
-  return hostOk && originOk && writeOk;
+  const site = req.headers['sec-fetch-site'];
+  return hostOk && originOk && writeOk && (!site || site === 'same-origin' || site === 'none');
 }
 
 function projectView(id, dir) {
@@ -341,20 +367,42 @@ async function route(req, res) {
   const p = url.pathname;
 
   // The background kit (core/kit), for the canvas backgrounds and the export's headless renderer.
-  if (p.startsWith('/kit/')) return serveFile(req, res, inside(join(APP_DIR, 'core', 'kit'), '.' + p.slice(4)));
+  if (p.startsWith('/kit/')) return serveFile(req, res, inside(join(APP_DIR, 'core', 'kit'), '.' + p.slice(4)), { trusted: true });
   if (!p.startsWith('/api/')) {
     // A folder's page is its index.html (the Cut Editor's is /cut-editor/).
     const file = p === '/' ? join(WEB, 'index.html') : inside(WEB, '.' + (p.endsWith('/') ? `${p}index.html` : p));
-    return serveFile(req, res, file);
+    return serveFile(req, res, file, { trusted: true });
   }
   if (!allowed(req)) return send(res, 403, { error: 'Forbidden' });
+  if (p === '/api/sandbox' && req.method === 'POST') {
+    const b = await body(req);
+    try {
+      const src = new URL(b.src, `http://127.0.0.1:${PORT}`);
+      if (![`http://127.0.0.1:${PORT}`, `http://localhost:${PORT}`].includes(src.origin) || !['scene', 'background'].includes(b.kind)) throw new Error('Unsupported rendering source.');
+      const project = /^\/api\/projects\/([^/]+)\/files\/(.+)$/.exec(src.pathname);
+      const library = /^\/api\/library\/backgrounds\/([^/]+)$/.exec(src.pathname);
+      let root, file;
+      if (project) { root = projectDir(decodeURIComponent(project[1])); file = root && inside(root, project[2].split('/').map(decodeURIComponent).join('/')); }
+      else if (library) { file = libraryFile(decodeURIComponent(library[1])); root = file && dirname(file); }
+      if (!file || !root) throw new Error('No such rendering source.');
+      const scope = await createSceneSandbox({ root, file, kind: b.kind, search: src.search });
+      return send(res, 200, { url: scope.url });
+    } catch (e) { return send(res, 400, { error: e.message }); }
+  }
+  if (!['GET', 'HEAD'].includes(req.method) && !['/api/app/updates', '/api/app/updates/check', '/api/app/updates/restart'].includes(p)) {
+    try { assertNotUpdating(); } catch (e) { return send(res, 409, { error: e.message }); }
+  }
   // Settings, Setup and the Video Octopus assistant (server/setup.mjs, server/assistant.mjs).
   // The Dashboard: totals from the folders, features and activity from the local usage log (server/usage.mjs).
   if (p === '/api/app/dashboard/catch-up' && req.method === 'POST') return send(res, 200, catchUpUsage());
   if (p === '/api/app/dashboard') return send(res, 200, dashboard(['week', 'month'].includes(url.searchParams.get('range')) ? url.searchParams.get('range') : 'all'));
   // The numbers in Home's sidebar: scheduled runs that are on, pieces waiting in the Library inbox, and (update) new
   // commits for the app, the badge on Settings.
-  if (p === '/api/app/counts') { let inbox = 0; try { inbox = settings().studio ? inboxItems().length : 0; } catch {} return send(res, 200, { schedules: readSchedules().filter((x) => x.enabled).length, inbox, update: await updateCount() }); }
+  if (p === '/api/app/counts') {
+    let inbox = 0; try { inbox = settings().studio ? inboxItems().length : 0; } catch {}
+    const skillUpdates = settings().studio ? managedSkillsView().pending : 0;
+    return send(res, 200, { schedules: readSchedules().filter((x) => x.enabled).length, inbox, skillUpdates, update: await updateCount() + skillUpdates });
+  }
   // Settings → Updates: the app's update (git), Restart, starter files, Open Video Octopus when I log in (server/updates.mjs).
   if (await updatesRoute(req, res, url, { send, body, restart: () => shutdown(RESTART_CODE) })) return;
   if (await schedulesRoute(req, res, url, { send, body })) return;
@@ -445,7 +493,7 @@ async function route(req, res) {
     // The scene kit reads work/overrides.json and work/production.json when a scene loads; a project may have neither
     // yet, which is fine: answer "nothing" rather than a 404 in the console.
     if (file && OPTIONAL_KIT_READS.has(rel) && !existsSync(file)) return send(res, 200, null);
-    return serveFile(req, res, file);
+    return serveFile(req, res, file, { root: pdir });
   }
   // The Cut Editor's page (web/cut-editor/) reads the take, its words and the cut, and saves the cut (server/cuteditor.mjs).
   const ce = /^\/api\/projects\/([^/]+)\/cut\/(data\.json|version|video|notes|notes\/delete|save)$/.exec(p);
@@ -491,7 +539,7 @@ async function route(req, res) {
   }
   if (action === '/media') {
     const rel = url.searchParams.get('f') || '';
-    return serveFile(req, res, inside(dir, rel));
+    return serveFile(req, res, inside(dir, rel), { root: dir });
   }
   if (action === '/timeline') return send(res, 200, await timelineData(dir));
   // Home's Continue card: how long the video is (the locked cut, else the take) and how many scenes it has.
@@ -793,9 +841,14 @@ async function route(req, res) {
 if (!settings().studio && !section('setup').done) {
   try { const r = createStudio(defaultStudioPath()); console.log(`Made your studio: ${r.shown}`); } catch (e) { console.error('first launch, the studio:', e.message); }
 }
+activateStudioSkills(); // recover interrupted transactions and publish matching skills before agents can start
 
 const server = createServer((req, res) => {
-  route(req, res).catch((e) => { console.error(e); try { send(res, 500, { error: e.message }); } catch {} });
+  const pathname = req.url?.split('?')[0];
+  const write = pathname?.startsWith('/api/') && !pathname.startsWith('/api/app/updates') &&
+    pathname !== '/api/app/skills/install' && !['GET', 'HEAD'].includes(req.method);
+  const finish = write ? beginWrite() : () => {};
+  route(req, res).catch((e) => { console.error(e); try { send(res, 500, { error: e.message }); } catch {} }).finally(finish);
 });
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`Video Octopus is running: http://127.0.0.1:${PORT}`);

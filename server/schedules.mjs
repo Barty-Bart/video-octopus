@@ -14,6 +14,7 @@ import { EDIT_TOOLS, editPaths } from './claude.mjs';
 import { logUse } from './usage.mjs';
 import { listProjects, projectsRoot, projectDir, listSkills, listTakes, takeMain } from './studio.mjs';
 import { inboxDir } from './inbox.mjs';
+import { maintenanceActive } from './maintenance.mjs';
 
 const FILE = join(LOCAL_DIR, 'schedules.json');
 const RUNS = join(LOCAL_DIR, 'runs');
@@ -160,6 +161,7 @@ const inScopeText = (sch, projects, takes) => (projects == null ? null : !projec
 // ---- running ----
 const queue = [];
 let current = null; // { sch, chat, run, timer }
+export const schedulesBusy = () => Boolean(current || queue.length);
 // A file strictly inside a folder (the folder itself isn't a file to change).
 const isInside = (base, p) => { const q = p && inside(base, p); return Boolean(q && q !== resolve(base)); };
 // The folders a run may change: its projects (or the whole studio), each recording's tr/ folder (never the recording
@@ -243,7 +245,7 @@ export function runNow(id, why = 'manual') {
 }
 
 async function pump() {
-  if (current || !queue.length) return;
+  if (maintenanceActive() || current || !queue.length) return;
   const { id, why } = queue.shift();
   const sch = readSchedules().find((x) => x.id === id);
   if (!sch) return pump();
@@ -347,6 +349,8 @@ function plan() {
   }
 }
 function tick() {
+  if (maintenanceActive()) return; // preserve nextAt; the next tick catches up after maintenance
+  pump();
   const now = Date.now();
   plan();
   for (const sch of readSchedules()) {
