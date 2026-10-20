@@ -9,9 +9,11 @@ cd /d "%~dp0"
 
 where node >nul 2>nul
 if errorlevel 1 (
-  echo Video Octopus needs Node.js 20 or newer: https://nodejs.org
+  echo Video Octopus needs Node.js 22.2 or newer: https://nodejs.org
   exit /b 1
 )
+node server\runtime-check.cjs
+if errorlevel 1 exit /b 1
 
 if not defined PORT set PORT=4800
 if not "%STUDIO_NO_OPEN%"=="1" start "" /min cmd /c "ping -n 3 127.0.0.1 >nul & start "" http://127.0.0.1:%PORT%"

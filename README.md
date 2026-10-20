@@ -16,7 +16,7 @@ A local video editor with an AI assistant. Record or import footage, edit from t
 | Exports | MP4; WAV, M4A/AAC and MP3; transcript text/Markdown; SRT/VTT and burned captions; layer exports and timeline XML. Tested platform coverage and limitations are listed below. |
 | Project formats | YouTube tutorial, faceless explainer, Short and product explainer. |
 
-> Unreleased implementation checkpoint: the managed-skills/update behavior below is on `codex/managed-skill-updates`. Local macOS verification includes unit tests, real browser controls, media exports, local Git updates, supervised restarts and fake-CLI adapter integration. Generated scene/background isolation now passes preview, headless rendering and independent security checks. Native Windows installation and export verification also pass; real providers remain unverified. See [verification and remaining work](docs/managed-skills-verification.md).
+> **v0.1.0-beta.1 — source prerelease.** Managed skill updates, generated-visual isolation and Windows export repairs are included. Read the [release notes](docs/release-notes.md) and [verification limits](docs/managed-skills-verification.md) before relying on an untested workflow.
 
 ### Six bundled starter skills
 
@@ -33,14 +33,14 @@ First launch publishes these as managed defaults in your studio's `.claude/skill
 
 These are general editing skills distributed with the app. Personal creator styles, campaign notes and private project libraries are not part of this starter.
 
-Motion-graphics infrastructure is built in, but a specialized motion-design skill is **not** among the six bundled skills. Setup can optionally install selected skills from a GitHub repository. Installing a skill does not install every renderer, model or service that it might require. Review third-party code and its licence before use.
+Motion-graphics infrastructure is built in, but a specialized motion-design skill is **not** among the six bundled skills. Setup can optionally install selected skills from a GitHub repository. Installing a skill copies its folder, including any supporting code and example assets; it does not install every renderer, model or service that it might require. The recommended external pack is separate from the six bundled skills and includes authored examples. Review its content and terms before selecting Install.
 
 ## Start from source
 
 Have these ready:
 
-- Git and access to this repository while it remains private.
-- Node.js **22**, the version used for the fresh-runner tests. The launcher currently mentions 20+, but Node 20 compatibility has not been verified.
+- Git (and repository access for private copies).
+- Node.js **22.2 or newer**. Use a current Node 22 LTS or Node 24 release; verification used 22.23.3 and 24.21.0. The launchers check the minimum before opening the app.
 - Chrome or Edge for the browser UI and recording.
 - For AI work, a separately installed agent and a usable model/provider. You can enter the editor without one.
 
@@ -87,7 +87,7 @@ Each harness validates the same active studio publication before starting a turn
 
 ## Your studio and updates
 
-Keep the application checkout separate from your studio. **This ownership/update system is implemented on the unreleased managed-skills branch. Local browser, update, restart and fake-CLI integration tests pass; real providers and the complete Windows update/restart workflow remain unverified.**
+Keep the application checkout separate from your studio. **Local browser, update, restart and fake-CLI integration tests pass; real providers and the complete Windows update/restart workflow remain unverified.**
 
 ```text
 Application checkout/                 App-owned, updated together
@@ -187,7 +187,7 @@ Generated/imported scene HTML and custom background JavaScript run separately fr
 
 ## Tested coverage
 
-On 21 October 2026, all eight Node test files passed: **132 tests, zero failures or skips**, including fake-CLI integration across Claude, Codex and pi, turn-lifecycle regressions, eight text-export tests and seven actual software-decoding/export tests. Generated visuals passed **11 app-preview security checks, nine headless-rendering scenario groups and 12 independent security checks**. Separate browser tests passed 11 managed-skill update/restart scenarios and 12 chat checks. The post-isolation full smoke run plus targeted fixture corrections passed 119 distinct checks, with zero remaining failures and one platform-specific Mac Vision skip. Actual offline transcription used cached tiny.en weights and synthetic speech. These results used Node v24.21.0 on macOS ARM64 with the uncommitted implementation atop `b7a733d68272089f24db0727d3f728c64f42b272`; see [commands, results and limits](docs/managed-skills-verification.md).
+On 21 October 2026, all nine Node test files passed: **142 tests, zero failures or skips**, including fake-CLI integration across Claude, Codex and pi, turn-lifecycle regressions, eight text-export tests, seven software-decoding/export tests and ten runtime/launcher checks. Generated visuals passed **11 app-preview security checks, nine headless-rendering scenario groups and 12 independent security checks**. Separate browser tests passed 11 managed-skill update/restart scenarios and 12 chat checks. The post-isolation full smoke run plus targeted fixture corrections passed 119 distinct checks, with zero remaining failures and one platform-specific Mac Vision skip. Actual offline transcription used cached tiny.en weights and synthetic speech. These results used Node v24.21.0 on macOS ARM64 with the uncommitted implementation atop `b7a733d68272089f24db0727d3f728c64f42b272`; see [commands, results and limits](docs/managed-skills-verification.md).
 
 Testing fixed stale agent skill context, lost Undo/proposal snapshots, transcript/subtitle previews unexpectedly writing `work/shots.json`, generated-code access to app privileges, and failed background-export process cleanup. Text previews now use a read-only timeline and preserve earlier export versions. No real creator data, provider credentials, paid inference or physical recording was used. Real vendor CLI compatibility, SAM/MLX inference and native Windows behavior are not established by these Mac tests.
 
@@ -210,6 +210,6 @@ Other limitations: layer exports do not preserve every MP4 transition or animate
 
 ## Distribution status
 
-No top-level application licence has been selected. Bundled fonts include their own licence notices under `web/fonts/`; third-party models, dependencies and optional skills have separate terms. Do not infer that the whole application or every included asset has the same licence.
+No top-level application licence has been selected. [Asset provenance](docs/asset-provenance.md) records the synthetic appearance previews and bundled font notices under `web/fonts/`; third-party models, dependencies and optional skills have separate terms. Do not infer that the whole application or every included asset has the same licence.
 
 Automatic publishing, a managed cloud rendering service and a complete packaged installer are not shipped features.

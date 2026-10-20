@@ -1,13 +1,13 @@
 {
   "name": "video-octopus",
-  "version": "0.1.0",
+  "version": "0.1.0-beta.1",
   "private": true,
   "description": "Video Octopus: a local video editor with Claude built in. Record, transcribe, cut and edit with your own Claude Code in the same window.",
   "type": "module",
   "scripts": {
-    "start": "node server/index.mjs"
+    "start": "node server/runtime-check.cjs && node server/index.mjs"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.2.0"
   }
 }

@@ -1,6 +1,6 @@
 # Isolated verification
 
-This branch is unreleased. Verification on 21 October 2026 used macOS ARM64,
+Verification for the v0.1.0-beta.1 source prerelease on 21 October 2026 used macOS ARM64,
 Node v24.21.0, cached Chromium 156 and disposable app/studio copies. The source
 was the uncommitted implementation atop
 `b7a733d68272089f24db0727d3f728c64f42b272`, with targeted reruns after fixes.
@@ -13,8 +13,8 @@ machine. Native Windows results are recorded separately below.
 node --test test/*.test.mjs
 ```
 
-**132 passed, zero failed/cancelled/skipped/todo**, exit 0.
-Eight test files cover:
+**142 passed, zero failed/cancelled/skipped/todo**, exit 0 (9.234 seconds).
+Nine test files cover:
 
 - Managed-skill migration, preservation, forks/core selection, compatibility,
   collisions, comparison, restore and all eight simulated interruption points.
@@ -27,6 +27,8 @@ Eight test files cover:
   new proposals, startup failure cleanup and silent turns.
 - Text exports: eight tests cover read-only previews, TXT/Markdown/SRT/VTT output
   and successive version creation without replacing earlier files.
+- Runtime preflight and actual launcher behavior: ten checks reject unsupported
+  versions before studio/browser startup and preserve supported-runtime exit codes.
 - Platform decoder arguments and seven actual software-decoding/export cases on
   Mac. Windows/Linux no longer receive macOS-only VideoToolbox decode arguments;
   these Mac executions do not establish native Windows behavior.
@@ -160,12 +162,13 @@ coverage. Main and repository visibility were unchanged.
 - Full Windows feature/filesystem coverage and native Linux coverage. Windows
   installation and the affected exports passed; the complete Windows managed-skill
   update/restart workflow and Windows generated-rendering security suite were not run.
-- Exact minimum Node version: README, manifest and launcher requirements still
-  differ. Local tests used Node 24; the successful hosted Windows fix test used Node 22.
+- The declared minimum is Node 22.2, required by the renderer’s `node:zlib` CRC32
+  import. Runtime tests simulate version reporting for the gate; actual app
+  coverage uses Node 24.21.0 on Mac and 22.23.3 on hosted Windows.
 - Physical camera/microphone/screen recording, SAM segmentation, MLX inference
   and macOS Vision face detection. Fake transfers do not test model quality.
 - Power-loss durability, external-editor timeline imports and external optional
-  skill-pack content. Preview-asset provenance remains a separate release item.
+  skill-pack content. Synthetic preview provenance is now recorded in [asset provenance](asset-provenance.md).
 
 No real studio, provider credential, paid call, package/model download,
 production Git push or publication was part of these local checks.

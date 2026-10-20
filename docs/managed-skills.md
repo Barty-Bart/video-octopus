@@ -1,6 +1,6 @@
 # Core skills, preferences and custom workflows
 
-This is an unreleased implementation. Eight Node test files passed on macOS: 132 tests with zero failures or skips. Separate browser tests passed 11 managed-skill update/restart scenarios, and fake CLIs exercised all three actual adapters. Generated-code isolation passed 11 app-preview checks, nine headless-rendering groups and 12 independent security checks. Seven software-decoding/export tests now pass on both Mac and native Windows after correcting Windows decoder arguments. The Windows hosted check also passed first launch, app-offered FFmpeg installation and the original failing MP4 fixture. See [isolated verification](managed-skills-verification.md).
+This implementation is included in v0.1.0-beta.1. Nine Node test files passed on macOS: 142 tests with zero failures or skips. Separate browser tests passed 11 managed-skill update/restart scenarios, and fake CLIs exercised all three actual adapters. Generated-code isolation passed 11 app-preview checks, nine headless-rendering groups and 12 independent security checks. Seven software-decoding/export tests now pass on both Mac and native Windows after correcting Windows decoder arguments. The Windows hosted check also passed first launch, app-offered FFmpeg installation and the original failing MP4 fixture. See [isolated verification](managed-skills-verification.md).
 
 ## Ownership
 
