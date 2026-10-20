@@ -1,19 +1,15 @@
-name: Fresh install evidence
+name: Windows release-fix verification
 on:
   push:
-    branches: [codex/clean-install-check]
+    branches: [codex/release-blocker-fixes]
     paths: [.github/workflows/fresh-install.yml]
 permissions:
   contents: read
 jobs:
   fresh-install:
-    name: Fresh install (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-15, windows-2025]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    name: Windows install and export regressions
+    runs-on: windows-2025
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -23,9 +19,11 @@ jobs:
         with:
           node-version: '22'
       - name: Install browser test driver outside the application
-        continue-on-error: true
         shell: bash
         run: npm install --prefix "$RUNNER_TEMP/octopus-browser" --no-audit --no-fund playwright@1.58.2
-      - name: Follow first launch and collect evidence
+      - name: Follow first launch and export the original failing fixture
         shell: bash
         run: node test/fresh-install.mjs
+      - name: Exercise Windows plain, sequence, shot and layer exports
+        shell: bash
+        run: node test/windows-verification.mjs
