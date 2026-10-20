@@ -21,7 +21,7 @@ You need:
 - [Claude Code](https://claude.com/claude-code), signed in;
 - Chrome or Edge, for recording.
 
-Setup checks the rest (ffmpeg, Python for the local transcription) and says how to install anything that's missing.
+Setup checks the rest (ffmpeg, Python for the local transcription, PyTorch and the SAM 2.1 model for object separation) and says how to install anything that's missing.
 
 ```bash
 git clone https://github.com/Barty-Bart/video-octopus.git
@@ -31,7 +31,7 @@ cd video-octopus
 
 On Windows, run `start.cmd` instead. Then open http://127.0.0.1:4800 if it doesn't open by itself. There are no npm packages to install.
 
-On the first run, **Setup** checks your computer and offers **Create my studio**: a folder for your projects, recordings and library, with starter skills (transcribe, rough cut, join check, production sheet, talking-head zoom). The Cut Editor is built into the app's Cut tab, so there's nothing to set up for it. You can add motion graphics skills from a GitHub repo in Setup.
+On the first run, **Setup** checks your computer and offers **Create my studio**: a folder for your projects, recordings and library, with starter skills (transcribe, rough cut, join check, production sheet, talking-head zoom, object separation). The Cut Editor is built into the app's Cut tab, so there's nothing to set up for it. You can add motion graphics skills from a GitHub repo in Setup.
 
 ## Your stuff stays yours
 

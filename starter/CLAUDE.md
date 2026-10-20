@@ -14,7 +14,7 @@ This folder is a video studio: the projects, notes, skills and tools Claude uses
 - `BRAND.md` (who the creator is, what they make, tone, colours, fonts, the brand files in `library/brand/`; Video Octopus's Setup writes it) and `STYLE.md` (the fuller style guide, when there is one): the studio's own style. **Read them before planning or building anything.**
 - `memory/`: what you know about the creator. `preferences.md` (how they want edits done) and `style.md` (brand and style). **Read both before any edit**; they win over the defaults in the skills.
 - `library/`: reusable things for every project (brand files, backgrounds, sounds, styles, components, B-roll, stills, resources). See `library/README.md`.
-- `.claude/skills/`: one skill per step (below). `tools/`: join check (`tools/join-check/`) and `tools/cut/apply_edit.py` (render a saved cut, re-time graphics), used by the skills. The Cut Editor is built into Video Octopus's Cut tab.
+- `.claude/skills/`: one skill per step (below), plus `object-separation` (a person or an object cut out of the background, on this computer: masks in a project's `work/objsep/<name>/`; its model is picked and downloaded in Video Octopus's Setup, never by the skill). `tools/`: join check (`tools/join-check/`) and `tools/cut/apply_edit.py` (render a saved cut, re-time graphics), used by the skills. The Cut Editor is built into Video Octopus's Cut tab.
 - `.studio/`: Video Octopus's files about this studio. `formats.json` adds or changes formats and Short styles (merged over the app's own); `starter.json` records what the starter put here.
 
 ## The order of work
@@ -25,7 +25,7 @@ This folder is a video studio: the projects, notes, skills and tools Claude uses
 4. **Fix in the Cut tab**: the creator restores or removes cuts and nudges joins in Video Octopus's Cut Editor; it saves `work/edl_manual.json`. Don't start your own editor or review pages; point them to the Cut tab.
 5. **Lock the cut**: join check on the saved cut, fix what's clipped, then write "Cut locked (join-check: N joins, 0 clipped)" in `WORKLOG.md`.
 6. **Plan scenes** (`production-sheet`) → `work/production.json`, approved by the creator before anything is built.
-7. **Edit**: build the scenes, zooms (`talking-head-zoom`), graphics, B-roll and sound from the sheet, into `renders/`, with the motion-graphics skills in `.claude/skills/` where one fits.
+7. **Edit**: build the scenes, zooms (`talking-head-zoom`), graphics, B-roll and sound from the sheet, into `renders/`, with the motion-graphics skills in `.claude/skills/` where one fits, and `object-separation` for anything behind or around the speaker or a product (text behind them, a new background, a highlight).
 8. **Review**: the creator leaves notes per scene in Video Octopus's Scenes tab (`work/notes.json`); work through them, re-render, reply on each note.
 9. **Export** from Video Octopus.
 

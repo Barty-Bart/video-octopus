@@ -4,11 +4,12 @@
 // store (keychain.mjs: the Keychain on a Mac, DPAPI on Windows) and reach Claude Code and the skills only as
 // environment variables.
 import { existsSync, readdirSync } from 'node:fs';
-import { homedir, cpus, totalmem } from 'node:os';
+import { cpus, totalmem } from 'node:os';
 import { join, isAbsolute } from 'node:path';
 import { execFile } from 'node:child_process';
-import { settings, saveSettings, readJSON, writeJSON, expandHome, IS_MAC, LOCAL_DIR } from './util.mjs';
+import { settings, saveSettings, readJSON, writeJSON, expandHome, hfHub, IS_MAC, LOCAL_DIR } from './util.mjs';
 import { hasKey, readKey, KEY_STORE } from './keychain.mjs';
+import { SAM2_MODELS, SAM2_SIZES, sam2Have, sam2Recommend, sam2Machine } from './sam2.mjs';
 
 // Cloud transcription providers. A Test button only where the provider documents a plain auth check:
 // Deepgram GET /v1/projects (Authorization: Token), AssemblyAI GET /v2/transcript (Authorization: <key>),
@@ -58,6 +59,9 @@ const SECTIONS = {
   look: { background: 'night-desk', pip: 'rounded', colors: [], fonts: '' },
   appearance: { look: 'editbay', calm: false },
   editing: { trimHighlight: false, trimLens: false },
+  // Settings → Rendering → Object separation: the SAM 2.1 model the object-separation skill uses; auto = the one
+  // Setup recommends for this computer (server/sam2.mjs).
+  objsep: { model: 'auto' },
   setup: { done: false },
   updates: { auto: true }, // Settings → Updates: check GitHub quietly when Video Octopus starts (server/updates.mjs)
   // First-time help that shows once (in settings, not the browser, so it never comes back): stepsIntro = the
@@ -95,6 +99,7 @@ const RULES = {
   look: { background: ['night-desk', 'stars', 'led'], pip: ['rounded', 'circle', 'frame'], colors: 'colors', fonts: 'str' },
   appearance: { look: LOOKS, calm: 'bool' },
   editing: { trimHighlight: 'bool', trimLens: 'bool' },
+  objsep: { model: ['auto', ...SAM2_SIZES] },
   setup: { done: 'bool' },
   updates: { auto: 'bool' },
   help: { stepsIntro: ['', 'dismissed'] },
@@ -203,6 +208,8 @@ export async function childEnv() {
   env.STUDIO_TRANSCRIBE = cloud ? t.provider : 'local';
   if (t.engine !== 'cloud' && t.model !== 'auto') env.STUDIO_TRANSCRIBE_MODEL = t.model;
   if (t.language !== 'auto') env.STUDIO_TRANSCRIBE_LANGUAGE = t.language;
+  const o = section('objsep', s);
+  if (o.model !== 'auto') env.STUDIO_OBJSEP_MODEL = o.model; // the object-separation skill's model (else its own pick)
   if (t.vocab.length) env.STUDIO_TRANSCRIBE_VOCAB = t.vocab.join(', ');
   return env;
 }
@@ -221,6 +228,8 @@ export function settingsBrief(env = {}) {
       : `- Transcription: on this computer with the transcribe skill (STUDIO_TRANSCRIBE=local, ${t.model !== 'auto' ? `model ${t.model}` : '--model auto: the best verbatim model already downloaded'}). Never run two transcriptions side by side; the rough cut's filler pass goes in the same run (--fill-out).`);
   if (t.language !== 'auto' || t.vocab.length) lines.push(`- Transcription language: ${LANGS[t.language]}${t.vocab.length ? `. Always spell these right (pass them as the prompt): ${t.vocab.join(', ')}` : ''}.`);
   lines.push(`- Rendering: on this computer${r.jobs ? `, up to ${r.jobs} jobs in parallel` : ''}; default output ${r.size === '4k' ? '4K' : '1080p'} ${{ h264: 'H.264', hevc: 'HEVC', prores: 'ProRes' }[r.codec]}.`);
+  const o = section('objsep', s), sam = sam2Have();
+  lines.push(`- Object separation: the object-separation skill with SAM 2.1 ${o.model === 'auto' ? 'as recommended for this computer (--model left out: its own pick)' : `${o.model} (STUDIO_OBJSEP_MODEL=${o.model})`}; downloaded: ${sam.length ? sam.join(', ') : 'none yet'}. The skill never downloads a model: when it isn't there, the creator presses Download in Video Octopus's Setup (Object separation row) or picks another one in Settings → Rendering.`);
   lines.push(`- Sound sources: ${[so.claude && 'made by Claude', so.epidemic && 'Epidemic Sound (through its connector)', so.library && `the library folder ${so.library}`].filter(Boolean).join(', ') || 'none picked'}; effects sit about ${Math.abs(so.fxDb)} dB under the voice (an effect's loudest 0.2 s against the voice's level while it talks: Video Octopus's export and canvas mix sound cues this way, so mix your renders the same).`);
   lines.push(`- Look defaults: background ${{ 'night-desk': 'Night Desk', stars: 'Stars', led: 'LED wave' }[lk.background]}, picture-in-picture frame ${lk.pip}${lk.colors.length ? `, brand colours ${lk.colors.join(' ')}` : ''}${lk.fonts ? `, fonts ${lk.fonts}` : ''}.`);
   const keys = Object.keys(KEYS).filter((n) => env[n]);
@@ -278,13 +287,13 @@ async function otherMachine() {
     : gpu ? ['medium.en', 'about real time on the NVIDIA card']
     : ramGB >= 16 && list.length >= 8 ? ['small.en', 'about real time on the CPU'] : ['base.en', 'slower than real time, but it works'];
   return { chip: (list[0]?.model || 'This computer').trim(), ramGB, cores: list.length || null, perf: null, eff: null, gpuCores: null, gpu: gpu || null,
-    whisper: { model: rec[0], speed: rec[1] } };
+    vramGB: Number(vram) ? Math.round(Number(vram) / 1024) : null, whisper: { model: rec[0], speed: rec[1] } };
 }
 
 // faster-whisper models already downloaded (the Hugging Face cache). A model counts only when a snapshot has
 // its weights (model.bin): a folder with just the config files is a download that didn't finish.
 export function whisperModels() {
-  const hub = process.env.HF_HUB_CACHE || join(process.env.HF_HOME || join(homedir(), '.cache', 'huggingface'), 'hub');
+  const hub = hfHub();
   const complete = (dir) => { try { return readdirSync(join(hub, dir, 'snapshots')).some((s) => existsSync(join(hub, dir, 'snapshots', s, 'model.bin'))); } catch { return false; } };
   try {
     return readdirSync(hub).map((d) => [d, /^models--Systran--faster-(distil-)?whisper-(.+)$/.exec(d)]).filter(([d, m]) => m && complete(d))
@@ -330,7 +339,7 @@ export async function settingsView() {
       claude: { ...section('claude', s), permissionMode: s.permissionMode, model: s.model },
       transcribe: section('transcribe', s), render: section('render', s),
       recorder: { ...section('recorder', s), recordingsDir: s.recordingsDir },
-      sound: section('sound', s), look: section('look', s), appearance: section('appearance', s), editing: section('editing', s),
+      sound: section('sound', s), look: section('look', s), appearance: section('appearance', s), editing: section('editing', s), objsep: section('objsep', s),
       folders: { studio: s.studio, projectsDir: s.projectsDir, libraryDir: s.libraryDir || 'library', recordingsDir: s.recordingsDir },
       setup: section('setup', s), updates: section('updates', s),
     },
@@ -338,6 +347,8 @@ export async function settingsView() {
     keyInfo: Object.fromEntries(Object.entries(KEYS).map(([k, v]) => [k, { label: v.label, test: Boolean(v.test) }])),
     providers: PROVIDERS, models: MODELS, langs: LANGS,
     machine: await machineInfo(), downloaded: whisperModels(),
+    // Object separation's models; the recommendation from the hardware here (Setup's row also asks torch).
+    sam2: { models: SAM2_MODELS, have: sam2Have(), recommended: sam2Recommend(sam2Machine(await machineInfo())) },
     envApiKey: Boolean(process.env.ANTHROPIC_API_KEY),
   };
 }

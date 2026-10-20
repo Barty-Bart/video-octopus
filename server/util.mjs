@@ -18,6 +18,9 @@ const TOOL_DIRS = IS_WIN
   : [join(homedir(), '.local', 'bin'), '/opt/homebrew/bin', '/usr/local/bin'];
 
 export const expandHome = (p) => (p && p.startsWith('~') ? join(homedir(), p.slice(1)) : p);
+// The Hugging Face cache, where huggingface_hub (faster-whisper, transformers) keeps downloaded models: HF_HUB_CACHE,
+// else HF_HOME/hub, else ~/.cache/huggingface/hub (the same on Windows, under the user's folder).
+export const hfHub = () => resolve(expandHome(process.env.HF_HUB_CACHE || join(process.env.HF_HOME || join(homedir(), '.cache', 'huggingface'), 'hub')));
 
 export function readJSON(path, fallback = null) {
   try { return JSON.parse(readFileSync(path, 'utf8')); } catch { return fallback; }

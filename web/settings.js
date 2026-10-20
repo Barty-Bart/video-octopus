@@ -94,7 +94,7 @@ const ABOUT = {
   updates: 'New versions of Video Octopus, the starter files in your studio, and opening Video Octopus when you log in.',
 };
 // More words the settings search finds a section by.
-const FIND = { appearance: `theme dark light mode colours colors style ${LOOKS.map((l) => l[1]).join(' ')}` };
+const FIND = { appearance: `theme dark light mode colours colors style ${LOOKS.map((l) => l[1]).join(' ')}`, render: 'object separation sam cut out rotoscope mask model' };
 const SEC_ICON = {
   claude: '<path d="M8 1.8v12.4M1.8 8h12.4M3.6 3.6l8.8 8.8M12.4 3.6l-8.8 8.8"/>',
   transcribe: '<path d="M2.5 4h11M2.5 7h11M2.5 10h7M2.5 13h5"/>',
@@ -459,6 +459,7 @@ const DRAW = {
       group('Output defaults',
         row('Size', 'For Claude\'s renders. The Export button renders 1080p for now.', seg([['1080p', '1080p'], ['4k', '4K']], r.size, (x) => save('render', { size: x }).then(redraw))),
         row('Codec', 'H.264 plays everywhere; HEVC is smaller; ProRes is for further editing.', seg([['h264', 'H.264'], ['hevc', 'HEVC'], ['prores', 'ProRes']], r.codec, (x) => save('render', { codec: x }).then(redraw)))),
+      samGroup(V, save),
     );
   },
 
@@ -729,4 +730,16 @@ function closeDrawer({ remember = true } = {}) {
   document.body.classList.remove('as-open');
   document.removeEventListener('keydown', drawer.onKey);
   drawer = null;
+}
+
+// Settings → Rendering → Object separation: the SAM 2.1 model the object-separation skill uses (Auto = the one
+// recommended for this computer), with each model's download size, speed and whether it's downloaded. Setup's Object
+// separation row downloads the picked one.
+function samGroup(V, save) {
+  const S = V.sam2, have = new Set(S.have), rec = S.recommended;
+  const opts = [['auto', `Auto: ${rec.size}, recommended for ${rec.why}`],
+    ...Object.entries(S.models).map(([k, m]) => [k, `${k} · ${m.mb} · ${m.speed}${have.has(k) ? ' · downloaded ✓' : ''}`])];
+  return group('Object separation',
+    row('Model', `SAM 2.1 for the object-separation skill (cutting a person or an object out of the background, on this computer). ${rec.slow ? 'No GPU here: it runs on the CPU, which takes seconds a frame.' : ''}`.trim(), select(opts, V.values.objsep.model, (x) => save('objsep', { model: x }))),
+    row('Downloaded models', '', h(`<div class="sub mono">${S.have.length ? esc(S.have.join(' · ')) : 'None yet: Setup → Object separation downloads the picked one.'}</div>`)));
 }

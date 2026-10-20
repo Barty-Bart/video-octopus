@@ -12,6 +12,7 @@ import { join, resolve, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:net';
+import { createServer as httpServer } from 'node:http';
 
 const APP = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = Number(process.env.SMOKE_PORT || 4899);
@@ -147,6 +148,7 @@ writeFileSync(join(ROOT, 'gh', 'Barty-Bart__motion-graphics.tar.gz'), tarGz([
   { name: `${R}/skills/motion-broll/SKILL.md`, data: skillMd('motion-broll', 'Motion-graphic B-roll timed to the words.') },
   { name: `${R}/skills/motion-broll/engine/motion.js`, data: 'export default 1;\n' },
   { name: `${R}/skills/explainer-default/SKILL.md`, data: skillMd('explainer-default', 'The repo version.') },
+  { name: `${R}/skills/object-separation/SKILL.md`, data: skillMd('object-separation', 'The repo version.') },
 ]));
 
 // ---- start the server on the throwaway install ----
@@ -178,7 +180,8 @@ try {
     const r = await api('/api/app/setup/create-studio', { path: STUDIO });
     must(r.status === 200, r.text);
     for (const f of ['CLAUDE.md', 'memory/preferences.md', '.claude/skills/transcribe/SKILL.md', '.claude/skills/rough-cut/SKILL.md',
-      '.claude/skills/join-check/SKILL.md', 'tools/cut/apply_edit.py', 'tools/join-check', '.studio/starter.json', 'projects'])
+      '.claude/skills/join-check/SKILL.md', '.claude/skills/object-separation/SKILL.md', '.claude/skills/object-separation/scripts/objsep.py',
+      'tools/cut/apply_edit.py', 'tools/join-check', '.studio/starter.json', 'projects'])
       must(existsSync(join(STUDIO, f)), `missing ${f}`);
     // The Cut Editor is built into the app: nothing of it in a fresh studio, and Setup has nothing to check for it.
     must(!existsSync(join(STUDIO, 'tools', 'cut-editor')), 'a fresh studio has tools/cut-editor');
@@ -190,6 +193,30 @@ try {
     const c = (await api('/api/app/setup/check?id=folders')).json;
     must(c?.state === 'ok', `folders: ${c?.state} ${c?.detail}`);
     return `${readdirSync(join(STUDIO, '.claude', 'skills')).join(', ')} · tools: ${readdirSync(join(STUDIO, 'tools')).join(', ')} · Setup: ${setup.checks.map((x) => x.title).join(' / ')}`;
+  });
+
+  await check('object separation is a core skill: in a fresh studio, generic (nothing private, no one creator\'s look), starter version 4', async () => {
+    const dir = join(STUDIO, '.claude', 'skills', 'object-separation');
+    must(readFileSync(join(APP, 'starter', 'VERSION'), 'utf8').trim() === '4', 'starter/VERSION is not 4');
+    must(JSON.parse(readFileSync(join(STUDIO, '.studio', 'starter.json'), 'utf8')).version === '4', 'the fresh studio is not on starter version 4');
+    const md = readFileSync(join(dir, 'SKILL.md'), 'utf8'), py = readFileSync(join(dir, 'scripts', 'objsep.py'), 'utf8');
+    must(/^---\nname: object-separation\ndescription: .{80,}/.test(md), 'SKILL.md front matter');
+    // What the skill must say: where its outputs go, how a scene uses the masks, the models, that it never downloads.
+    for (const want of ['work/objsep/<name>/', 'masks/', 'behind', 'BRAND.md', 'STUDIO_OBJSEP_MODEL', 'never downloads', 'facebook/sam2.1-hiera-base-plus', 'renders/'])
+      must(md.includes(want), `SKILL.md doesn't mention ${want}`);
+    // It never downloads: every from_pretrained is local_files_only, and no download call outside the text it prints.
+    const loads = [...py.matchAll(/from_pretrained\(([^)]*)\)/g)].map((m) => m[1]);
+    must(loads.length === 2 && loads.every((x) => /local_files_only=True/.test(x)) && /STUDIO_OBJSEP_MODEL/.test(py) && !/^[^#'"\n]*\b(snapshot_download|hf_hub_download)\(/m.test(py),
+      `objsep.py may download a model: ${loads.join(' | ')}`);
+    // The same scan as for core/ and starter/ (a name, private skills), plus home-folder paths, one creator's look and
+    // the app's old name. The export scan (public-export) checks the rest of the private words.
+    const bad = [], LOOKS = /\/Users\/[A-Za-z]|C:\\Users\\[A-Za-z]|magenta|\bStudio\b(?<!LM Studio)/;
+    const walk = (d) => { for (const n of readdirSync(d, { withFileTypes: true })) { const p = join(d, n.name); if (n.isDirectory()) walk(p); else if (PRIVATE.test(readFileSync(p, 'utf8')) || LOOKS.test(readFileSync(p, 'utf8'))) bad.push(p.slice(dir.length + 1)); } };
+    walk(dir);
+    must(!bad.length, `private or old words in: ${bad.join(', ')}`);
+    const help = spawnSync(PY, [join(dir, 'scripts', 'objsep.py'), '--help'], { encoding: 'utf8', env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' } });
+    must(help.status === 0 && /separate/.test(help.stdout), `objsep.py --help: ${help.status} ${help.stderr.slice(-300)}`);
+    return `${readdirSync(dir).join(', ')} · scripts: ${readdirSync(join(dir, 'scripts')).join(', ')} · starter 4`;
   });
 
   await check('Setup: ffmpeg and ffprobe found', async () => {
@@ -423,6 +450,7 @@ try {
     must(id, 'no project');
     const t = promptFor('intro');
     must(/no motion-graphics skills yet/.test(t) && /Add skills from GitHub/.test(t) && !/house style/i.test(t), `intro without motion skills: ${t.slice(-300)}`);
+    must(/object-separation skill \(core\)/.test(t) && !/\(motion-broll[^)]*object-separation/.test(t), `intro: object separation as a core skill: ${t.slice(-400)}`);
     return 'core and starter generic; intro says how to add motion skills';
   });
 
@@ -431,17 +459,22 @@ try {
     mkdirSync(join(SK, 'explainer-default'), { recursive: true });
     writeFileSync(join(SK, 'explainer-default', 'SKILL.md'), 'MY OWN VERSION\n');
     const rec = (await api('/api/app/skills/recommended')).json;
-    must(rec?.recommended && rec.repo === 'Barty-Bart/motion-graphics' && rec.skills.length === 6 && rec.skills.find((x) => x.name === 'explainer-default')?.installed, 'the recommended list');
+    // Object separation is core now: not in the recommended list (the repo can still have it; the studio's own stays).
+    must(rec?.recommended && rec.repo === 'Barty-Bart/motion-graphics' && rec.skills.length === 5 && !rec.skills.some((x) => x.name === 'object-separation') && rec.skills.find((x) => x.name === 'explainer-default')?.installed,
+      `the recommended list: ${rec?.skills?.map((x) => x.name).join(', ')}`);
     const look = (await api('/api/app/skills/repo?repo=https://github.com/Barty-Bart/motion-graphics')).json;
-    must(look?.commit === COMMIT && look.skills.map((x) => x.name).join() === 'explainer-default,good-skill,motion-broll', `repo listing: ${JSON.stringify(look)}`);
+    must(look?.commit === COMMIT && look.skills.map((x) => x.name).join() === 'explainer-default,good-skill,motion-broll,object-separation', `repo listing: ${JSON.stringify(look)}`);
+    must(look.skills.find((x) => x.name === 'object-separation')?.installed, 'the core object-separation skill is not shown as in the studio');
     must(look.skills.find((x) => x.name === 'good-skill').description === 'A plain skill.', 'description');
     for (const r of ['../../etc', 'a/b/c/d', 'https://evil.example/a/b']) must((await api(`/api/app/skills/repo?repo=${encodeURIComponent(r)}`)).status === 400, `bad repo ${r} accepted`);
     must(/no such public repo/.test((await api('/api/app/skills/install', { repo: 'nobody/nothing', skills: ['x'] })).json?.error || ''), 'an unknown repo');
-    const r = await api('/api/app/skills/install', { repo: 'Barty-Bart/motion-graphics', skills: ['good-skill', 'motion-broll', 'explainer-default', 'nope'] });
+    const core = readFileSync(join(SK, 'object-separation', 'SKILL.md'), 'utf8');
+    const r = await api('/api/app/skills/install', { repo: 'Barty-Bart/motion-graphics', skills: ['good-skill', 'motion-broll', 'explainer-default', 'object-separation', 'nope'] });
     must(r.status === 200, r.text);
     const j = r.json;
     must(j.installed.map((x) => x.name).join() === 'good-skill,motion-broll', `installed: ${JSON.stringify(j.installed)}`);
-    must(j.skipped.map((x) => x.name).join() === 'explainer-default' && j.missing.join() === 'nope', `skipped ${JSON.stringify(j.skipped)} missing ${j.missing}`);
+    must(j.skipped.map((x) => x.name).join() === 'explainer-default,object-separation' && j.missing.join() === 'nope', `skipped ${JSON.stringify(j.skipped)} missing ${j.missing}`);
+    must(readFileSync(join(SK, 'object-separation', 'SKILL.md'), 'utf8') === core, 'the repo\'s object-separation replaced the core one');
     must(j.refused >= 4, `refused only ${j.refused}`);
     must(readFileSync(join(SK, 'explainer-default', 'SKILL.md'), 'utf8') === 'MY OWN VERSION\n', 'an existing skill was overwritten');
     must(existsSync(join(SK, 'good-skill', 'SKILL.md')) && existsSync(join(SK, 'motion-broll', 'engine', 'motion.js')), 'files missing');
@@ -458,8 +491,249 @@ try {
     must(!again.installed.length && again.skipped[0]?.name === 'good-skill', 'a second install overwrote');
     const t = promptFor('intro');
     must(/motion-broll \(/.test(t) && !/no motion-graphics skills yet/.test(t), `intro with motion skills: ${t.slice(-300)}`);
-    return `installed 2, kept 1, refused ${j.refused}, commit recorded`;
+    return `installed 2, kept 2 (the core object-separation too), refused ${j.refused}, commit recorded`;
   });
+
+  // ---- object separation: Setup's row (server/setup.mjs, server/sam2.mjs), the model choice and the download. A second
+  // Video Octopus with its own install folder, a throwaway Hugging Face cache (HF_HUB_CACHE) and a fake Hugging Face on
+  // this computer (HF_ENDPOINT); Python is a stand-in that prints what a real probe would (Mac and Linux). ----
+  if (!ONLY || ONLY.test('object separation')) {
+    const SAM_WIN = process.platform === 'win32';
+    const HF = join(ROOT, 'hf'), SAMLOCAL = otherInstall('local-sam'), PROBE = join(ROOT, 'sam-probe.json');
+    const sha256 = (b) => createHash('sha256').update(b).digest('hex');
+    const gitId = (b) => createHash('sha1').update(Buffer.concat([Buffer.from(`blob ${b.length}\0`), b])).digest('hex');
+    const bytes = (n, seed) => { const out = Buffer.alloc(n); let x = Buffer.from(seed); for (let o = 0; o < n; o += 32) { x = createHash('sha256').update(x).digest(); x.copy(out, o); } return out; };
+    const WEIGHTS = { tiny: bytes(120000, 'tiny'), 'base-plus': bytes(200000, 'base-plus'), large: bytes(300000, 'large') };
+    const FIVE = ['config.json', 'preprocessor_config.json', 'processor_config.json', 'video_preprocessor_config.json', 'model.safetensors'];
+    const filesOf = (m) => Object.fromEntries(FIVE.map((f) => [f, f === 'model.safetensors' ? WEIGHTS[m] : Buffer.from(`{"file": "${f}", "model": "${m}"}`)]));
+    const REV = 'c0ffee'.padEnd(40, '0');
+    const repoDir = (m) => join(HF, `models--facebook--sam2.1-hiera-${m}`);
+    let hfMode = 'ok';
+    const hfLog = [];
+    const hf = httpServer(async (req, res) => {
+      const u = new URL(req.url, 'http://x');
+      let m = /^\/api\/models\/facebook\/sam2\.1-hiera-([\w-]+)\/revision\/main$/.exec(u.pathname);
+      if (m && WEIGHTS[m[1]]) {
+        res.setHeader('Content-Type', 'application/json');
+        return res.end(JSON.stringify({ id: `facebook/sam2.1-hiera-${m[1]}`, sha: REV, siblings: [{ rfilename: 'README.md', size: 9, blobId: gitId(Buffer.from('# readme\n')) },
+          ...Object.entries(filesOf(m[1])).map(([name, b]) => ({ rfilename: name, size: b.length, blobId: gitId(b), ...(name === 'model.safetensors' ? { lfs: { sha256: sha256(b), size: b.length, pointerSize: 134 } } : {}) }))] }));
+      }
+      m = /^\/facebook\/sam2\.1-hiera-([\w-]+)\/resolve\/([0-9a-f]{40})\/(.+)$/.exec(u.pathname);
+      const b = m && WEIGHTS[m[1]] && m[2] === REV ? filesOf(m[1])[m[3]] : null;
+      if (!b) { res.statusCode = 404; return res.end(); }
+      const mode = m[3] === 'model.safetensors' ? hfMode : 'ok';
+      hfLog.push({ model: m[1], file: m[3], range: req.headers.range || null, mode });
+      if (mode === 'wrongsize') { res.writeHead(200, { 'Content-Length': b.length + 10 }); return res.end(Buffer.concat([b, Buffer.alloc(10)])); }
+      if (mode === 'corrupt') { const c = Buffer.from(b); c[c.length >> 1] ^= 0xff; res.writeHead(200, { 'Content-Length': c.length }); return res.end(c); }
+      if (mode === 'cut') { res.writeHead(200, { 'Content-Length': b.length }); res.write(b.subarray(0, 90000)); return setTimeout(() => res.socket.destroy(), 100); }
+      const r = /^bytes=(\d+)-$/.exec(req.headers.range || ''), from = r && mode !== 'norange' ? Number(r[1]) : 0;
+      res.writeHead(from ? 206 : 200, { 'Content-Length': b.length - from, ...(from ? { 'Content-Range': `bytes ${from}-${b.length - 1}/${b.length}` } : {}) });
+      if (mode !== 'slow') return res.end(b.subarray(from));
+      for (let o = from; o < b.length; o += 8192) { if (res.destroyed) return; res.write(b.subarray(o, o + 8192)); await sleep(15); }
+      res.end();
+    });
+    const hfPort = await freePort();
+    await new Promise((done) => hf.listen(hfPort, '127.0.0.1', done));
+    // The stand-in Python prints PROBE whatever it's asked; on Windows a missing python.exe (only the "no Python" state).
+    const standIn = join(ROOT, 'sam-python');
+    if (!SAM_WIN) { writeFileSync(standIn, `#!/bin/sh\ncat "${PROBE}"\n`); execFileSync('chmod', ['755', standIn]); }
+    const probe = (p) => writeFileSync(PROBE, JSON.stringify(p));
+    const READY = { py: '3.12.1', torch: '2.5.1', device: 'mps', torchvision: '0.20.1', transformers: '4.56.0', numpy: '2.1.0', pillow: '11.0.0', sam2video: true };
+    writeFileSync(join(SAMLOCAL, 'settings.json'), JSON.stringify({ setup: { done: true }, updates: { auto: false }, python: SAM_WIN ? join(ROOT, 'no-python.exe') : standIn }));
+    const samPort = await freePort(), SB = `http://127.0.0.1:${samPort}`;
+    const sam = spawn(process.execPath, [join(APP, 'server', 'index.mjs')], { cwd: APP, stdio: 'ignore',
+      env: otherEnv(samPort, SAMLOCAL, { HF_HUB_CACHE: HF, HF_ENDPOINT: `http://127.0.0.1:${hfPort}`, STUDIO_KEYCHAIN_SERVICE: 'StudioSmokeNoKeys' }) });
+    const sapi = async (path, body, headers = {}) => {
+      const r = await fetch(SB + path, body === undefined ? { headers } : { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Studio': '1', ...headers }, body: JSON.stringify(body) });
+      const text = await r.text(); let json = null; try { json = JSON.parse(text); } catch {}
+      return { status: r.status, json, text };
+    };
+    const row = async () => (await sapi('/api/app/setup/check?id=objsep')).json;
+    const choose = (model) => sapi('/api/app/settings', { section: 'objsep', values: { model } });
+    const have = () => modRun(`const S = await import(${JSON.stringify(new URL('../server/sam2.mjs', import.meta.url).href)}); console.log(JSON.stringify(S.sam2Have()));`, { HF_HUB_CACHE: HF });
+    // A download started over the API, followed to its end; `seen` gets every progress reading in between.
+    const download = async (size, { stopAt = null } = {}) => {
+      const first = (await sapi('/api/app/setup/sam2/download', { size })).json;
+      const seen = [];
+      let d = first;
+      const end = Date.now() + 30000;
+      while (d?.state === 'downloading' && Date.now() < end) {
+        await sleep(20);
+        d = (await sapi('/api/app/setup/sam2')).json;
+        seen.push(d);
+        if (stopAt && d.state === 'downloading' && d.total && d.got > stopAt * d.total) { await sapi('/api/app/setup/sam2/stop', {}); stopAt = null; }
+      }
+      return { first, d, seen };
+    };
+    try {
+      await check('object separation: a second Video Octopus on a fake Hugging Face starts', async () => {
+        await until(async () => { try { return (await fetch(SB + '/')).ok; } catch { return false; } }, 30000, 'the second server');
+        const setup = (await sapi('/api/app/setup')).json;
+        must(setup.checks.some((c) => c.id === 'objsep' && c.title === 'Object separation (SAM 2)'), `Setup rows: ${setup.checks.map((c) => c.title).join(', ')}`);
+        return `rows: ${setup.checks.map((c) => c.title).join(' / ')}`;
+      });
+
+      await check('object separation row: no Python, no torch, transformers too old (fake Python stand-ins)', async () => {
+        if (SAM_WIN) {
+          const r = await row();
+          must(r.state === 'fail' && /Python not found/.test(r.detail) && /requirements\.txt/.test(r.fix || ''), `no Python: ${r.state} ${r.detail}`);
+          return 'Windows: no Python only (the stand-ins are shell scripts)';
+        }
+        rmSync(PROBE, { force: true });
+        const none = await row();
+        must(none.state === 'fail' && /Python not found/.test(none.detail) && /ask before installing/i.test(none.fix || ''), `no Python: ${none.state} ${none.detail}`);
+        probe({ py: '3.12.1', torch: null, torchvision: null, transformers: null, numpy: '2.1.0', pillow: '11.0.0' });
+        const bare = await row();
+        must(bare.state === 'fail' && /missing torch, torchvision, transformers/.test(bare.detail) && /transformers 4\.56 or newer/.test(bare.fix) && /requirements\.txt/.test(bare.fix) && /Download button/.test(bare.fix) && /ask before installing/i.test(bare.fix),
+          `no torch: ${bare.state} · ${bare.detail} · ${bare.fix}`);
+        // Without torch the recommendation comes from the hardware; the row still lists the three models.
+        must(bare.sam2.models.map((m) => `${m.id} ${m.mb}`).join(', ') === 'tiny 156 MB, base-plus 323 MB, large 898 MB' && bare.sam2.models.every((m) => m.speed && !m.have), `models: ${JSON.stringify(bare.sam2.models)}`);
+        // torchvision alone missing (transformers' SAM 2 image processor won't load without it).
+        probe({ ...READY, torchvision: null });
+        const tv = await row();
+        must(tv.state === 'fail' && /missing torchvision\./.test(tv.detail) && /torchvision/.test(tv.fix), `no torchvision: ${tv.state} ${tv.detail}`);
+        probe({ ...READY, transformers: '4.50.0', sam2video: false });
+        const old = await row();
+        must(old.state === 'fail' && /no SAM 2 video model \(it needs 4\.56 or newer\)/.test(old.detail) && old.fix, `old transformers: ${old.state} ${old.detail}`);
+        return `${none.detail} | ${bare.detail} | ${tv.detail} | ${old.detail}`;
+      });
+
+      await check('object separation: the recommended model per machine (NVIDIA 12 GB+, NVIDIA under 12 GB, Apple Silicon, CPU only), the choice saved and read back', async () => {
+        const rec = (dev) => modRun(`const S = await import(${JSON.stringify(new URL('../server/sam2.mjs', import.meta.url).href)}); console.log(JSON.stringify(S.sam2Recommend(${JSON.stringify(dev)})));`);
+        const table = [[{ device: 'cuda', vramGB: 24, gpu: 'NVIDIA RTX 4090' }, 'large'], [{ device: 'cuda', vramGB: 12, gpu: 'NVIDIA RTX 3060' }, 'large'],
+          [{ device: 'cuda', vramGB: 8, gpu: 'NVIDIA RTX 3070' }, 'base-plus'], [{ device: 'mps' }, 'base-plus'], [{ device: 'cpu' }, 'tiny']];
+        for (const [dev, want] of table) { const r = rec(dev); must(r.size === want && r.slow === (want === 'tiny'), `${JSON.stringify(dev)} → ${JSON.stringify(r)}, not ${want}`); }
+        const out = [];
+        if (!SAM_WIN) {
+          // Through the row, with torch's own view from the stand-in (what the skill sees too).
+          for (const [p, want] of [[{ device: 'cuda', gpu: 'NVIDIA RTX 4090', vram: 24 }, 'large'], [{ device: 'cuda', gpu: 'NVIDIA RTX 3070', vram: 8 }, 'base-plus'], [{ device: 'mps' }, 'base-plus'], [{ device: 'cpu' }, 'tiny']]) {
+            probe({ ...READY, ...p });
+            const r = await row();
+            must(r.sam2.recommended === want && r.sam2.picked === want && r.sam2.choice === 'auto' && r.state === 'warn' && /isn't downloaded yet/.test(r.detail), `${p.device} ${p.vram || ''}: ${JSON.stringify(r.sam2.recommended)} ${r.state} ${r.detail}`);
+            if (p.device === 'cpu') must(r.sam2.slow && /seconds a frame/.test(r.detail), `CPU only, no warning: ${r.detail}`);
+            if (p.gpu) must(r.detail.includes(`${p.gpu} with ${p.vram} GB`), `the card isn't named: ${r.detail}`);
+            out.push(`${p.gpu || p.device} → ${want}`);
+          }
+          probe(READY);
+        }
+        // The choice: Settings saves it, reads it back, the row and the chats follow it; a bad one is refused.
+        must((await choose('large')).json?.values?.objsep?.model === 'large', 'the choice did not save');
+        must((await sapi('/api/app/settings')).json?.values?.objsep?.model === 'large', 'the choice did not read back');
+        must(JSON.parse(readFileSync(join(SAMLOCAL, 'settings.json'), 'utf8')).objsep?.model === 'large', 'not in settings.json');
+        must((await choose('huge')).status === 400, 'a bad choice was accepted');
+        if (!SAM_WIN) { const r = await row(); must(r.sam2.choice === 'large' && r.sam2.picked === 'large' && r.sam2.recommended === 'base-plus' && /your pick/.test(r.detail), `the row with a pick: ${JSON.stringify(r.sam2).slice(0, 200)} ${r.detail}`); }
+        const env = modRun(`const S = await import(${JSON.stringify(new URL('../server/settings.mjs', import.meta.url).href)});
+          const e = await S.childEnv(); console.log(JSON.stringify({ model: e.STUDIO_OBJSEP_MODEL || null, brief: S.settingsBrief(e) }));`, { STUDIO_LOCAL_DIR: SAMLOCAL, HF_HUB_CACHE: HF, STUDIO_KEYCHAIN_SERVICE: 'StudioSmokeNoKeys' });
+        must(env.model === 'large' && /Object separation: the object-separation skill with SAM 2\.1 large \(STUDIO_OBJSEP_MODEL=large\)/.test(env.brief) && /never downloads a model/.test(env.brief), `chats: ${JSON.stringify(env).slice(0, 400)}`);
+        await choose('auto');
+        const auto = modRun(`const S = await import(${JSON.stringify(new URL('../server/settings.mjs', import.meta.url).href)}); const e = await S.childEnv(); console.log(JSON.stringify(e.STUDIO_OBJSEP_MODEL || null));`,
+          { STUDIO_LOCAL_DIR: SAMLOCAL, STUDIO_KEYCHAIN_SERVICE: 'StudioSmokeNoKeys' });
+        must(auto === null, `auto still passes a model: ${auto}`);
+        const view = (await sapi('/api/app/settings')).json?.sam2;
+        must(view?.recommended?.size && Object.keys(view.models).join() === 'tiny,base-plus,large', `Settings' view: ${JSON.stringify(view).slice(0, 200)}`);
+        return `${out.join(', ') || 'table only (Windows)'} · choice large saved, read back, in the chats' env and brief; auto passes none`;
+      });
+
+      await check('object separation: a model counts as downloaded only with all five files in a snapshot (per model)', async () => {
+        const snap = join(repoDir('tiny'), 'snapshots', REV), blobs = join(repoDir('tiny'), 'blobs');
+        mkdirSync(snap, { recursive: true }); mkdirSync(blobs, { recursive: true });
+        const F = filesOf('tiny');
+        for (const f of FIVE.slice(0, 4)) writeFileSync(join(snap, f), F[f]);
+        writeFileSync(join(blobs, `${sha256(F['model.safetensors'])}.incomplete`), F['model.safetensors'].subarray(0, 5000));
+        must(have().length === 0, `four files and a partial blob count: ${have()}`);
+        if (!SAM_WIN) {
+          symlinkSync(join('..', '..', 'blobs', sha256(F['model.safetensors'])), join(snap, 'model.safetensors')); // leads nowhere yet
+          must(have().length === 0, 'a link to a missing blob counts');
+          rmSync(join(snap, 'model.safetensors'));
+        }
+        writeFileSync(join(snap, 'model.safetensors'), F['model.safetensors']);
+        must(have().length === 0, 'a whole snapshot that refs/main doesn\'t name counts (transformers wouldn\'t find it)');
+        mkdirSync(join(repoDir('tiny'), 'refs'), { recursive: true });
+        writeFileSync(join(repoDir('tiny'), 'refs', 'main'), REV);
+        must(JSON.stringify(have()) === '["tiny"]', `a whole snapshot: ${JSON.stringify(have())}`);
+        for (const m of ['base-plus', 'large']) must(!have().includes(m), `${m} counted`);
+        let state = 'Windows: no row';
+        if (!SAM_WIN) {
+          probe(READY);
+          await choose('tiny');
+          const r = await row();
+          must(r.state === 'ok' && r.sam2.there && r.sam2.models.find((m) => m.id === 'tiny').have && /SAM 2\.1 tiny \(156 MB, your pick\)/.test(r.detail), `ready: ${r.state} ${r.detail}`);
+          await choose('auto');
+          const back = await row();
+          must(back.state === 'warn' && back.sam2.picked === 'base-plus' && /downloaded: tiny/.test(back.detail), `auto, base-plus missing: ${back.state} ${back.detail}`);
+          state = `${r.detail} | ${back.detail}`;
+        }
+        return state;
+      });
+
+      await check('object separation Download (fake Hugging Face): size and checksum checks, a cut download kept but never counted, carried on with Range and progress, a server that ignores Range, Stop', async () => {
+        const W = WEIGHTS.large, blob = join(repoDir('large'), 'blobs', sha256(W)), part = `${blob}.incomplete`;
+        must((await sapi('/api/app/setup/sam2/download', { size: 'huge' })).status === 400, 'a bad size was accepted');
+        must((await fetch(SB + '/api/app/setup/sam2/download', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"size":"large"}' })).status === 403, 'a download without X-Studio');
+        // The server offers another size than Hugging Face lists: refused, nothing kept.
+        hfMode = 'wrongsize';
+        let r = await download('large');
+        must(r.d.state === 'error' && /model\.safetensors came as 300010 bytes, but it is 300000 bytes/.test(r.d.error) && !existsSync(part) && !existsSync(blob), `wrong size: ${JSON.stringify(r.d)}`);
+        // Every byte there but one changed: the SHA-256 check refuses it.
+        hfMode = 'corrupt';
+        r = await download('large');
+        must(r.d.state === 'error' && /checksum/.test(r.d.error) && !existsSync(part) && !existsSync(blob) && !have().includes('large'), `bad checksum: ${JSON.stringify(r.d)}`);
+        // Cut off part way: the part stays as .incomplete, and the model doesn't count.
+        hfMode = 'cut';
+        r = await download('large');
+        const cut = existsSync(part) ? statSync(part).size : 0;
+        must(r.d.state === 'error' && /carries on/.test(r.d.error) && cut > 0 && cut < W.length && !existsSync(blob) && !have().includes('large') && !existsSync(join(repoDir('large'), 'snapshots', REV, 'model.safetensors')), `cut: ${JSON.stringify(r.d)} part ${cut}`);
+        if (!SAM_WIN) { await choose('large'); const rw = await row(); must(rw.state === 'warn' && !rw.sam2.there && /isn't downloaded yet/.test(rw.detail), `a partial counted: ${rw.state} ${rw.detail}`); }
+        // Carry on: a Range request from where it stopped, progress on the way, then the blob, the snapshot and refs/main.
+        hfMode = 'slow';
+        hfLog.length = 0;
+        r = await download('large');
+        const ranged = hfLog.find((x) => x.file === 'model.safetensors');
+        const mid = r.seen.filter((x) => x.state === 'downloading' && x.got > cut + 1 && x.got < x.total);
+        must(r.d.state === 'done' && ranged?.range === `bytes=${cut}-` && r.d.from >= cut && mid.length >= 2 && r.d.got === r.d.total, `carry on: ${JSON.stringify(r.d)} range ${ranged?.range} readings ${mid.length}`);
+        must(readFileSync(blob).equals(W) && !existsSync(part) && readFileSync(join(repoDir('large'), 'refs', 'main'), 'utf8') === REV, 'blob or refs/main');
+        for (const f of FIVE) must(readFileSync(join(repoDir('large'), 'snapshots', REV, f)).equals(filesOf('large')[f]), `snapshot ${f}`);
+        if (!SAM_WIN) must(String(execFileSync('readlink', [join(repoDir('large'), 'snapshots', REV, 'model.safetensors')])).trim() === `../../blobs/${sha256(W)}`, 'not a relative link to the blob');
+        must(have().includes('large'), `large isn't counted: ${have()}`);
+        if (!SAM_WIN) { const rw = await row(); must(rw.state === 'ok' && rw.sam2.there, `after the download: ${rw.state} ${rw.detail}`); }
+        // Again: nothing to fetch but the list (every blob is there whole).
+        hfLog.length = 0;
+        r = await download('large');
+        must(r.d.state === 'done' && !hfLog.length, `a second download fetched ${hfLog.map((x) => x.file).join(', ')}`);
+        // A server that ignores Range: the stale part is thrown away and the file starts over.
+        rmSync(repoDir('large'), { recursive: true, force: true });
+        mkdirSync(join(repoDir('large'), 'blobs'), { recursive: true });
+        writeFileSync(part, Buffer.alloc(40000, 7));
+        hfMode = 'norange';
+        r = await download('large');
+        must(r.d.state === 'done' && readFileSync(blob).equals(W) && have().includes('large'), `no Range: ${JSON.stringify(r.d)}`);
+        // Stop part way (the part stays), then Download carries on to the end.
+        hfMode = 'slow';
+        r = await download('base-plus', { stopAt: 0.3 });
+        const bpPart = `${join(repoDir('base-plus'), 'blobs', sha256(WEIGHTS['base-plus']))}.incomplete`, kept = existsSync(bpPart) ? statSync(bpPart).size : 0;
+        must(r.d.state === 'stopped' && kept > 0 && kept < WEIGHTS['base-plus'].length && !have().includes('base-plus'), `stop: ${JSON.stringify(r.d)} kept ${kept}`);
+        hfLog.length = 0;
+        r = await download('base-plus');
+        must(r.d.state === 'done' && hfLog.find((x) => x.file === 'model.safetensors')?.range === `bytes=${kept}-` && have().includes('base-plus'), `after Stop: ${JSON.stringify(r.d)} ${JSON.stringify(hfLog)}`);
+        await choose('auto');
+        return `wrong size and bad checksum refused · cut at ${cut} kept, not counted · carried on (${mid.length} progress readings) · no-Range start-over · stopped at ${kept} and carried on`;
+      });
+
+      await check('object separation: huggingface_hub and the skill find a model the app downloaded (SMOKE_PYTHON)', async () => {
+        const env = { ...process.env, HF_HUB_CACHE: HF, HF_HUB_OFFLINE: '1', PYTHONDONTWRITEBYTECODE: '1' };
+        const hub = execFileSync(PY, ['-c', `from huggingface_hub import try_to_load_from_cache as t\nprint(all(isinstance(t('facebook/sam2.1-hiera-large', f), str) for f in ${JSON.stringify(FIVE)}))`], { env, encoding: 'utf8' }).trim();
+        must(hub === 'True', `huggingface_hub doesn't see the download: ${hub}`);
+        const script = join(STUDIO, '.claude', 'skills', 'object-separation', 'scripts', 'objsep.py');
+        const out = spawnSync(PY, [script, 'check', '--model', 'large'], { env, encoding: 'utf8', timeout: 120000 });
+        const j = JSON.parse(out.stdout.slice(0, out.stdout.indexOf('\n}') + 2));
+        must(JSON.stringify(j.downloaded) === '["tiny","base-plus","large"]' && j.model === 'large' && j.ready === true, `the skill's check: ${out.stdout.slice(0, 600)} ${out.stderr.slice(-300)}`);
+        return `huggingface_hub: all five files · the skill: ${j.downloaded.join(', ')} downloaded, large ready${j.torch ? ` (torch ${j.torch} on ${j.device})` : ''}`;
+      });
+    } finally {
+      sam.kill();
+      hf.close();
+    }
+  }
 
   await check('saved layouts: save, list, apply on a project, remove', async () => {
     must(id, 'no project');

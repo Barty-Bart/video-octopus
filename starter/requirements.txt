@@ -5,3 +5,12 @@ faster-whisper>=1.0   # transcribe (on this computer), join check --recheck, wor
 numpy>=1.24           # rough cut, join check, apply_edit
 opencv-python-headless>=4,<5; sys_platform != "darwin"   # Auto-frame on Windows and Linux (Video Octopus's tools/face.py; a Mac uses Vision). OpenCV 5 moved the face detector out
 # opencv-python       # only for rough-cut --crossfade-frames / --punch (headless above covers it on Windows and Linux)
+
+# Object separation (the object-separation skill): Meta's SAM 2.1 through transformers, Python 3.10 or newer. With an
+# NVIDIA card on Windows or Linux, install the CUDA build of torch from pytorch.org first (plain pip can give the slower
+# CPU build). The model itself is downloaded separately, once: Video Octopus's Setup (Object separation → Download)
+# puts the picked one in the Hugging Face cache, where the skill reads it.
+torch>=2.5; python_version >= "3.10"
+torchvision>=0.20; python_version >= "3.10"   # transformers' SAM 2 image processor needs it
+transformers>=4.56; python_version >= "3.10"   # 4.56 brought SAM 2's video model (Sam2VideoModel)
+pillow>=10; python_version >= "3.10"

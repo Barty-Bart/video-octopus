@@ -12,7 +12,8 @@ import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { settings, readJSON, writeJSON, inside } from './util.mjs';
 
-// The recommended set, shown without a download (the one-liners follow the repo's README).
+// The recommended set, shown without a download (the one-liners follow the repo's README). The repo's
+// object-separation skill isn't offered: object separation is a core skill now, in every studio from the starter.
 export const RECOMMENDED = {
   repo: 'Barty-Bart/motion-graphics', ref: 'main', url: 'https://github.com/Barty-Bart/motion-graphics', license: 'MIT',
   about: 'Motion-graphics skills for Claude Code and Codex',
@@ -21,7 +22,6 @@ export const RECOMMENDED = {
     { name: 'explainer-default', about: 'A clean 45–90 s product demo: the product’s own UI rebuilt and filmed up close as it’s used.' },
     { name: 'explainer-engaging', about: 'A 10–30 s one-take story: one element travels through the product’s workflow.' },
     { name: 'explainer-high-energy', about: 'A 12–20 s hype promo: beat-locked kinetic type and shape transitions.' },
-    { name: 'object-separation', about: 'Separates a person, product or hand from the background, on your own computer.' },
     { name: 'sound-effects', about: 'A measured sound pass: real effects on the beat, from a bundled CC0 library.' },
   ],
 };
@@ -32,7 +32,6 @@ const MOTION_USE = {
   'explainer-default': 'a calm product demo or walkthrough insert',
   'explainer-engaging': 'a short one-take product story',
   'explainer-high-energy': 'a fast promo or launch sting',
-  'object-separation': 'cutting the speaker or a product out of the background, for effects behind them or highlights',
   'sound-effects': 'the sound pass once the picture is done',
 };
 
@@ -308,15 +307,19 @@ export async function installSkills(input, names, { studio = settings().studio }
 // The note a build step gets (stepPrompt, for steps with "motion" in core/pipelines.json): the studio's
 // motion-graphics skills and what each is for, or what to do when there are none yet.
 export function motionNote(kind, studio = settings().studio) {
-  const mine = installedSkills(studio).filter((s) => MOTION_USE[s.name] || /^(motion|sound)$/i.test(s.stage) || /explainer|motion|b-?roll|separation|sound-effects/i.test(s.name));
+  const all = installedSkills(studio);
+  const mine = all.filter((s) => s.name !== 'object-separation' && (MOTION_USE[s.name] || /^(motion|sound)$/i.test(s.stage) || /explainer|motion|b-?roll|sound-effects/i.test(s.name)));
   const studioRel = (p) => relative(studio, p).split('\\').join('/');
+  // Object separation is a core skill (the starter's), not a motion-graphics one: one line of its own when it's there.
+  const sep = all.some((s) => s.name === 'object-separation')
+    ? ' The object-separation skill (core) cuts the speaker or a product out of the background, for text or graphics behind them, a new background or a highlight; plan or use it where a scene needs that.' : '';
   if (mine.length) {
     const list = mine.map((s) => `${s.name} (${MOTION_USE[s.name] || s.description.split(/(?<=\.)\s/)[0].replace(/\.$/, '') || 'motion graphics'})`).join('; ');
     return kind === 'plan'
-      ? `\nMotion-graphics skills in this studio (${studioRel(skillsDir(studio))}/): ${list}. Name the one that builds each scene in its "skills" column; leave it empty where a scene is built by hand.`
-      : `\nMotion-graphics skills in this studio (${studioRel(skillsDir(studio))}/): ${list}. Use the one each scene in the production sheet names, or the one that fits, and follow its own steps, with the colours and fonts from BRAND.md (and STYLE.md). Build by hand only what none of them covers.`;
+      ? `\nMotion-graphics skills in this studio (${studioRel(skillsDir(studio))}/): ${list}. Name the one that builds each scene in its "skills" column; leave it empty where a scene is built by hand.${sep}`
+      : `\nMotion-graphics skills in this studio (${studioRel(skillsDir(studio))}/): ${list}. Use the one each scene in the production sheet names, or the one that fits, and follow its own steps, with the colours and fonts from BRAND.md (and STYLE.md). Build by hand only what none of them covers.${sep}`;
   }
   return kind === 'plan'
-    ? '\nThis studio has no motion-graphics skills yet: plan scenes Claude can build by hand (HTML or canvas scenes, cards, titles, layouts), and mention that motion-graphics skills can be added from Setup or Home → Skills → Add skills from GitHub.'
-    : `\nThis studio has no motion-graphics skills yet. Build the graphics by hand from the production sheet: HTML or canvas scenes drawn as a pure function of time, rendered frame by frame on this computer (a headless browser) and put together with ffmpeg, in the colours and fonts from BRAND.md. Then tell me once that motion-graphics skills can be added from Setup (Motion skills) or Home → Skills → Add skills from GitHub; the recommended set is ${RECOMMENDED.url} (${RECOMMENDED.skills.map((s) => s.name).join(', ')}).`;
+    ? `\nThis studio has no motion-graphics skills yet: plan scenes Claude can build by hand (HTML or canvas scenes, cards, titles, layouts), and mention that motion-graphics skills can be added from Setup or Home → Skills → Add skills from GitHub.${sep}`
+    : `\nThis studio has no motion-graphics skills yet. Build the graphics by hand from the production sheet: HTML or canvas scenes drawn as a pure function of time, rendered frame by frame on this computer (a headless browser) and put together with ffmpeg, in the colours and fonts from BRAND.md. Then tell me once that motion-graphics skills can be added from Setup (Motion skills) or Home → Skills → Add skills from GitHub; the recommended set is ${RECOMMENDED.url} (${RECOMMENDED.skills.map((s) => s.name).join(', ')}).${sep}`;
 }

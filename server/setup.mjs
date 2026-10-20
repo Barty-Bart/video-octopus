@@ -4,7 +4,7 @@
 import { existsSync, statSync, accessSync, constants } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { execFile } from 'node:child_process';
-import { settings, studioTool, python, childPathEnv, tildePath as tilde, IS_WIN, IS_MAC, APP_DIR } from './util.mjs';
+import { settings, studioTool, python, childPathEnv, tildePath as tilde, hfHub, IS_WIN, IS_MAC, APP_DIR } from './util.mjs';
 import { claudeInfo } from './claude.mjs';
 import { ccSource, sourceProblem, settingsCredentials } from './claude-source.mjs';
 import { codexInfo } from './codex.mjs';
@@ -14,11 +14,42 @@ import { formats } from './studio.mjs';
 import { settingsView, saveSection, section, profile, saveProfile, testKey, KEYS, machineInfo, whisperModels, MODELS, settingsChanged } from './settings.mjs';
 import { saveKey, removeKey, hasKey } from './keychain.mjs';
 import { createStudio, studioPathInfo, defaultStudioPath } from './starter.mjs';
+import { SAM2_MODELS, sam2Have, sam2Recommend, sam2Machine, sam2Download, startSam2Download, stopSam2Download } from './sam2.mjs';
+
+// What the object-separation skill needs from Python: torch (and the device it can use), torchvision (transformers' SAM 2
+// image processor won't load without it), transformers with SAM 2's video model, numpy and Pillow.
+const SAM2_PROBE = `import sys, json
+out = {"py": sys.version.split()[0]}
+try:
+    import torch
+    out["torch"] = torch.__version__.split("+")[0]
+    if torch.cuda.is_available():
+        p = torch.cuda.get_device_properties(0)
+        out.update(device="cuda", gpu=p.name, vram=round(p.total_memory / 2**30, 1))
+    elif getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+        out["device"] = "mps"
+    else:
+        out["device"] = "cpu"
+except Exception:
+    out["torch"] = None
+for name, mod in (("torchvision", "torchvision"), ("transformers", "transformers"), ("numpy", "numpy"), ("pillow", "PIL")):
+    try:
+        out[name] = __import__(mod).__version__
+    except Exception:
+        out[name] = None
+if out["torch"] and out["transformers"]:
+    try:
+        from transformers import Sam2VideoModel, Sam2VideoProcessor
+        out["sam2video"] = True
+    except Exception:
+        out["sam2video"] = False
+print(json.dumps(out))`;
 
 export const CHECKS = [
   ['claude', 'Agent (Claude Code, Codex or pi)'], // id "claude" from when Claude Code was the only one
   ['ffmpeg', 'ffmpeg and ffprobe'],
   ['python', 'Python and transcription'],
+  ['objsep', 'Object separation (SAM 2)'],
   ['recorder', 'Recorder'],
   ['folders', 'Your studio and projects folders'],
 ];
@@ -117,6 +148,49 @@ const CHECK = {
     return { state: 'ok', detail: `${base} · models here: ${have.length ? have.join(', ') : 'none (cloud transcription)'}${IS_MAC ? '' : ` · OpenCV ${j.cv2}`}` };
   },
 
+  // Object separation (the object-separation skill, starter/.claude/skills): torch, torchvision, transformers (SAM 2's
+  // video model), numpy and Pillow for that Python, and the SAM 2.1 model picked in Settings → Rendering (auto = the one
+  // recommended here) in the Hugging Face cache. The packages go the Whisper way (Fix: the assistant installs them,
+  // asking first); the model has the row's own Download button. `sam2` carries what the row draws: the three models
+  // with their sizes and speed, the recommendation, the choice, the download.
+  async objsep() {
+    const py = python();
+    const r = await run(py, ['-c', SAM2_PROBE], 60000);
+    let j = null;
+    try { j = JSON.parse(r.out.split('\n').pop()); } catch {}
+    const mac = await machineInfo(), hw = sam2Machine(mac);
+    // torch's own view of the device when it's there (the skill decides the same way), else the hardware's.
+    const rec = sam2Recommend(j?.torch ? { device: j.device, vramGB: j.vram, gpu: j.gpu } : hw);
+    const choice = section('objsep').model, picked = choice === 'auto' ? rec.size : choice;
+    const have = sam2Have(), there = have.includes(picked), dl = sam2Download();
+    const sam2 = { choice, picked, recommended: rec.size, why: rec.why, slow: rec.slow, cache: tilde(hfHub()), there,
+      models: Object.entries(SAM2_MODELS).map(([id, m]) => ({ id, repo: m.repo, mb: m.mb, speed: m.speed, for: m.for, have: have.includes(id) })),
+      download: dl.state === 'downloading' || dl.size === picked ? dl : { state: 'idle' } };
+    const model = `SAM 2.1 ${picked} (${SAM2_MODELS[picked].mb}${choice === 'auto' ? `, recommended for ${rec.why}` : ', your pick'})`;
+    const slow = rec.slow ? ' · no GPU it can use: it runs on the CPU, which takes seconds a frame, so separate short parts' : '';
+    const ask = 'Leave the model alone: the Download button on this Setup row fetches it into the Hugging Face cache. Tell me your plan first and ask before installing anything.';
+    if (!j) return { state: 'fail', sam2, detail: `Python not found (${tilde(py)}).`,
+      fix: `Setup check "Object separation (SAM 2)" failed: Video Octopus can't run Python (it tried ${py}). The object-separation skill needs Python 3.10 or newer with PyTorch (torch and torchvision), transformers 4.56 or newer, numpy and Pillow, best in the studio's .venv (what Video Octopus looks for first). Set Python up, then install what the studio's requirements.txt lists. ${ask}` };
+    const old = j.transformers && j.torch && j.sam2video === false;
+    const missing = [!j.torch && 'torch', !j.torchvision && 'torchvision', !j.transformers && 'transformers', !j.numpy && 'numpy', !j.pillow && 'Pillow'].filter(Boolean);
+    if (missing.length || old) {
+      const torchHow = IS_MAC ? 'plain pip is right on a Mac' : hw.device === 'cuda' ? `this computer has ${hw.gpu}: the CUDA build from pytorch.org's install selector, since plain pip can give the slower CPU build`
+        : IS_WIN ? 'plain pip gives the CPU build, which is right without an NVIDIA card' : 'without an NVIDIA card the CPU wheels from pytorch.org, since plain pip on Linux gives the large CUDA build';
+      const what = [missing.length && `missing ${missing.join(', ')}`, old && `transformers ${j.transformers} has no SAM 2 video model (it needs 4.56 or newer)`].filter(Boolean).join('; ');
+      return { state: 'fail', sam2, detail: `Python ${j.py}${j.torch ? ` · torch ${j.torch}` : ''} · ${what}.`,
+        fix: `Setup check "Object separation (SAM 2)" failed: Python ${j.py} (${py}): ${what}. The object-separation skill (separating a person or an object from the background, on this computer, with SAM 2.1 through transformers) needs torch, torchvision, transformers 4.56 or newer, numpy and Pillow for that Python (pip; if it says "externally managed", use the studio's .venv), as the studio's requirements.txt lists them.${!j.torch ? ` For torch and torchvision: ${torchHow}.` : ''} ${ask}` };
+    }
+    // An NVIDIA card that torch can't use: a CPU build of torch.
+    const cpuTorch = hw.device === 'cuda' && j.device === 'cpu';
+    const on = { mps: 'Apple Silicon (MPS)', cuda: rec.why, cpu: 'the CPU' }[j.device];
+    const base = `torch ${j.torch} on ${on} · transformers ${j.transformers}`;
+    const fixCuda = cpuTorch ? `Setup check "Object separation (SAM 2)": this computer has ${hw.gpu}, but the torch for ${py} is a CPU build (torch ${j.torch}), so object separation runs on the CPU, which is slow. Install the CUDA build of torch for that Python from pytorch.org's install selector. Ask me before installing anything.` : null;
+    const cudaNote = cpuTorch ? ` · torch here can't use ${hw.gpu} (a CPU build)` : '';
+    if (!there) return { state: 'warn', sam2, fix: fixCuda,
+      detail: `${base} · ${model} isn't downloaded yet${have.length ? ` (downloaded: ${have.join(', ')})` : ''}${slow}${cudaNote}.` };
+    return { state: cpuTorch ? 'warn' : 'ok', sam2, fix: fixCuda, detail: `${base} · ${model}, in ${tilde(hfHub())}${slow}${cudaNote}` };
+  },
+
   // The recorder runs in the page, in Chrome or Edge (the page adds a note when this browser can't record
   // everything), and Video Octopus saves each take in the takes folder: it has to be there, or be makeable, and writable.
   async recorder() {
@@ -171,6 +245,14 @@ export async function appRoute(req, res, url, { send, body }) {
     if (p === '/api/app/setup' && !post) return send(res, 200, { needed: setupNeeded(), done: section('setup').done, checks: CHECKS.map(([id, title]) => ({ id, title })), formats: formats() }), true;
     if (p === '/api/app/setup' && post) { saveSection('setup', { done: Boolean(b.done) }); return send(res, 200, { done: section('setup').done }), true; }
     if (p === '/api/app/setup/check') return send(res, 200, await runCheck(url.searchParams.get('id'))), true;
+    // Object separation's model: the download's progress, start it (the picked model unless one is named), stop it.
+    if (p === '/api/app/setup/sam2' && !post) return send(res, 200, { ...sam2Download(), have: sam2Have() }), true;
+    if (p === '/api/app/setup/sam2/download' && post) {
+      const choice = section('objsep').model;
+      const size = b.size ? String(b.size) : choice !== 'auto' ? choice : (lastChecks.get('objsep') || await runCheck('objsep')).sam2.recommended;
+      return send(res, 200, startSam2Download(size)), true;
+    }
+    if (p === '/api/app/setup/sam2/stop' && post) return send(res, 200, stopSam2Download()), true;
     // Create my studio: where it would go (the sync warning, whether the folder is there), then the copy itself.
     if (p === '/api/app/setup/studio-path' && !post) return send(res, 200, studioPathInfo(url.searchParams.get('path'))), true;
     if (p === '/api/app/setup/create-studio' && post) return send(res, 200, createStudio(b.path)), true;
