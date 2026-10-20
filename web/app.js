@@ -7,7 +7,7 @@ if (location.hostname === 'localhost') location.replace(location.href.replace('/
 
 import { PRESETS, NIGHT, SHAPES, BG_KINDS, NO_CROP, MIN_KEEP, compose, withPreset, normalize, normCrop, animatedBg, borderLabel, effectiveLook, shotAt, transitionsOf, lookKeys,
   zoomAt, zoomedCrop, slideOffsets, zoominAt, cropRegion, ZOOM_SPEEDS } from './layout.js';
-import { $, esc, h, api, toast, ago, clock, tilde, fileManager, setSystem, engineName, cutWord } from './ui.js';
+import { $, esc, h, api, toast, ago, clock, tilde, fileManager, setSystem, engineName, cutWord, confirmBox } from './ui.js';
 import { makeTimeline } from './timeline.js';
 import { makeUndo, tokens, lookKey as appearanceKey } from './tlcore.js';
 import { makeScenes, cutMap } from './scenes.js';
@@ -702,6 +702,8 @@ async function openProject(id) {
   } });
   rail.dock($('#dock', el));
   $('#exportBtn').onclick = () => setTab('renders');
+  // No ffmpeg, no export: the button says where to get it (Setup's Tools card installs it after an OK).
+  if (STATUS?.ffmpeg === false) Object.assign($('#exportBtn'), { disabled: true, title: 'Exporting needs ffmpeg: Setup → Tools installs it' });
   // Export kinds next to the MP4 (web/exportkinds.js): Layers and Timeline file, and their cards on the Renders tab.
   const exKinds = makeExportKinds({ id, getP: () => P, canvas, job: () => jobs.get('export'), rerender: () => renderOtherInspector(), useCut: () => exUseCut });
   const exBuilt = makeExportBuilt(id); // built blocks (the Intro Claude rendered) in Export → Video (web/exportbuilt.js)
@@ -834,8 +836,8 @@ async function openProject(id) {
       ${job ? `<section><div class="ex-job" role="status"><div class="ex-job-top"><span class="dot" aria-hidden="true"></span><b>${esc(job.label)}</b>${job.cancel ? '<button class="btn small" id="exStop">Stop</button>' : ''}</div>
         <i><b style="width:${Math.round((job.progress || 0) * 100)}%"></b></i><span class="sub">${Math.round((job.progress || 0) * 100)}%</span></div></section>` : ''}
       <section class="ex-go">
-        <button class="btn dark wide big" id="exGo"${ready && !job ? '' : ' disabled'}>${ICON.export}${job ? 'Exporting…' : P.renders.length ? 'Export a new version' : 'Export'}</button>
-        ${ready ? '' : '<p class="sub">Add a recording first, and wait until its playback copies are ready.</p>'}
+        <button class="btn dark wide big" id="exGo"${ready && !job && STATUS?.ffmpeg !== false ? '' : ' disabled'}>${ICON.export}${job ? 'Exporting…' : P.renders.length ? 'Export a new version' : 'Export'}</button>
+        ${STATUS?.ffmpeg === false ? '<p class="sub">Exporting needs ffmpeg: <a href="#/setup">Setup → Tools</a> installs it.</p>' : ready ? '' : '<p class="sub">Add a recording first, and wait until its playback copies are ready.</p>'}
         <button class="btn wide" id="exLearn" title="${esc(P.pipeline?.learn?.ask || '')}">Learn from this project</button>
         <p class="sub ta-c">Saves reusable pieces and lessons into your library.</p></section>
     </div>`));
@@ -1394,8 +1396,23 @@ function makeChat(root, id, ext = {}, opts = {}) {
     card.append(h(`<div class="sub" style="margin-top:6px">${esc(label)}</div>`));
   }
 
+  // The local model server under this chat isn't answering (server/engines.mjs localDown): a banner over the message box,
+  // with a switch to Claude Code that asks first. Nothing switches by itself.
+  let banner = null;
+  function localDown(ev) {
+    banner?.remove();
+    banner = h(`<div class="chat-banner" role="status"><span>${esc(ev.text)}</span><button type="button" class="btn small">Switch to Claude Code</button><button type="button" class="btn ghost small" aria-label="Dismiss">✕</button></div>`);
+    const [sw, x] = banner.querySelectorAll('button');
+    x.onclick = () => { banner.remove(); banner = null; };
+    sw.onclick = async () => {
+      if (!(await confirmBox({ title: 'Switch the chats to Claude Code?', text: `Video Octopus's chats run on Claude Code with your Claude account instead of ${ev.name}. You can switch back in Settings → Agent & model.`, ok: 'Switch' }))) return;
+      try { await api('/api/app/scan/connect', { agent: 'claude', confirmed: true }); banner?.remove(); banner = null; toast('Chats run on Claude Code now.'); } catch (e) { toast(e.message); }
+    };
+    (root.querySelector('.dock') || input.closest('.composer'))?.before(banner);
+  }
   function handle(ev) {
     switch (ev.t) {
+      case 'local-down': localDown(ev); break;
       case 'busy': setBusy(ev.busy); if (!ev.busy) flushHeld(); break;
       case 'status': $('#workText', root).textContent = ev.text; break;
       case 'session': $('#sessionInfo', root).textContent = ev.model ? `· ${ev.model.replace(/^claude-/, '')}` : ''; break;

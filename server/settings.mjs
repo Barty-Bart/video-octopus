@@ -51,7 +51,8 @@ const SECTIONS = {
     ccSource: 'plan', ccUrl: '', ccModel: '', ccContext: 0,
     // Clean chats: Claude Code with only the studio's own skills and settings (claude.mjs). On by default.
     lean: true },
-  transcribe: { engine: 'local', model: 'auto', provider: 'deepgram', language: 'auto', vocab: [] },
+  // whisperEngine: the Whisper build on this computer: mlx (Apple Silicon's GPU) or faster-whisper; auto = the recommended one.
+  transcribe: { engine: 'local', model: 'auto', whisperEngine: 'auto', provider: 'deepgram', language: 'auto', vocab: [] },
   render: { engine: 'local', jobs: 0, size: '1080p', codec: 'h264' },
   // Settings → Recording: what the record panel starts with. screen 'screen' (the browser's picker) or 'none' (camera
   // or mic only); camera and mic are the browser's device ids ('default' = the system's, 'none' = don't record it).
@@ -63,7 +64,8 @@ const SECTIONS = {
   // Settings → Rendering → Object separation: the SAM 2.1 model the object-separation skill uses; auto = the one
   // Setup recommends for this computer (server/sam2.mjs).
   objsep: { model: 'auto' },
-  setup: { done: false },
+  // agent: what the creator connected on the onboarding screen ('' until they click Connect).
+  setup: { done: false, agent: '' },
   updates: { auto: true }, // Settings → Updates: check GitHub quietly when Video Octopus starts (server/updates.mjs)
   // First-time help that shows once (in settings, not the browser, so it never comes back): stepsIntro = the
   // "How a video gets made here" dialog on the first project page (web/rail.js); 'dismissed' after Got it or Start.
@@ -93,7 +95,7 @@ const RULES = {
   claude: { useApiKey: 'bool', engine: ['claude', 'codex', 'pi'], codexProvider: ['chatgpt', 'lmstudio', 'ollama'], codexModel: 'str',
     piSource: ['pi', 'endpoint'], piModel: 'str', piBaseUrl: 'str', piVision: 'bool', piContext: [4096, 4000000],
     ccSource: ['plan', 'ollama', 'lmstudio', 'provider'], ccUrl: 'url', ccModel: 'str', ccContext: [0, 4000000], lean: 'bool' },
-  transcribe: { engine: ['local', 'cloud'], model: ['auto', ...MODELS], provider: Object.keys(PROVIDERS), language: Object.keys(LANGS), vocab: 'words' },
+  transcribe: { engine: ['local', 'cloud'], model: ['auto', ...MODELS], whisperEngine: ['auto', 'mlx', 'faster-whisper'], provider: Object.keys(PROVIDERS), language: Object.keys(LANGS), vocab: 'words' },
   render: { engine: ['local'], jobs: [0, 64], size: ['1080p', '4k'], codec: ['h264', 'hevc', 'prores'] },
   recorder: { screen: ['screen', 'none'], camera: 'str', mic: 'str', target: ['replace', 'layer'], countdown: [0, 10] },
   sound: { claude: 'bool', epidemic: 'bool', library: 'str', fxDb: [-40, 0] },
@@ -101,7 +103,7 @@ const RULES = {
   appearance: { look: LOOKS, calm: 'bool' },
   editing: { trimHighlight: 'bool', trimLens: 'bool' },
   objsep: { model: ['auto', ...SAM2_SIZES] },
-  setup: { done: 'bool' },
+  setup: { done: 'bool', agent: ['', 'claude', 'codex', 'pi', 'lmstudio', 'ollama'] },
   updates: { auto: 'bool' },
   help: { stepsIntro: ['', 'dismissed'] },
 };
@@ -208,6 +210,7 @@ export async function childEnv() {
   const cloud = t.engine === 'cloud' && PROVIDERS[t.provider] && env[PROVIDERS[t.provider].key];
   env.STUDIO_TRANSCRIBE = cloud ? t.provider : 'local';
   if (t.engine !== 'cloud' && t.model !== 'auto') env.STUDIO_TRANSCRIBE_MODEL = t.model;
+  if (!cloud) env.STUDIO_TRANSCRIBE_ENGINE = await whisperEngine(); // mlx | faster-whisper, for the transcribe skill
   if (t.language !== 'auto') env.STUDIO_TRANSCRIBE_LANGUAGE = t.language;
   const o = section('objsep', s);
   if (o.model !== 'auto') env.STUDIO_OBJSEP_MODEL = o.model; // the object-separation skill's model (else its own pick)
@@ -229,6 +232,7 @@ export function settingsBrief(env = {}) {
       : `- Transcription: on this computer with the transcribe skill (STUDIO_TRANSCRIBE=local, ${t.model !== 'auto' ? `model ${t.model}` : '--model auto: the best verbatim model already downloaded'}). Never run two transcriptions side by side; the rough cut's filler pass goes in the same run (--fill-out).`);
   if (t.language !== 'auto' || t.vocab.length) lines.push(`- Transcription language: ${LANGS[t.language]}${t.vocab.length ? `. Always spell these right (pass them as the prompt): ${t.vocab.join(', ')}` : ''}.`);
   lines.push(`- Rendering: on this computer${r.jobs ? `, up to ${r.jobs} jobs in parallel` : ''}; default output ${r.size === '4k' ? '4K' : '1080p'} ${{ h264: 'H.264', hevc: 'HEVC', prores: 'ProRes' }[r.codec]}.`);
+  lines.push('- Python: transcription on this computer, the rough cut, join check, tools/cut/apply_edit.py and object separation run Python (the studio\'s .venv first). When a step needs it and it isn\'t there (Setup may have said "Not needed"), say so in one line, offer to set it up (Python 3.10+, a .venv in the studio with its requirements.txt) and ask before installing anything.');
   const o = section('objsep', s), sam = sam2Have();
   lines.push(`- Object separation: the object-separation skill with SAM 2.1 ${o.model === 'auto' ? 'as recommended for this computer (--model left out: its own pick)' : `${o.model} (STUDIO_OBJSEP_MODEL=${o.model})`}; downloaded: ${sam.length ? sam.join(', ') : 'none yet'}. The skill never downloads a model: when it isn't there, the creator presses Download in Video Octopus's Setup (Object separation row) or picks another one in Settings → Rendering.`);
   lines.push(`- Sound sources: ${[so.claude && 'made by Claude', so.epidemic && 'Epidemic Sound (through its connector)', so.library && `the library folder ${so.library}`].filter(Boolean).join(', ') || 'none picked'}; effects sit about ${Math.abs(so.fxDb)} dB under the voice (an effect's loudest 0.2 s against the voice's level while it talks: Video Octopus's export and canvas mix sound cues this way, so mix your renders the same).`);
@@ -262,26 +266,54 @@ let machine = null;
 export async function machineInfo() {
   if (machine) return machine;
   if (!IS_MAC) return (machine = await otherMachine());
-  const [chip, mem, perf, eff, ncpu, gpu] = await Promise.all([
+  const [chip, mem, perf, eff, ncpu, gpu, arm, rosetta] = await Promise.all([
     run('/usr/sbin/sysctl', ['-n', 'machdep.cpu.brand_string']), run('/usr/sbin/sysctl', ['-n', 'hw.memsize']),
     run('/usr/sbin/sysctl', ['-n', 'hw.perflevel0.physicalcpu']), run('/usr/sbin/sysctl', ['-n', 'hw.perflevel1.physicalcpu']),
     run('/usr/sbin/sysctl', ['-n', 'hw.ncpu']), run('/usr/sbin/system_profiler', ['SPDisplaysDataType', '-json'], 10000),
+    run('/usr/sbin/sysctl', ['-n', 'hw.optional.arm64']), run('/usr/sbin/sysctl', ['-n', 'sysctl.proc_translated']),
   ]);
   let gpuCores = null;
   try { gpuCores = Number(JSON.parse(gpu).SPDisplaysDataType?.[0]?.sppci_cores) || null; } catch {}
   const ramGB = Math.round(Number(mem) / 2 ** 30) || null;
-  return (machine = { chip: chip || 'This computer', ramGB, cores: Number(ncpu) || null, perf: Number(perf) || null, eff: Number(eff) || null, gpuCores,
-    whisper: whisperPick({ apple: /apple/i.test(chip), ramGB }) });
+  // Apple Silicon running natively (not an Intel build under Rosetta, which can't use MLX).
+  const apple = /apple/i.test(chip) || arm === '1', arm64 = apple && rosetta !== '1';
+  const m = { chip: chip || 'This computer', ramGB, cores: Number(ncpu) || null, perf: Number(perf) || null, eff: Number(eff) || null, gpuCores, apple, arm64,
+    whisper: whisperPick({ apple, arm64, ramGB }) };
+  return (machine = { ...m, sam: sam2Recommend(sam2Machine(m)) });
 }
 
-// The Whisper model for a computer (the transcribe skill's table). Apple Silicon by its memory: 32 GB+ → large-v3,
-// 16 GB → medium.en, smaller → small.en. Windows and Linux: an NVIDIA card with 8 GB+ → large-v3, a smaller one →
-// medium.en (faster-whisper runs on CUDA); the CPU alone → small.en with 16 GB and 8 cores, else base.en.
-export function whisperPick({ apple = false, ramGB = 0, gpu = null, vramMB = 0, cores = 0 } = {}) {
-  const [model, speed] = apple ? (ramGB >= 32 ? ['large-v3', 'faster than real time'] : ramGB >= 16 ? ['medium.en', 'about real time'] : ['small.en', 'slower than real time, but it works'])
-    : gpu ? (Number(vramMB) >= 8000 ? ['large-v3', 'faster than real time on the NVIDIA card'] : ['medium.en', 'about real time on the NVIDIA card'])
-    : ramGB >= 16 && cores >= 8 ? ['small.en', 'about real time on the CPU'] : ['base.en', 'slower than real time, but it works'];
-  return { model, speed };
+// The Whisper model and build for a computer (the transcribe skill's table). The size ladder by memory: 32 GB+ →
+// large-v3, 16 GB → medium.en, smaller → small.en. Apple Silicon running natively: MLX Whisper (the Mac's GPU) at that
+// size. An NVIDIA card: faster-whisper on CUDA, large-v3 with 8 GB+, else medium.en. Anything else (an Intel Mac, a
+// Mac under Rosetta, Windows or Linux without NVIDIA): faster-whisper on the CPU (int8), one size down the ladder.
+export function whisperPick({ apple = false, arm64 = false, ramGB = 0, gpu = null, vramMB = 0 } = {}) {
+  const ladder = ['large-v3', 'medium.en', 'small.en', 'base.en'], step = ramGB >= 32 ? 0 : ramGB >= 16 ? 1 : 2;
+  if (apple && arm64) return { model: ladder[step], engine: 'mlx', speed: 'on the Mac\'s GPU (MLX)' };
+  if (gpu) return Number(vramMB) >= 8000 ? { model: 'large-v3', engine: 'faster-whisper', speed: 'faster than real time on the NVIDIA card' }
+    : { model: 'medium.en', engine: 'faster-whisper', speed: 'about real time on the NVIDIA card' };
+  return { model: ladder[step + 1], engine: 'faster-whisper', speed: 'on the CPU (int8): slower, so a size smaller' };
+}
+
+// The Whisper build in use: Settings → Transcription's, or for auto the recommended one (MLX only where it runs).
+// Auto keeps to a build that has a model here: until an MLX model is downloaded, a computer with faster-whisper models
+// goes on using them.
+export async function whisperEngine(s = settings()) {
+  const e = section('transcribe', s).whisperEngine, mac = await machineInfo();
+  if (e === 'faster-whisper' || (e === 'mlx' && !mac.arm64)) return 'faster-whisper';
+  if (e === 'mlx') return 'mlx';
+  return mac.whisper.engine === 'mlx' && !downloaded('mlx').length && downloaded('whisper').length ? 'faster-whisper' : mac.whisper.engine;
+}
+
+// Whether something on this computer needs Python: transcription here (picked, or a cloud service whose key isn't
+// saved), or a local model (LM Studio or Ollama behind Claude Code or Codex). Setup shows Python as "Not needed"
+// otherwise and never blocks on it; the skills that still run Python (rough cut, join check, apply_edit, Auto-frame
+// on Windows and Linux) ask for it the first time they need it.
+export async function needsLocalPython(s = settings(), { has = hasKey } = {}) {
+  const t = section('transcribe', s), c = section('claude', s), p = PROVIDERS[t.provider];
+  const localTx = t.engine !== 'cloud' || !p || !(await has(p.key).catch(() => false));
+  const engine = ['claude', 'codex', 'pi'].includes(c.engine) ? c.engine : 'claude';
+  const localModel = (engine === 'claude' && ['lmstudio', 'ollama'].includes(c.ccSource)) || (engine === 'codex' && ['lmstudio', 'ollama'].includes(c.codexProvider));
+  return localTx || localModel;
 }
 
 // Windows and Linux: the CPU and memory from Node, and an NVIDIA card if nvidia-smi is there (faster-whisper runs on
@@ -292,12 +324,14 @@ async function otherMachine() {
   const nv = await run('nvidia-smi', ['--query-gpu=name,memory.total', '--format=csv,noheader,nounits']);
   const [gpu, vram] = nv ? nv.split('\n')[0].split(',').map((x) => x.trim()) : [];
   return { chip: (list[0]?.model || 'This computer').trim(), ramGB, cores: list.length || null, perf: null, eff: null, gpuCores: null, gpu: gpu || null,
-    vramGB: Number(vram) ? Math.round(Number(vram) / 1024) : null, whisper: whisperPick({ ramGB, gpu, vramMB: Number(vram) || 0, cores: list.length }) };
+    vramGB: Number(vram) ? Math.round(Number(vram) / 1024) : null, apple: false, arm64: false, whisper: whisperPick({ ramGB, gpu, vramMB: Number(vram) || 0 }),
+    sam: sam2Recommend(sam2Machine({ gpu, vramGB: Number(vram) ? Number(vram) / 1024 : null })) };
 }
 
-// faster-whisper models already downloaded (the Hugging Face cache): refs/main names a snapshot with the weights and
-// the files around them (hfmodels.mjs), so a download that didn't finish never counts.
-export const whisperModels = () => downloaded('whisper');
+// Whisper models already downloaded (the Hugging Face cache), for faster-whisper (Systran's repos) or MLX
+// (mlx-community's): refs/main names a snapshot with the weights and the files around them (hfmodels.mjs), so a
+// download that didn't finish never counts.
+export const whisperModels = (engine = 'faster-whisper') => downloaded(engine === 'mlx' ? 'mlx' : 'whisper');
 
 // What --model auto picks (the transcribe skill's order): the best verbatim model already downloaded, else medium.en
 // for English (medium otherwise), which isn't downloaded yet.
@@ -323,15 +357,15 @@ export async function transcribeHow({ fill = false, has = hasKey } = {}) {
     const fillers = { assemblyai: 'AssemblyAI: disfluencies on', deepgram: 'Deepgram: filler_words on', openai: 'OpenAI: a prompt full of fillers, like "Umm, uh, so, like, you know"' }[t.provider];
     return { model: null, fallback: null, text: `How (Settings → Transcription): through ${p.label}'s API, with the key in $${p.key} (never print it). Send the audio once with word timestamps${fill ? ` and filler words kept${fillers ? ` (${fillers})` : ''}` : ''}${lang ? `, language ${lang}` : ''}${t.vocab.length ? `, with these spelled right: ${t.vocab.join(', ')}` : ''}, and write the transcribe skill's files from it: words.json as [[start, end, word], …] and the SRT into work/tr/${fill ? ', and the same words.json into work/tr_fill/ (that one request is the filler pass too)' : ''}.` };
   }
-  // On this computer: the model picked, or what --model auto picks.
-  const have = whisperModels();
+  // On this computer: the model picked, or what --model auto picks, with the Whisper build (MLX or faster-whisper).
+  const engine = await whisperEngine(), have = whisperModels(engine);
   const model = t.model !== 'auto' ? t.model : autoWhisper(lang, have);
-  const size = have.includes(model) ? '' : (await sources('whisper', { cached: true }))[model]?.size;
+  const size = have.includes(model) ? '' : (await sources(engine === 'mlx' ? 'mlx' : 'whisper', { cached: true }))[model]?.size;
   const extra = [lang && `--lang ${lang}`, t.vocab.length && `--prompt "${t.vocab.join(', ').replace(/"/g, '')}"`].filter(Boolean).join(' ');
-  const cmd = `transcribe.py <file> --model ${t.model === 'auto' ? 'auto' : model} --out work/tr${fill ? ' --fill-out work/tr_fill' : ''}${extra ? ` ${extra}` : ''}`;
+  const cmd = `transcribe.py <file> --engine ${engine} --model ${t.model === 'auto' ? 'auto' : model} --out work/tr${fill ? ' --fill-out work/tr_fill' : ''}${extra ? ` ${extra}` : ''}`;
   const fallback = t.engine === 'cloud' && p ? p.label : null;
   const text = `${fallback ? `Settings → Transcription picks ${p.label}, but no ${p.label} key is saved, so transcribe on this computer this time. ` : ''}`
-    + `How${fallback ? '' : ' (Settings → Transcription)'}: on this computer with ${model}${fill ? ', both passes in one run (the model loads once and they go one after the other)' : ''}: the transcribe skill's ${cmd}.`
+    + `How${fallback ? '' : ' (Settings → Transcription)'}: on this computer with ${model}${engine === 'mlx' ? ' on MLX Whisper' : ''}${fill ? ', both passes in one run (the model loads once and they go one after the other)' : ''}: the transcribe skill's ${cmd}.`
     + `${fill ? ' Never two transcriptions side by side: they fight over the same cores and take three times as long.' : ''}`
     + `${have.includes(model) ? '' : ` The ${model} model isn't downloaded on this computer yet${have.length ? ` (these are: ${have.join(', ')})` : ''}: the creator downloads it in Video Octopus's Setup (Transcription model (Whisper) → Download${size ? `, ${size}` : ''}), or ask me before downloading it, or use one that is here.`}`;
   return { model, fallback, text };
@@ -352,10 +386,11 @@ export async function settingsView() {
     keys: await keyStatus(), keyStore: KEY_STORE,
     keyInfo: Object.fromEntries(Object.entries(KEYS).map(([k, v]) => [k, { label: v.label, test: Boolean(v.test) }])),
     providers: PROVIDERS, models: MODELS, langs: LANGS,
-    machine: await machineInfo(), downloaded: whisperModels(), autoWhisper: autoWhisper(section('transcribe', s).language === 'auto' ? null : section('transcribe', s).language),
+    machine: await machineInfo(), whisperEngine: await whisperEngine(s),
+    downloaded: whisperModels(await whisperEngine(s)), autoWhisper: autoWhisper(section('transcribe', s).language === 'auto' ? null : section('transcribe', s).language, whisperModels(await whisperEngine(s))),
     // Where each model comes from, as last checked (Setup asks Hugging Face; a page that must answer at once only reads
     // what's kept, and a stale or missing one is asked again in the background for the next look).
-    whisperSources: await modelSources('whisper'),
+    whisperSources: await modelSources(await whisperEngine(s) === 'mlx' ? 'mlx' : 'whisper'),
     // Object separation's models; the recommendation from the hardware here (Setup's row also asks torch).
     sam2: { models: SAM2_MODELS, have: sam2Have(), recommended: sam2Recommend(sam2Machine(await machineInfo())), sources: await modelSources('sam2') },
     envApiKey: Boolean(process.env.ANTHROPIC_API_KEY),

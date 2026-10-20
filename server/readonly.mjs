@@ -3,7 +3,7 @@
 // one or a chain joined by && || ; | & or a new line, no redirects, no command substitution, no option that writes a
 // file or runs another program), plus the octopus command's read commands, run by its real path (bin/octopus.mjs:
 // projects [list|open|archived], settings [section], schedules [list|runs], library [section|inbox], dashboard, skills,
-// help; --json and --range only). A cd in the chain is followed for the octopus command's path.
+// models [family] (never models download), help; --json and --range only). A cd in the chain is followed for the octopus command's path.
 import { basename, isAbsolute, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { readOnly } from '../core/pi/octopus-extension.js';
@@ -26,6 +26,7 @@ const READ = {
   settings: (v) => v !== 'set',
   schedules: (v) => [undefined, 'list', 'runs'].includes(v),
   library: (v) => !['accept', 'add', 'aside'].includes(v),
+  models: (v) => v !== 'download',
   dashboard: () => true, skills: () => true, help: () => true,
 };
 export function studioRead(part, cwd) {

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""transcribe.py: on-device transcription with word timestamps (faster-whisper).
+"""transcribe.py: on-device transcription with word timestamps (faster-whisper, or MLX Whisper on Apple Silicon).
 
-  python3 transcribe.py VIDEO_OR_AUDIO [--model small.en|auto] [--lang en] [--out DIR] [--device auto|cpu|cuda]
+  python3 transcribe.py VIDEO_OR_AUDIO [--engine auto|mlx|faster-whisper] [--model small.en|auto] [--lang en] [--out DIR] [--device auto|cpu|cuda]
                         [--srt-max-chars 42] [--prompt "names, jargon"] [--start S --end E]
                         [--fill-out DIR] [--threads N]
 
@@ -16,9 +16,13 @@ memory: much faster than two transcriptions side by side, which fight over the s
 --model auto: the best model for a verbatim transcript already on this computer (medium.en for English, else
 large-v3, medium, ...). A prompt (--prompt, the filler pass) reaches every 30 s window, not only the first.
 CPU threads: the performance cores on Apple Silicon (int8 Whisper on the efficiency cores slows the rest down).
+--engine: mlx runs MLX Whisper (mlx-community's models) on an Apple Silicon Mac's GPU; faster-whisper runs Systran's
+models on the CPU (int8) or an NVIDIA card. auto (or $STUDIO_TRANSCRIBE_ENGINE, which Video Octopus sets): MLX where
+mlx_whisper imports on a native arm64 Python, else faster-whisper. Both write the same files. With --model auto and
+no model of the chosen build downloaded, a downloaded model of the other build is used rather than fetching one.
 The model downloads once (to the Hugging Face cache) and then works offline.
 """
-import argparse, json, os, shutil, subprocess, sys, tempfile, time
+import argparse, json, os, platform, shutil, subprocess, sys, tempfile, time
 from pathlib import Path
 
 
@@ -47,16 +51,58 @@ def fw_cached(model):
     return any((d / "model.bin").exists() for d in (hub_dir() / repo / "snapshots").glob("*"))
 
 
-def pick_model(want, lang):
+def mlx_repo(model):
+    """mlx-community's conversion of a Whisper size (the repos Video Octopus's Setup downloads)"""
+    m = ALIASES.get(model, model)
+    return "mlx-community/distil-whisper-large-v3" if m == "distil-large-v3" else f"mlx-community/whisper-{m}-mlx"
+
+
+def mlx_cached(model):
+    d = hub_dir() / ("models--" + mlx_repo(model).replace("/", "--")) / "snapshots"
+    return any((s / "config.json").exists() and any(s.glob("weights.*")) for s in d.glob("*"))
+
+
+def mlx_ok():
+    """MLX Whisper runs here: an Apple Silicon Mac, a native arm64 Python, mlx_whisper installed"""
+    if sys.platform != "darwin" or platform.machine() != "arm64":
+        return False
+    try:
+        import mlx_whisper  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+ORDER = {"en": ["medium.en", "large-v3", "medium", "small.en", "small", "base.en", "tiny.en"],
+         "other": ["large-v3", "medium", "small", "base", "tiny"]}
+
+
+def pick_model(want, lang, cached=fw_cached):
     """--model auto: the best model for a verbatim transcript (ums, repeats and all) already downloaded."""
     if want != "auto":
         return ALIASES.get(want, want)
     english = lang in (None, "en")
-    for m in (["medium.en", "large-v3", "medium", "small.en", "small", "base.en", "tiny.en"] if english
-              else ["large-v3", "medium", "small", "base", "tiny"]):
-        if fw_cached(m):
+    for m in ORDER["en" if english else "other"]:
+        if cached(m):
             return m
-    return "medium.en" if english else "medium"   # not downloaded: faster-whisper fetches it (ask first)
+    return "medium.en" if english else "medium"   # not downloaded: the first run fetches it (ask first)
+
+
+def pick_engine(want, model, lang):
+    """the Whisper build and model: MLX where it runs, else faster-whisper; --model auto stays with what's downloaded"""
+    engine = want if want in ("mlx", "faster-whisper") else ("mlx" if mlx_ok() else "faster-whisper")
+    if engine == "mlx" and not mlx_ok():
+        print("MLX Whisper can't run here (it needs an Apple Silicon Mac, a native arm64 Python and mlx-whisper): faster-whisper instead")
+        engine = "faster-whisper"
+    if model == "auto":
+        order = ORDER["en" if lang in (None, "en") else "other"]
+        mine, theirs = (mlx_cached, fw_cached) if engine == "mlx" else (fw_cached, mlx_cached)
+        switch = "faster-whisper" if engine == "mlx" else "mlx" if mlx_ok() else None
+        other = [m for m in order if theirs(m)]
+        if switch and other and not any(mine(m) for m in order):
+            print(f"no {engine} model downloaded, but a {switch} one is: {switch} with {other[0]}")
+            return switch, other[0]
+    return engine, pick_model(model, lang, mlx_cached if engine == "mlx" else fw_cached)
 
 
 def perf_cores():
@@ -139,6 +185,20 @@ def fw_pass(model, audio, lang, prompt):
     return out, info.language, info.language_probability
 
 
+def mlx_pass(repo, audio, lang, prompt):
+    # MLX Whisper has no hotwords: the prompt goes in as initial_prompt (with each window decoded on its own, the first
+    # window gets it). Word times come from its cross-attention alignment, like faster-whisper's.
+    import mlx_whisper
+    r = mlx_whisper.transcribe(audio, path_or_hf_repo=repo, word_timestamps=True, language=lang, initial_prompt=prompt,
+                               condition_on_previous_text=False, verbose=None)
+    out = []
+    for s in r.get("segments", []):
+        out.append((s["start"], s["end"], s["text"], [(w["start"], w["end"], w["word"]) for w in s.get("words", [])]))
+        print(f"\r  {s['end']:7.1f}s transcribed", end="", flush=True)
+    print()
+    return out, r.get("language") or lang or "?", 1.0
+
+
 def collect(segs, off):
     words, text = [], []
     for start, end, t, ws in segs:
@@ -162,6 +222,7 @@ def write_out(out, stem, words, text, max_chars):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
+    ap.add_argument("--engine", default=os.environ.get("STUDIO_TRANSCRIBE_ENGINE") or "auto", help="auto, mlx (Apple Silicon) or faster-whisper")
     ap.add_argument("--model", default="small.en", help="tiny, base, small, medium, large-v3, distil-large-v3 "
                     "(.en = English only), or auto: the best verbatim model already downloaded")
     ap.add_argument("--lang", default=None, help="language code, e.g. en, pl, pt (auto-detect if omitted; .en models are English)")
@@ -179,18 +240,24 @@ def main():
     src = Path(a.input)
     out = Path(a.out) if a.out else src.with_name(src.stem + "_transcript")
     out.mkdir(parents=True, exist_ok=True)
-    model_name = pick_model(a.model, a.lang)
+    engine, model_name = pick_engine(a.engine, a.model, a.lang)
     lang = a.lang or ("en" if model_name.endswith(".en") else None)
-    try:
-        from faster_whisper import WhisperModel
-    except ImportError:
-        sys.exit("faster-whisper is not installed. Run: python3 -m pip install faster-whisper (or install the studio's requirements.txt into its .venv)")
     t0 = time.time()
-    dev = pick_device(a.device)
-    ctype = "float16" if dev == "cuda" else "int8"
-    threads = a.threads or perf_cores()
-    print(f"model {model_name} on {dev} ({ctype}, {threads} threads); first run downloads the model")
-    model = WhisperModel(model_name, device=dev, compute_type=ctype, cpu_threads=threads)
+    if engine == "mlx":
+        repo = mlx_repo(model_name)
+        print(f"model {model_name} on MLX Whisper ({repo}, the Mac's GPU){'' if mlx_cached(model_name) else '; first run downloads the model'}")
+        run = lambda audio, prompt: mlx_pass(repo, audio, lang, prompt)  # noqa: E731
+    else:
+        try:
+            from faster_whisper import WhisperModel
+        except ImportError:
+            sys.exit("faster-whisper is not installed. Run: python3 -m pip install faster-whisper (or install the studio's requirements.txt into its .venv)")
+        dev = pick_device(a.device)
+        ctype = "float16" if dev == "cuda" else "int8"
+        threads = a.threads or perf_cores()
+        print(f"model {model_name} on faster-whisper, {dev} ({ctype}, {threads} threads){'' if fw_cached(model_name) else '; first run downloads the model'}")
+        model = WhisperModel(model_name, device=dev, compute_type=ctype, cpu_threads=threads)
+        run = lambda audio, prompt: fw_pass(model, audio, lang, prompt)  # noqa: E731
     wav = to_wav(src, a.start, a.end)
     import wave, numpy as np   # decode ourselves with ffmpeg: avoids PyAV version problems
     with wave.open(str(wav)) as wf:
@@ -201,7 +268,7 @@ def main():
         passes.append((Path(a.fill_out), f"{a.prompt}. {a.fill_prompt}" if a.prompt else a.fill_prompt))
     for i, (dest, prompt) in enumerate(passes):
         t1 = time.time()
-        segs, language, prob = fw_pass(model, audio, lang, prompt)
+        segs, language, prob = run(audio, prompt)
         words, text = collect(segs, off)
         write_out(dest, src.stem, words, text, a.srt_max_chars)
         dur = (words[-1][1] - words[0][0]) if words else 0

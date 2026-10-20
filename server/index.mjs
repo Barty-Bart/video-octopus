@@ -24,7 +24,8 @@ import { layoutsRoute } from './saved-layouts.mjs';
 import { scenesView, scenesSummary, notesOp, setOverride, applyBrief, kitBrief, updateKit, KIT } from './scenes.mjs';
 import { buildSteps, renderKind } from './built.mjs';
 import { appRoute } from './setup.mjs';
-import { onboardingRoute } from './onboarding.mjs';
+import { onboardingRoute, ffmpegReady } from './onboarding.mjs';
+import { createStudio, defaultStudioPath } from './starter.mjs';
 import { assistantRoute, killAssistant } from './assistant.mjs';
 import { onSettingsChange, restartWhenIdle, section, transcribeHow } from './settings.mjs';
 import { listBackgrounds, useLibraryBackground, saveUpload, saveToLibrary, generateBrief, libraryFile, bgJobRoute } from './backgrounds.mjs';
@@ -397,6 +398,7 @@ async function route(req, res) {
       formats: formats(), formatInfo: formatInfo(), usage: modelSourceView() ? null : planUsage, modelSource: modelSourceView(), engine: engineName(), engineLabel: ENGINES[engineName()],
       appearance: section('appearance', s), // Settings → Appearance: how Video Octopus looks (web/appearance.js applies it)
       help: section('help', s), // first-time help seen (help.stepsIntro: 'dismissed')
+      ffmpeg: await ffmpegReady(), // Export stays off without it (Setup installs it)
       // The computer, for the page: "Show in Finder" or "Show in File Explorer", and paths shortened to ~.
       platform: process.platform, home: homedir(),
     });
@@ -786,6 +788,12 @@ async function route(req, res) {
   return send(res, 404, { error: 'Unknown action' });
 }
 
+// The first launch makes the studio itself: ~/Video Octopus from the starter (projects and recordings inside), so the
+// onboarding screen starts with the folders done. An install that has a studio, or has finished Setup, is left alone.
+if (!settings().studio && !section('setup').done) {
+  try { const r = createStudio(defaultStudioPath()); console.log(`Made your studio: ${r.shown}`); } catch (e) { console.error('first launch, the studio:', e.message); }
+}
+
 const server = createServer((req, res) => {
   route(req, res).catch((e) => { console.error(e); try { send(res, 500, { error: e.message }); } catch {} });
 });
@@ -794,6 +802,8 @@ server.listen(PORT, '127.0.0.1', () => {
   // Where this Video Octopus answers, for bin/octopus.mjs (the command the Video Octopus assistant uses to act on the app) and for
   // every chat Video Octopus starts (they inherit STUDIO_URL).
   process.env.STUDIO_URL = `http://127.0.0.1:${PORT}`;
+  // The command itself, for skills that ask the app to do something (e.g. Setup's model Download, after the creator's OK).
+  process.env.STUDIO_OCTOPUS = join(APP_DIR, 'bin', 'octopus.mjs');
   try { writeJSON(join(LOCAL_DIR, 'server.json'), { url: process.env.STUDIO_URL, port: PORT, pid: process.pid, at: Date.now() }); } catch {}
   console.log(`Your studio folder: ${settings().studio || '(not set yet)'}  ·  projects in ${projectsRoot()}`);
   // The usage log's history, once, from the files already there (the Dashboard isn't empty on day one).

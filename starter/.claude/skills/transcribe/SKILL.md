@@ -41,13 +41,19 @@ Tell the user the summary in plain words (computer, RAM, GPU, tier) and the reco
 
 ## 2. Ask before downloading anything
 
-Models already downloaded are in the Hugging Face cache (`~/.cache/huggingface/hub`, folders `models--Systran--faster-whisper-*`); use one of those if it fits. Otherwise ask one short question: "Can I download a local transcription model (`<model>`, about <size>) and run it on this computer? Nothing leaves your machine." Sizes: tiny 75 MB, base 145 MB, small 480 MB, medium 1.5 GB, large-v3 3 GB, distil-large-v3 1.5 GB.
+Models already downloaded are in the Hugging Face cache (`~/.cache/huggingface/hub`: `models--Systran--faster-whisper-*` for faster-whisper, `models--mlx-community--whisper-*` for MLX Whisper); use one of those if it fits. Otherwise ask one short question: "Can I download a local transcription model (`<model>`, about <size>) and run it on this computer? Nothing leaves your machine." Sizes: tiny 75 MB, base 145 MB, small 480 MB, medium 1.5 GB, large-v3 3 GB, distil-large-v3 1.5 GB. On a yes, in Video Octopus use its own Download (the one in Setup's Transcription model row, with its progress there): `node "$STUDIO_OCTOPUS" models download whisper <model>` (or `mlx <model>` for MLX Whisper).
 
 Also ask, in the same question if you can:
 - the language (or "auto"),
 - names, brands or jargon that must be spelled right (they go in `--prompt`).
 
 If they say no, offer the alternatives: an SRT they already have (from their editor, YouTube Video Octopus or a captions tool), or a cloud service set in Video Octopus's Settings → Transcription.
+
+## MLX Whisper or faster-whisper
+
+- **MLX Whisper** (`--engine mlx`): on an Apple Silicon Mac it runs on the GPU, with mlx-community's models. It needs a native arm64 Python and `mlx-whisper` (in `requirements.txt`, Apple Silicon only).
+- **faster-whisper** (`--engine faster-whisper`): Systran's models on the CPU (int8) or an NVIDIA card (CUDA).
+- Video Octopus passes its pick in `STUDIO_TRANSCRIBE_ENGINE` (Settings → Transcription → the Whisper build); `--engine auto` picks MLX where it runs. Without mlx-whisper the script says so and uses faster-whisper. Both write the same `words.json`, SRT and text, so the rough cut and join check work the same.
 
 ## 3. Install (once)
 

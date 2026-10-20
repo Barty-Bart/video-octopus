@@ -35,6 +35,9 @@ const HELP = `octopus: act on the running Video Octopus (${BASE})
   octopus library add <file> --kind <section> [--note "..."]   copy a file from the studio into the library
   studio dashboard [--range week|month|all]
   studio skills                           the studio's skills
+  octopus models [whisper|mlx|sam2]        the models Setup knows: where each comes from, which are downloaded
+  octopus models download <whisper|mlx|sam2> <size>   Setup's own Download (the same one, with its progress there
+                                           too), followed to the end. Only after the creator said yes.
 
   Add --json to any command for the raw answer.`;
 
@@ -178,6 +181,31 @@ const cmds = {
   async skills() {
     const list = await api('/api/skills');
     return out(list, () => list.map((s) => `/${s.name}  ${(s.description || '').slice(0, 100)}`).join('\n') || '(no skills)');
+  },
+  // The models' rows in Setup (Whisper, MLX Whisper, SAM 2.1): their sources and what's downloaded, and Setup's own
+  // Download, followed until it's done (so a skill and Setup never fetch the same model twice).
+  async models() {
+    const FAM = { whisper: 'whisper', 'faster-whisper': 'whisper', mlx: 'mlx', sam2: 'sam2', sam: 'sam2', objsep: 'sam2' };
+    if (verb === 'download') {
+      const fam = FAM[rest[0]], size = rest[1];
+      if (!fam || !size) throw new Error('octopus models download <whisper|mlx|sam2> <size>');
+      let d = await api(`/api/app/setup/${fam}/download`, { size });
+      let last = '';
+      while (d.state === 'downloading') {
+        const line = d.total ? `${size}: ${Math.floor(d.got / 1e6)} of ${Math.round(d.total / 1e6)} MB` : `${size}: starting`;
+        if (!json && line !== last) { console.log(line); last = line; }
+        await new Promise((r) => setTimeout(r, 2000));
+        d = await api(`/api/app/setup/${fam}`);
+      }
+      if (d.state !== 'done') throw new Error(d.error || `The download ended: ${d.state}.`);
+      return out(d, () => `${size} is downloaded (${Math.round(d.total / 1e6)} MB, in ${d.cache}).`);
+    }
+    const s = await api('/api/app/settings');
+    const wf = s.whisperEngine === 'mlx' ? 'mlx' : 'whisper';
+    const rows = [[wf, s.whisperSources], ['sam2', s.sam2?.sources]].filter(([, v]) => v);
+    const have = { [wf]: s.downloaded || [], sam2: s.sam2?.have || [] };
+    const pick = verb ? rows.filter(([k]) => k === FAM[verb]) : rows;
+    return out(Object.fromEntries(pick), () => pick.map(([k, src]) => `${k}:\n${Object.entries(src).map(([id, x]) => `  ${id}${have[k].includes(id) ? ' (downloaded)' : ''}  ${x.line}`).join('\n')}`).join('\n\n'));
   },
   async help() { console.log(HELP); },
 };

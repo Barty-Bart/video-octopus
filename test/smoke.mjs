@@ -195,10 +195,10 @@ try {
     return `${readdirSync(join(STUDIO, '.claude', 'skills')).join(', ')} · tools: ${readdirSync(join(STUDIO, 'tools')).join(', ')} · Setup: ${setup.checks.map((x) => x.title).join(' / ')}`;
   });
 
-  await check('object separation is a core skill: in a fresh studio, generic (nothing private, no one creator\'s look), starter version 4', async () => {
+  await check('object separation is a core skill: in a fresh studio, generic (nothing private, no one creator\'s look), starter version 5', async () => {
     const dir = join(STUDIO, '.claude', 'skills', 'object-separation');
-    must(readFileSync(join(APP, 'starter', 'VERSION'), 'utf8').trim() === '4', 'starter/VERSION is not 4');
-    must(JSON.parse(readFileSync(join(STUDIO, '.studio', 'starter.json'), 'utf8')).version === '4', 'the fresh studio is not on starter version 4');
+    must(readFileSync(join(APP, 'starter', 'VERSION'), 'utf8').trim() === '5', 'starter/VERSION is not 5');
+    must(JSON.parse(readFileSync(join(STUDIO, '.studio', 'starter.json'), 'utf8')).version === '5', 'the fresh studio is not on starter version 5');
     const md = readFileSync(join(dir, 'SKILL.md'), 'utf8'), py = readFileSync(join(dir, 'scripts', 'objsep.py'), 'utf8');
     must(/^---\nname: object-separation\ndescription: .{80,}/.test(md), 'SKILL.md front matter');
     // What the skill must say: where its outputs go, how a scene uses the masks, the models, that it never downloads.
@@ -216,7 +216,7 @@ try {
     must(!bad.length, `private or old words in: ${bad.join(', ')}`);
     const help = spawnSync(PY, [join(dir, 'scripts', 'objsep.py'), '--help'], { encoding: 'utf8', env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' } });
     must(help.status === 0 && /separate/.test(help.stdout), `objsep.py --help: ${help.status} ${help.stderr.slice(-300)}`);
-    return `${readdirSync(dir).join(', ')} · scripts: ${readdirSync(join(dir, 'scripts')).join(', ')} · starter 4`;
+    return `${readdirSync(dir).join(', ')} · scripts: ${readdirSync(join(dir, 'scripts')).join(', ')} · starter 5`;
   });
 
   await check('Setup: ffmpeg and ffprobe found', async () => {
@@ -519,7 +519,10 @@ try {
       [big ? 'vocabulary.json' : 'vocabulary.txt']: Buffer.from(`vocab ${id}\n`), ...(big ? { 'preprocessor_config.json': Buffer.from('{"feature_size": 128}') } : {}) }; };
     const REPOS = Object.fromEntries([
       ...Object.keys(WEIGHTS).map((m) => [`facebook/sam2.1-hiera-${m}`, { author: 'facebook', license: 'test-licence-sam', files: filesOf(m) }]),
-      ...Object.entries(WHISPER).map(([id, repo]) => [repo, { author: 'Systran', license: 'test-licence-whisper', files: whisperFiles(id) }])]);
+      ...Object.entries(WHISPER).map(([id, repo]) => [repo, { author: 'Systran', license: 'test-licence-whisper', files: whisperFiles(id) }]),
+      // MLX Whisper's tiny.en (mlx-community): mlx_whisper takes every file of the repo, so the app downloads them all.
+      ['mlx-community/whisper-tiny.en-mlx', { author: 'mlx-community', license: 'mit', files: { 'config.json': Buffer.from('{"n_mels": 80}'), 'weights.npz': bytes(150000, 'mlx-tiny.en'),
+        'README.md': Buffer.from('# whisper-tiny.en-mlx\n'), '.gitattributes': Buffer.from('*.npz filter=lfs\n') } }]]);
     const dlBytes = (repo) => Object.values(REPOS[repo].files).reduce((n, b) => n + b.length, 0); // what Video Octopus downloads
     const wDir = (id) => join(HF, `models--${WHISPER[id].replace('/', '--')}`);
     let hfMode = 'ok', apiCalls = 0;
@@ -536,13 +539,13 @@ try {
         apiCalls++;
         const R = REPOS[m[1]];
         return json({ id: m[1], author: R.author, sha: REV, cardData: { license: R.license }, tags: [`license:${R.license}`],
-          siblings: [{ rfilename: 'README.md', size: 9, blobId: gitId(Buffer.from('# readme\n')) },
-            ...Object.entries(R.files).map(([name, b]) => ({ rfilename: name, size: b.length, blobId: gitId(b), ...(/^model\./.test(name) ? { lfs: { sha256: sha256(b), size: b.length, pointerSize: 134 } } : {}) }))] });
+          siblings: [...(R.files['README.md'] ? [] : [{ rfilename: 'README.md', size: 9, blobId: gitId(Buffer.from('# readme\n')) }]),
+            ...Object.entries(R.files).map(([name, b]) => ({ rfilename: name, size: b.length, blobId: gitId(b), ...(/^(model|weights)\./.test(name) ? { lfs: { sha256: sha256(b), size: b.length, pointerSize: 134 } } : {}) }))] });
       }
       m = /^\/([\w-]+\/[\w.-]+)\/resolve\/([0-9a-f]{40})\/(.+)$/.exec(u.pathname);
       const b = m && REPOS[m[1]] && m[2] === REV ? REPOS[m[1]].files[m[3]] : null;
       if (!b) { res.statusCode = 404; return res.end(); }
-      const mode = /^model\./.test(m[3]) ? hfMode : 'ok';
+      const mode = /^(model|weights)\./.test(m[3]) ? hfMode : 'ok';
       hfLog.push({ model: m[1].replace(/^facebook\/sam2\.1-hiera-/, ''), repo: m[1], file: m[3], range: req.headers.range || null, mode });
       if (mode === 'wrongsize') { res.writeHead(200, { 'Content-Length': b.length + 10 }); return res.end(Buffer.concat([b, Buffer.alloc(10)])); }
       if (mode === 'corrupt') { const c = Buffer.from(b); c[c.length >> 1] ^= 0xff; res.writeHead(200, { 'Content-Length': c.length }); return res.end(c); }
@@ -560,7 +563,8 @@ try {
     if (!SAM_WIN) { writeFileSync(standIn, `#!/bin/sh\ncat "${PROBE}"\n`); execFileSync('chmod', ['755', standIn]); }
     const probe = (p) => writeFileSync(PROBE, JSON.stringify(p));
     const READY = { py: '3.12.1', torch: '2.5.1', device: 'mps', torchvision: '0.20.1', transformers: '4.56.0', numpy: '2.1.0', pillow: '11.0.0', sam2video: true };
-    writeFileSync(join(SAMLOCAL, 'settings.json'), JSON.stringify({ setup: { done: true }, updates: { auto: false }, python: SAM_WIN ? join(ROOT, 'no-python.exe') : standIn }));
+    writeFileSync(join(SAMLOCAL, 'settings.json'), JSON.stringify({ setup: { done: true }, updates: { auto: false }, python: SAM_WIN ? join(ROOT, 'no-python.exe') : standIn,
+      transcribe: { whisperEngine: 'faster-whisper' } })); // Systran's models first; MLX Whisper has its own check below
     const samPort = await freePort(), SB = `http://127.0.0.1:${samPort}`;
     const sam = spawn(process.execPath, [join(APP, 'server', 'index.mjs')], { cwd: APP, stdio: 'ignore',
       env: otherEnv(samPort, SAMLOCAL, { HF_HUB_CACHE: HF, HF_ENDPOINT: `http://127.0.0.1:${hfPort}`, STUDIO_KEYCHAIN_SERVICE: 'StudioSmokeNoKeys' }) });
@@ -778,6 +782,7 @@ try {
           `large-v3: ${JSON.stringify(big)}`);
         // No Hugging Face (a closed port): with nothing kept, the link and why; with what's kept (a stale copy), that, dated.
         const dead = await freePort(), NOLOCAL = otherInstall('local-offline'), port = await freePort();
+        writeFileSync(join(NOLOCAL, 'settings.json'), JSON.stringify({ setup: { done: true }, updates: { auto: false }, transcribe: { whisperEngine: 'faster-whisper' } }));
         const off = spawn(process.execPath, [join(APP, 'server', 'index.mjs')], { cwd: APP, stdio: 'ignore',
           env: otherEnv(port, NOLOCAL, { HF_HUB_CACHE: join(ROOT, 'hf-offline'), HF_ENDPOINT: `http://127.0.0.1:${dead}`, STUDIO_KEYCHAIN_SERVICE: 'StudioSmokeNoKeys' }) });
         try {
@@ -801,8 +806,8 @@ try {
 
       await check('Whisper row: every model with its source, the recommended one per machine type, Auto and the pick saved and read back', async () => {
         const pick = (m) => modRun(`const S = await import(${JSON.stringify(new URL('../server/settings.mjs', import.meta.url).href)}); console.log(JSON.stringify(S.whisperPick(${JSON.stringify(m)}).model));`, { STUDIO_LOCAL_DIR: SAMLOCAL });
-        const table = [[{ apple: true, ramGB: 48 }, 'large-v3'], [{ apple: true, ramGB: 16 }, 'medium.en'], [{ apple: true, ramGB: 8 }, 'small.en'],
-          [{ gpu: 'NVIDIA RTX 4090', vramMB: 24564 }, 'large-v3'], [{ gpu: 'NVIDIA RTX 3050', vramMB: 6144 }, 'medium.en'], [{ ramGB: 32, cores: 12 }, 'small.en'], [{ ramGB: 8, cores: 4 }, 'base.en']];
+        const table = [[{ apple: true, arm64: true, ramGB: 48 }, 'large-v3'], [{ apple: true, arm64: true, ramGB: 16 }, 'medium.en'], [{ apple: true, arm64: true, ramGB: 8 }, 'small.en'],
+          [{ gpu: 'NVIDIA RTX 4090', vramMB: 24564 }, 'large-v3'], [{ gpu: 'NVIDIA RTX 3050', vramMB: 6144 }, 'medium.en'], [{ ramGB: 32, cores: 12 }, 'medium.en'], [{ ramGB: 8, cores: 4 }, 'base.en']];
         for (const [m, want] of table) must(pick(m) === want, `${JSON.stringify(m)} → ${pick(m)}, not ${want}`);
         const view = (await sapi('/api/app/settings')).json, rec = view.machine.whisper.model;
         must((await sapi('/api/app/settings', { section: 'transcribe', values: { engine: 'local', model: 'auto' } })).status === 200, 'auto');
@@ -859,9 +864,295 @@ try {
         await sapi('/api/app/settings', { section: 'transcribe', values: { model: 'auto' } });
         return `cut at ${cut} not counted · carried on with Range (${readings.length} readings) · checksum refused · large-v3 needs preprocessor_config.json · faster-whisper finds ${found.split(sep).slice(-3).join('/')}`;
       });
+      await check('MLX Whisper (fake Hugging Face): the build switch, every file of mlx-community\'s repo downloaded and counted, the skill and the chats find it', async () => {
+        const machine = (await sapi('/api/app/settings')).json.machine;
+        await sapi('/api/app/settings', { section: 'transcribe', values: { whisperEngine: 'mlx', model: 'tiny.en' } });
+        const w = await wrow();
+        if (!machine.arm64) {
+          must(w.whisper.family === 'whisper' && w.whisper.mlxOk === false, `not Apple Silicon: ${JSON.stringify(w.whisper).slice(0, 200)}`);
+          await sapi('/api/app/settings', { section: 'transcribe', values: { whisperEngine: 'faster-whisper', model: 'auto' } });
+          return 'not Apple Silicon: MLX is off, faster-whisper stays';
+        }
+        const src = w.whisper.models.find((m) => m.id === 'tiny.en').source;
+        must(w.whisper.family === 'mlx' && w.whisper.engine === 'mlx' && w.state === 'warn' && src.line === `From Hugging Face · mlx-community/whisper-tiny.en-mlx (mlx-community) · ${kb(dlBytes('mlx-community/whisper-tiny.en-mlx'))} · licence: mit`,
+          `the MLX row: ${w.state} ${w.detail} ${src.line}`);
+        const r = await download('tiny.en', { family: 'mlx' });
+        const dir = join(HF, 'models--mlx-community--whisper-tiny.en-mlx', 'snapshots', REV);
+        must(r.d.state === 'done' && readdirSync(dir).sort().join() === '.gitattributes,README.md,config.json,weights.npz', `download: ${JSON.stringify(r.d)} ${existsSync(dir) ? readdirSync(dir) : ''}`);
+        const ok = await wrow();
+        must(ok.state === 'ok' && /on MLX Whisper/.test(ok.detail), `after: ${ok.state} ${ok.detail}`);
+        const env = { ...process.env, HF_HUB_CACHE: HF, PYTHONDONTWRITEBYTECODE: '1' };
+        const skill = join(APP, 'starter', '.claude', 'skills', 'transcribe', 'scripts');
+        const seen = execFileSync(PY, ['-c', `import sys; sys.path.insert(0, ${JSON.stringify(skill)}); import transcribe as t; print(t.mlx_cached("tiny.en"), t.mlx_repo("tiny.en"))`], { env, encoding: 'utf8' }).trim();
+        must(seen === 'True mlx-community/whisper-tiny.en-mlx', `the skill sees: ${seen}`);
+        const chat = modRun(`const S = await import(${JSON.stringify(new URL('../server/settings.mjs', import.meta.url).href)});
+          const e = await S.childEnv(); const h = await S.transcribeHow({ has: async () => false }); console.log(JSON.stringify({ engine: e.STUDIO_TRANSCRIBE_ENGINE, text: h.text }));`,
+          { STUDIO_LOCAL_DIR: SAMLOCAL, HF_HUB_CACHE: HF, STUDIO_KEYCHAIN_SERVICE: 'StudioSmokeNoKeys' });
+        must(chat.engine === 'mlx' && /--engine mlx --model tiny\.en/.test(chat.text) && /on MLX Whisper/.test(chat.text), `the chats: ${JSON.stringify(chat)}`);
+        await sapi('/api/app/settings', { section: 'transcribe', values: { whisperEngine: 'faster-whisper', model: 'auto' } });
+        return `${src.line} · all four files · the skill and the brief use it`;
+      });
+
+      await check('octopus models: the list, Setup\'s own Download followed to the end, and only the list is read-only', async () => {
+        const cli = join(APP, 'bin', 'octopus.mjs');
+        // Not spawnSync: the fake Hugging Face answers from this process, so it must keep running meanwhile.
+        const run = (...a) => new Promise((done) => {
+          const p = spawn(process.execPath, [cli, ...a], { env: { ...process.env, STUDIO_URL: SB } });
+          let stdout = '', stderr = '';
+          p.stdout.on('data', (d) => { stdout += d; }); p.stderr.on('data', (d) => { stderr += d; });
+          p.on('close', (status) => done({ status, stdout, stderr }));
+        });
+        hfMode = 'ok';
+        const r = await run('models', 'download', 'sam2', 'base-plus');
+        must(r.status === 0 && /base-plus is downloaded/.test(r.stdout), `download: ${r.status} ${r.stdout} ${r.stderr}`);
+        const l = await run('models', 'sam2');
+        must(l.status === 0 && /base-plus \(downloaded\)/.test(l.stdout) && /From Hugging Face · facebook\/sam2\.1-hiera-base-plus/.test(l.stdout), `list: ${l.stdout} ${l.stderr}`);
+        const bad = await run('models', 'download', 'sam2', 'huge');
+        must(bad.status === 1 && /Unknown model/.test(bad.stderr), `a bad size: ${bad.stderr}`);
+        const ro = modRun(`const R = await import(${JSON.stringify(new URL('../server/readonly.mjs', import.meta.url).href)});
+          console.log(JSON.stringify([R.studioRead('node "${cli.replace(/\\/g, '/')}" models sam2'), R.studioRead('node "${cli.replace(/\\/g, '/')}" models download sam2 tiny')]));`);
+        must(ro[0] === true && ro[1] === false, `read-only: ${JSON.stringify(ro)}`);
+        return `${r.stdout.trim().split('\n').pop()} · list read-only, download asks`;
+      });
     } finally {
       sam.kill();
       hf.close();
+    }
+  }
+
+  // ---- the onboarding scan (server/onboarding.mjs, web/setup.js): agents through stand-ins (Claude Code, Codex, pi are
+  // small scripts; LM Studio and Ollama are fake servers), Connect only with a yes, the installs and downloads after an
+  // OK (stand-in brew, lms and ollama), the Python rule, ffmpeg first, the first launch's studio (a throwaway home), the
+  // Whisper build per machine, the octopus download command and the chat's banner. ----
+  if (!ONLY || /scan|onboarding|first launch|python rule|banner|octopus models|whisper build/i.test(ONLY.source)) {
+    const OW = process.platform === 'win32';
+    const SC = join(ROOT, 'scan'), HOMEX = join(SC, 'home'), SCLOCAL = otherInstall('local-scan');
+    mkdirSync(join(HOMEX, '.lmstudio'), { recursive: true }); // LM Studio "is installed" in the throwaway home
+    const stand = (name, body) => { const f = join(SC, name); writeFileSync(f, `#!/bin/sh\n${body}\n`); if (!OW) execFileSync('chmod', ['755', f]); return f; };
+    mkdirSync(SC, { recursive: true });
+    // Each stand-in reads its mode from a file, so one server sees every state.
+    const MODE = (n) => join(SC, `${n}.mode`);
+    const mode = (n, v) => writeFileSync(MODE(n), v);
+    const claudeS = stand('claude', `case "$1" in --version) echo "9.9.9 (Claude Code)";; auth) if [ "$(cat '${MODE('claude')}')" = signedout ]; then echo '{"loggedIn":false}'; else echo '{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"max"}'; fi;; esac`);
+    const codexS = stand('codex', `case "$1" in --version) echo "codex-cli 0.200.1";; login) if [ "$(cat '${MODE('codex')}')" = signedout ]; then echo "Not logged in"; else echo "Logged in using ChatGPT"; fi;; esac`);
+    const piS = stand('pi', 'echo "0.99.5"');
+    const lmsS = stand('lms', `echo "Downloading $2 ..."; echo "100%"; echo "$*" > '${join(SC, 'lms.args')}'`);
+    const ollamaS = stand('ollama', `echo "pulling $2"; echo "success"; echo "$*" > '${join(SC, 'ollama.args')}'`);
+    const brewS = stand('brew', `echo "==> Installing $2"; echo "$*" > '${join(SC, 'brew.args')}'`);
+    mode('claude', 'in'); mode('codex', 'in');
+    // Fake LM Studio and Ollama, each with a mode: ok, nomodel, context, old.
+    let lmMode = 'ok', olMode = 'ok';
+    const lm = httpServer((req, res) => {
+      const j = (o, c = 200) => { res.writeHead(c, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
+      if (req.url === '/api/v1/models') {
+        if (lmMode === 'old') return j({ error: 'no' }, 404);
+        if (lmMode === 'nomodel') return j({ models: [] });
+        return j({ models: [{ type: 'llm', key: 'qwen/qwen3-coder-30b', display_name: 'Qwen3 Coder 30B', max_context_length: 262144, capabilities: { trained_for_tool_use: true },
+          loaded_instances: lmMode === 'context' ? [{ config: { context_length: 4096 } }] : [{ config: { context_length: 65536 } }] }] });
+      }
+      if (req.url === '/v1/models') return j({ data: [{ id: 'qwen/qwen3-coder-30b' }] });
+      j({}, 404);
+    });
+    const ol = httpServer((req, res) => {
+      const j = (o, c = 200) => { res.writeHead(c, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
+      if (req.url === '/api/version') return j({ version: olMode === 'old' ? '0.12.3' : '0.15.0' });
+      if (req.url === '/api/tags') return j({ models: olMode === 'nomodel' ? [] : [{ name: 'qwen3:8b', details: { parameter_size: '8B' } }] });
+      if (req.url === '/api/ps') return j({ models: olMode === 'context' ? [{ name: 'qwen3:8b', context_length: 4096 }] : [] });
+      j({}, 404);
+    });
+    const [lmPort, olPort, deadPort, scPort] = [await freePort(), await freePort(), await freePort(), await freePort()];
+    await new Promise((d) => lm.listen(lmPort, '127.0.0.1', d)); await new Promise((d) => ol.listen(olPort, '127.0.0.1', d));
+    const SCSET = join(SCLOCAL, 'settings.json');
+    const baseSet = { setup: { done: false }, updates: { auto: false }, studio: STUDIO, claudePath: claudeS, codexPath: codexS, piPath: piS, lms: lmsS, ollama: ollamaS, brew: brewS,
+      lmstudioUrl: `http://127.0.0.1:${lmPort}`, ollamaUrl: `http://127.0.0.1:${olPort}` };
+    writeFileSync(SCSET, JSON.stringify(baseSet));
+    const scan = spawn(process.execPath, [join(APP, 'server', 'index.mjs')], { cwd: APP, stdio: 'ignore',
+      env: otherEnv(scPort, SCLOCAL, { HOME: HOMEX, USERPROFILE: HOMEX, HF_HUB_CACHE: join(SC, 'hf'), HF_ENDPOINT: `http://127.0.0.1:${deadPort}`, STUDIO_KEYCHAIN_SERVICE: 'StudioSmokeNoKeys' }) });
+    const SCB = `http://127.0.0.1:${scPort}`;
+    const sc = async (path, body) => {
+      const r = await fetch(SCB + path, body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Studio': '1' }, body: JSON.stringify(body) });
+      const text = await r.text(); let json = null; try { json = JSON.parse(text); } catch {}
+      return { status: r.status, json, text };
+    };
+    const agents = async () => (await sc('/api/app/scan/agents')).json;
+    const row = (s, id) => s.agents.find((a) => a.id === id);
+    const set = () => JSON.parse(readFileSync(SCSET, 'utf8'));
+    const waitAction = async (id) => { for (let i = 0; i < 60; i++) { const j = (await sc(`/api/app/scan/action?id=${id}`)).json; if (j.state !== 'running') return j; await sleep(100); } return null; };
+    try {
+      await check('onboarding scan: agents in order, Claude recommended, each state through stand-ins (ready, needs action, not found)', async () => {
+        await until(async () => { try { return (await fetch(SCB + '/')).ok; } catch { return false; } }, 30000, 'the scan server');
+        if (OW) return 'Windows: the stand-ins are shell scripts (skipped)';
+        let s = await agents();
+        must(s.agents.map((a) => a.id).join() === 'claude,codex,lmstudio,ollama,pi' && row(s, 'claude').recommended && row(s, 'codex').fallback && !s.connected, `order: ${s.agents.map((a) => a.id)} connected ${JSON.stringify(s.connected)}`);
+        must(row(s, 'claude').state === 'ok' && row(s, 'claude').detail === 'Claude Code 9.9.9 · signed in · Max plan' && row(s, 'codex').detail === 'Codex 0.200.1 · signed in · ChatGPT plan' && row(s, 'pi').state === 'ok',
+          `ready: ${JSON.stringify(s.agents.map((a) => [a.id, a.state, a.detail]))}`);
+        must(row(s, 'lmstudio').state === 'ok' && row(s, 'lmstudio').via.join() === 'claude,codex' && row(s, 'ollama').state === 'ok', `local ok: ${JSON.stringify([row(s, 'lmstudio'), row(s, 'ollama')].map((a) => [a.state, a.detail]))}`);
+        mode('claude', 'signedout'); mode('codex', 'signedout');
+        s = await agents();
+        must(row(s, 'claude').state === 'action' && /not signed in/.test(row(s, 'claude').detail) && /run claude and sign in/.test(row(s, 'claude').how) && row(s, 'codex').state === 'action' && /codex login/.test(row(s, 'codex').how), 'not signed in');
+        mode('claude', 'in'); mode('codex', 'in');
+        writeFileSync(SCSET, JSON.stringify({ ...set(), claudePath: join(SC, 'nothing-here'), piPath: join(SC, 'no-pi') }));
+        s = await agents();
+        must(row(s, 'claude').state === 'missing' && row(s, 'pi').state === 'missing' && row(s, 'claude').how, `not found: ${JSON.stringify([row(s, 'claude'), row(s, 'pi')].map((a) => [a.state, a.detail]))}`);
+        writeFileSync(SCSET, JSON.stringify({ ...set(), claudePath: claudeS, piPath: piS }));
+        return s.agents.map((a) => `${a.id} ${a.state}`).join(' · ');
+      });
+
+      await check('onboarding scan: LM Studio and Ollama, every failure text (server off, no model, context too small, too old)', async () => {
+        if (OW) return 'Windows: skipped';
+        const texts = [];
+        for (const m of ['nomodel', 'context', 'old']) {
+          lmMode = m; olMode = m;
+          const s = await agents(), a = row(s, 'lmstudio'), o = row(s, 'ollama');
+          must(a.state === 'action' && a.problem === m && o.state === 'action' && o.problem === m, `${m}: ${a.state}/${a.problem} ${o.state}/${o.problem}`);
+          if (m === 'nomodel') must(/Download a model in LM Studio/.test(a.how) && /ollama pull/.test(o.how) && a.cli && o.cli, `no model: ${a.how} | ${o.how}`);
+          if (m === 'context') must(/needs a context of 32K or more/.test(a.how) && /Context Length 32768/.test(a.how) && /OLLAMA_CONTEXT_LENGTH=32768/.test(o.how) && /4K context/.test(a.detail), `context: ${a.how} | ${o.how}`);
+          if (m === 'old') must(a.how === 'Update LM Studio, or use it with Codex or pi.' && o.how === 'Update Ollama, or use it with Codex or pi.' && a.via.join() === 'codex', `old: ${a.how} via ${a.via}`);
+          texts.push(`${m}: ${a.detail}`);
+        }
+        lmMode = 'ok'; olMode = 'ok';
+        // The server off: LM Studio is there (its folder in the home), Ollama isn't anywhere.
+        writeFileSync(SCSET, JSON.stringify({ ...set(), lmstudioUrl: `http://127.0.0.1:${deadPort}`, ollamaUrl: `http://127.0.0.1:${deadPort}`, ollama: join(SC, 'no-ollama') }));
+        const s = await agents(), a = row(s, 'lmstudio'), o = row(s, 'ollama');
+        must(a.state === 'action' && a.problem === 'off' && a.detail === 'LM Studio · server off' && a.how === 'Start LM Studio → Developer → Start server, then press Retry.' && o.state === 'missing', `off: ${a.detail} ${a.how} · ollama ${o.state}`);
+        writeFileSync(SCSET, JSON.stringify({ ...set(), lmstudioUrl: `http://127.0.0.1:${lmPort}`, ollamaUrl: `http://127.0.0.1:${olPort}`, ollama: ollamaS }));
+        return [...texts, `off: ${a.detail}`].join(' | ');
+      });
+
+      await check('onboarding scan: Connect only with a yes; Claude Code, a local model behind Claude Code or Codex; Continue with nothing connected', async () => {
+        must((await sc('/api/app/scan/connect', { agent: 'claude' })).status === 400 && !set().setup.agent, 'connected without a yes');
+        // Continue with nothing connected: Setup is done, the agent stays the default.
+        must((await sc('/api/app/setup', { done: true })).json?.done === true && !set().setup.agent, 'Continue with nothing connected');
+        writeFileSync(SCSET, JSON.stringify({ ...set(), setup: { done: false } }));
+        let r = await sc('/api/app/scan/connect', { agent: 'claude', confirmed: true });
+        must(r.json?.connected?.id === 'claude' && set().claude.engine === 'claude' && set().claude.ccSource === 'plan' && set().setup.agent === 'claude', `claude: ${r.text}`);
+        if (!OW) must((await agents()).connected?.id === 'claude', 'the scan does not show Claude Code connected');
+        r = await sc('/api/app/scan/connect', { agent: 'lmstudio', via: 'claude', model: 'qwen/qwen3-coder-30b', confirmed: true });
+        must(r.json?.connected?.id === 'lmstudio' && r.json.connected.via === 'claude' && set().claude.ccSource === 'lmstudio' && set().claude.ccModel === 'qwen/qwen3-coder-30b' && set().claude.ccUrl === `http://127.0.0.1:${lmPort}`, `LM Studio behind Claude Code: ${r.text} ${JSON.stringify(set().claude)}`);
+        r = await sc('/api/app/scan/connect', { agent: 'ollama', via: 'codex', model: 'qwen3:8b', confirmed: true });
+        must(r.json?.connected?.via === 'codex' && set().claude.engine === 'codex' && set().claude.codexProvider === 'ollama' && set().claude.codexModel === 'qwen3:8b', `Ollama behind Codex: ${r.text}`);
+        must((await sc('/api/app/scan/connect', { agent: 'lmstudio', via: 'claude', confirmed: true })).status === 400, 'a local server without a model');
+        await sc('/api/app/scan/connect', { agent: 'claude', confirmed: true });
+        return 'no yes, no switch · Claude Code · LM Studio behind Claude Code · Ollama behind Codex · Continue with none';
+      });
+
+      await check('onboarding scan: downloads and installs after an OK (lms get, ollama pull, brew install ffmpeg), the ffmpeg row first with its Install', async () => {
+        must((await sc('/api/app/scan/action', { action: 'lms-get', model: 'qwen/qwen3-8b' })).status === 400, 'a download without an OK');
+        must((await sc('/api/app/scan/action', { action: 'lms-get', model: 'x; rm -rf /', confirmed: true })).status === 400, 'a bad model name');
+        const st = (await sc('/api/app/setup')).json;
+        must(st.checks[0].id === 'ffmpeg' && st.checks[0].card === 'tools' && st.checks[0].title === 'ffmpeg: renders and exports your videos' && st.checks.filter((c) => c.card === 'tools').map((c) => c.id).join() === 'ffmpeg,recorder,folders,python',
+          `the tools card: ${JSON.stringify(st.checks)}`);
+        if (OW) return 'Windows: the stand-ins are shell scripts (ffmpeg row checked)';
+        let a = await sc('/api/app/scan/action', { action: 'lms-get', model: 'qwen/qwen3-8b', confirmed: true });
+        let j = await waitAction('lms-get');
+        must(a.json?.state && j?.state === 'done' && readFileSync(join(SC, 'lms.args'), 'utf8').trim() === 'get qwen/qwen3-8b --yes' && /100%/.test(j.tail), `lms get: ${JSON.stringify(j)}`);
+        a = await sc('/api/app/scan/action', { action: 'ollama-pull', model: 'qwen3:8b', confirmed: true });
+        j = await waitAction('ollama-pull');
+        must(j?.state === 'done' && readFileSync(join(SC, 'ollama.args'), 'utf8').trim() === 'pull qwen3:8b' && /success/.test(j.tail), `ollama pull: ${JSON.stringify(j)}`);
+        // ffmpeg missing: the row offers the one-command install (a Mac: brew), which runs only after the OK.
+        writeFileSync(SCSET, JSON.stringify({ ...set(), ffmpeg: join(SC, 'no-ffmpeg'), ffprobe: join(SC, 'no-ffprobe') }));
+        const ff = (await sc('/api/app/setup/check?id=ffmpeg')).json;
+        must(ff.state === 'fail' && /exporting needs/.test(ff.detail) && ff.manual === 'https://ffmpeg.org/download.html' && (process.platform !== 'darwin' || ff.install?.cmd === 'brew install ffmpeg'), `ffmpeg missing: ${JSON.stringify(ff)}`);
+        must((await sc('/api/status')).json?.ffmpeg === false, 'Export would still think ffmpeg is there');
+        if (process.platform === 'darwin') {
+          await sc('/api/app/scan/action', { action: 'ffmpeg', confirmed: true });
+          j = await waitAction('ffmpeg');
+          must(j?.state === 'done' && readFileSync(join(SC, 'brew.args'), 'utf8').trim() === 'install ffmpeg', `brew: ${JSON.stringify(j)}`);
+        }
+        const { ffmpeg, ffprobe, ...rest } = set(); writeFileSync(SCSET, JSON.stringify(rest));
+        return `lms get, ollama pull${process.platform === 'darwin' ? ', brew install ffmpeg' : ''} after an OK · ffmpeg row first with ${ff.install?.cmd || 'the manual link'}`;
+      });
+
+      await check('the python rule: needsLocalPython on and off; the row says "Not needed" and never blocks', async () => {
+        const need = (s, has) => modRun(`const S = await import(${JSON.stringify(new URL('../server/settings.mjs', import.meta.url).href)});
+          console.log(JSON.stringify(await S.needsLocalPython(${JSON.stringify(s)}, { has: async () => ${has} })));`, { STUDIO_LOCAL_DIR: SCLOCAL });
+        const cases = [
+          [{ transcribe: { engine: 'cloud', provider: 'deepgram' }, claude: { engine: 'claude', ccSource: 'plan' } }, true, false],
+          [{ transcribe: { engine: 'local' }, claude: { engine: 'claude', ccSource: 'plan' } }, true, true],
+          [{ transcribe: { engine: 'cloud', provider: 'deepgram' }, claude: { engine: 'claude', ccSource: 'plan' } }, false, true],
+          [{ transcribe: { engine: 'cloud', provider: 'deepgram' }, claude: { engine: 'claude', ccSource: 'lmstudio' } }, true, true],
+          [{ transcribe: { engine: 'cloud', provider: 'deepgram' }, claude: { engine: 'codex', codexProvider: 'ollama' } }, true, true],
+          [{ transcribe: { engine: 'cloud', provider: 'deepgram' }, claude: { engine: 'codex', codexProvider: 'chatgpt' } }, true, false],
+        ];
+        for (const [s, has, want] of cases) must(need(s, has) === want, `${JSON.stringify(s)} key ${has} → ${need(s, has)}, not ${want}`);
+        // The page greys "Not needed" out and Continue never asks about it (web/setup.js).
+        const page = readFileSync(join(APP, 'web', 'setup.js'), 'utf8');
+        must(/skip: 'Not needed'/.test(page) && !/Still missing/.test(page), 'the page');
+        return 'cloud + key + Claude plan: not needed · local transcription, no key, LM Studio, Codex + Ollama: needed';
+      });
+
+      await check('first launch: ~/Video Octopus made by itself (a throwaway home); an install with a studio, or with Setup done, untouched', async () => {
+        const home = join(SC, 'fresh-home'), local = join(SC, 'fresh-local'), port = await freePort();
+        mkdirSync(home, { recursive: true }); mkdirSync(local, { recursive: true });
+        const one = spawn(process.execPath, [join(APP, 'server', 'index.mjs')], { cwd: APP, stdio: 'ignore', env: otherEnv(port, local, { HOME: home, USERPROFILE: home }) });
+        try {
+          await until(async () => { try { return (await fetch(`http://127.0.0.1:${port}/`)).ok; } catch { return false; } }, 30000, 'the first launch');
+          const made = join(home, 'Video Octopus');
+          must(['CLAUDE.md', 'projects', 'recordings', '.claude/skills/transcribe/SKILL.md', '.studio/starter.json'].every((f) => existsSync(join(made, f))), `not made: ${existsSync(made) ? readdirSync(made) : 'nothing'}`);
+          const s = JSON.parse(readFileSync(join(local, 'settings.json'), 'utf8'));
+          must(s.studio === made && s.recordingsDir === join(made, 'recordings'), `settings: ${JSON.stringify(s)}`);
+          const st = (await fetch(`http://127.0.0.1:${port}/api/app/setup`).then((x) => x.json()));
+          must(st.needed === true && st.done === false, 'the onboarding screen would not show');
+        } finally { one.kill(); }
+        // An install with its own studio, and one that finished Setup: nothing made in the home, settings as they were.
+        for (const [name, s0] of [['own', { studio: STUDIO, setup: { done: false }, updates: { auto: false } }], ['done', { setup: { done: true }, updates: { auto: false } }]]) {
+          const h2 = join(SC, `home-${name}`), l2 = join(SC, `local-${name}`), p2 = await freePort();
+          mkdirSync(h2, { recursive: true }); mkdirSync(l2, { recursive: true });
+          writeFileSync(join(l2, 'settings.json'), JSON.stringify(s0));
+          const two = spawn(process.execPath, [join(APP, 'server', 'index.mjs')], { cwd: APP, stdio: 'ignore', env: otherEnv(p2, l2, { HOME: h2, USERPROFILE: h2 }) });
+          try {
+            await until(async () => { try { return (await fetch(`http://127.0.0.1:${p2}/`)).ok; } catch { return false; } }, 30000, `the ${name} install`);
+            must(!existsSync(join(h2, 'Video Octopus')) && JSON.stringify(JSON.parse(readFileSync(join(l2, 'settings.json'), 'utf8'))) === JSON.stringify(s0), `${name}: touched`);
+          } finally { two.kill(); }
+        }
+        return 'fresh: ~/Video Octopus with projects, recordings and the starter · own studio and Setup done: untouched';
+      });
+
+      await check('whisper build per machine: MLX on Apple Silicon (not under Rosetta), faster-whisper on CUDA, one size down on the CPU; SAM in machineInfo', async () => {
+        const pick = (m) => modRun(`const S = await import(${JSON.stringify(new URL('../server/settings.mjs', import.meta.url).href)}); console.log(JSON.stringify(S.whisperPick(${JSON.stringify(m)})));`, { STUDIO_LOCAL_DIR: SCLOCAL });
+        const table = [[{ apple: true, arm64: true, ramGB: 48 }, 'large-v3', 'mlx'], [{ apple: true, arm64: true, ramGB: 16 }, 'medium.en', 'mlx'], [{ apple: true, arm64: true, ramGB: 8 }, 'small.en', 'mlx'],
+          [{ apple: true, arm64: false, ramGB: 16 }, 'small.en', 'faster-whisper'], [{ apple: false, ramGB: 32 }, 'medium.en', 'faster-whisper'], [{ apple: false, ramGB: 8 }, 'base.en', 'faster-whisper'],
+          [{ gpu: 'NVIDIA RTX 4090', vramMB: 24564 }, 'large-v3', 'faster-whisper'], [{ gpu: 'NVIDIA RTX 3050', vramMB: 6144 }, 'medium.en', 'faster-whisper']];
+        for (const [m, model, engine] of table) { const r = pick(m); must(r.model === model && r.engine === engine, `${JSON.stringify(m)} → ${JSON.stringify(r)}, not ${model} on ${engine}`); }
+        const mi = (await sc('/api/app/settings')).json.machine;
+        must(mi.sam?.size && mi.whisper?.engine && typeof mi.arm64 === 'boolean', `machineInfo: ${JSON.stringify(mi)}`);
+        const same = modRun(`const S = await import(${JSON.stringify(new URL('../server/sam2.mjs', import.meta.url).href)}); console.log(JSON.stringify(S.sam2Recommend(S.sam2Machine(${JSON.stringify(mi)}))));`);
+        must(JSON.stringify(same) === JSON.stringify(mi.sam), `machineInfo().sam isn't sam2.mjs's table: ${JSON.stringify(mi.sam)} vs ${JSON.stringify(same)}`);
+        return `${table.length} machine types · this Mac: ${mi.whisper.model} on ${mi.whisper.engine}, SAM ${mi.sam.size}`;
+      });
+
+      await check('chat banner: the local server under the chats is down (exact words), the chat says so before a message goes, nothing switches', async () => {
+        await sc('/api/app/scan/connect', { agent: 'lmstudio', via: 'claude', model: 'qwen/qwen3-coder-30b', confirmed: true });
+        writeFileSync(SCSET, JSON.stringify({ ...set(), claude: { ...set().claude, ccUrl: `http://127.0.0.1:${deadPort}` } }));
+        const d = (await sc('/api/app/scan/local')).json?.down;
+        must(d?.name === 'LM Studio' && d.text === "LM Studio isn't running. Start it, or switch this chat to Claude Code.", `down: ${JSON.stringify(d)}`);
+        const g = modRun(`const E = await import(${JSON.stringify(new URL('../server/engines.mjs', import.meta.url).href)});
+          const evs = []; const chat = { send: async () => 'sent', emit: (e) => evs.push(e) }; E.guardLocal(chat); const r = await chat.send('hi'); console.log(JSON.stringify({ r, evs }));`, { STUDIO_LOCAL_DIR: SCLOCAL });
+        must(g.r === 'sent' && g.evs.length === 1 && g.evs[0].t === 'local-down' && g.evs[0].text === d.text, `the guard: ${JSON.stringify(g)}`);
+        must(set().claude.ccSource === 'lmstudio', 'it switched by itself');
+        await sc('/api/app/scan/connect', { agent: 'claude', confirmed: true });
+        must((await sc('/api/app/scan/local')).json?.down === null, 'Claude Code on the plan has no local server');
+        const app = readFileSync(join(APP, 'web', 'app.js'), 'utf8');
+        must(/case 'local-down': localDown\(ev\)/.test(app) && /confirmBox\(\{ title: 'Switch the chats to Claude Code\?'/.test(app), 'the page does not show it, or switches without asking');
+        return d.text;
+      });
+
+      // The two screens through the real page (test/setup.e2e.mjs). Not execFileSync: the fake LM Studio and Ollama
+      // answer from this process.
+      if (process.env.PLAYWRIGHT_PATH) {
+        await check('onboarding screens through the page: the scan, one recommended model per row with the rest folded, Continue to Make it yours, Skip into the app (headless Chrome)', async () => {
+          writeFileSync(SCSET, JSON.stringify({ ...set(), setup: { done: false }, python: PY }));
+          const r = await new Promise((done) => {
+            const c = spawn(process.execPath, [join(APP, 'test', 'setup.e2e.mjs')], { env: { ...process.env, STUDIO_URL: SCB } });
+            let out = ''; c.stdout.on('data', (d) => { out += d; }); c.stderr.on('data', (d) => { out += d; });
+            c.on('close', (code) => done({ code, out }));
+          });
+          must(r.code === 0, r.out.trim().split('\n').slice(-4).join(' | '));
+          return r.out.trim().split('\n').pop();
+        });
+      }
+    } finally {
+      scan.kill(); lm.close(); ol.close();
     }
   }
 

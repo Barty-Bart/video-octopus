@@ -428,7 +428,10 @@ const DRAW = {
       const src = h(`<div class="sub"></div>`);
       const showSrc = (k) => src.replaceChildren(h(`<span>${srcLink(S[k === 'auto' ? V.autoWhisper : k])}</span>`));
       showSrc(t.model);
+      const eng = (e) => (e === 'mlx' ? 'MLX Whisper' : 'faster-whisper');
       parts.push(group('On this computer',
+        row('Runs on', `${m.arm64 ? 'MLX Whisper uses this Mac\'s GPU (mlx-community\'s models); faster-whisper runs on the CPU.' : 'faster-whisper (MLX Whisper needs an Apple Silicon Mac).'} Now: ${eng(V.whisperEngine)}.`,
+          seg([['auto', `Auto (${eng(m.whisper.engine)})`], ['mlx', 'MLX Whisper'], ['faster-whisper', 'faster-whisper']], t.whisperEngine, (x) => save('transcribe', { whisperEngine: x }).then(redraw), { disabled: { mlx: !m.arm64 } })),
         row('Model', `${esc(m.chip)}${m.ramGB ? `, ${m.ramGB} GB` : ''}. Recommended for this computer: ${esc(m.whisper.model)} (${esc(m.whisper.speed)}); .en models are English-only and more accurate for English. Setup → Transcription model downloads the one you pick.`, select(opts, t.model, (x) => { showSrc(x); return save('transcribe', { model: x }); })),
         row('Source', '', src),
         row('Downloaded models', '', h(`<div class="sub mono">${V.downloaded.length ? esc(V.downloaded.join(' · ')) : 'None yet: Setup → Transcription model downloads the one you pick.'}</div>`))));

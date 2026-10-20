@@ -1,4 +1,4 @@
-// Models from Hugging Face, for Setup's model rows: Whisper (faster-whisper, the transcription model) and SAM 2.1
+// Models from Hugging Face, for Setup's model rows: Whisper (faster-whisper or MLX, the transcription model) and SAM 2.1
 // (transformers, object separation). For every model:
 //   - where it comes from: its repo, the maker, the licence and the size of exactly the files Video Octopus downloads,
 //     all read from Hugging Face's own API (never typed in here) and kept in local/hf-models.json with the date, so
@@ -32,6 +32,14 @@ export const FAMILIES = {
       ['base', 'Systran/faster-whisper-base'], ['base.en', 'Systran/faster-whisper-base.en'],
       ['tiny', 'Systran/faster-whisper-tiny'], ['tiny.en', 'Systran/faster-whisper-tiny.en'],
     ].map(([id, repo, also = []]) => [id, { repo, also }])),
+  },
+  // MLX Whisper (Apple Silicon): mlx-community's conversions, the same sizes. mlx_whisper loads a repo with
+  // snapshot_download, which wants every file in it, so all of them come down (a config, the weights, two small texts).
+  mlx: {
+    label: 'MLX Whisper', files: ['*'], need: ['config.json', 'weights.*'],
+    models: Object.fromEntries([['large-v3', 'mlx-community/whisper-large-v3-mlx'], ['distil-large-v3', 'mlx-community/distil-whisper-large-v3'],
+      ...['medium', 'medium.en', 'small', 'small.en', 'base', 'base.en', 'tiny', 'tiny.en'].map((id) => [id, `mlx-community/whisper-${id}-mlx`])]
+      .map(([id, repo]) => [id, { repo, also: [] }])),
   },
   sam2: {
     label: 'SAM 2.1', files: ['config.json', 'preprocessor_config.json', 'processor_config.json', 'video_preprocessor_config.json', 'model.safetensors'],
@@ -185,7 +193,7 @@ async function fetchModel(j, family, m) {
   catch (e) { throw new Error(`Couldn't get the file list of ${m.repo} from Hugging Face (${e.cause?.message || e.message}).`); }
   for (const p of [...F.need, ...m.also]) if (!info.files.some((f) => glob(p).test(f.name))) throw new Error(`${m.repo} on Hugging Face has no ${p}.`);
   // Keep what was learnt for the source line too.
-  try { const c = readCache(); c.repos[m.repo] = { ...info, maker: c.repos[m.repo]?.maker || info.author, fetched: new Date().toISOString() }; writeJSON(CACHE(), c); } catch {}
+  try { const c = readCache(); c.repos[m.repo] = { ...info, maker: c.repos[m.repo]?.maker || c.makers?.[info.author]?.name || info.author, fetched: new Date().toISOString() }; writeJSON(CACHE(), c); } catch {}
   const files = [...info.files].sort((a, b) => a.size - b.size).map((f) => ({ ...f, blob: join(dir, 'blobs', f.etag) })); // the weights last
   j.total = info.bytes;
   j.from = j.got = files.reduce((n, f) => n + (sizeOf(f.blob) === f.size ? f.size : Math.max(0, Math.min(sizeOf(`${f.blob}.incomplete`), f.size))), 0);

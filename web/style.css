@@ -1209,6 +1209,32 @@ select.field { appearance: none; padding-right: 30px; cursor: pointer;
 .su-i svg .m-ok { fill: var(--ok); }
 .su-i svg .m-warn { fill: var(--warn); }
 .su-i svg .m-fail { fill: var(--bad); }
+.su-i svg .m-skip { fill: var(--line-2); }
+.su-item.skip { opacity: .62; }
+.su-item.skip .su-s { color: var(--faint); }
+.su-card { display: flex; flex-direction: column; gap: 8px; }
+/* The two Setup screens keep the page's own spacing between their parts. */
+.su-wrap > #scanView:not([hidden]), .su-wrap > #youView:not([hidden]) { display: flex; flex-direction: column; gap: 20px; }
+.su-ch { display: flex; align-items: baseline; gap: 10px; }
+.su-ch h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.su-item.su-rec { box-shadow: inset 0 0 0 1.5px var(--accent); border-radius: 12px; }
+.su-list .su-item.su-rec + .su-item { border-top-color: transparent; }
+.su-item.su-on .su-s { color: var(--ok); font-weight: 600; }
+.su-byo, .su-mnote { margin: 0 2px; font-size: 12px; }
+.su-eng { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.su-recl { font-size: 13px; }
+.su-recl .badge { font-size: 11px; margin-left: 4px; }
+.su-b > .su-src { margin-left: 0; }
+.su-all { margin-top: 6px; }
+.su-all > summary { cursor: pointer; font-size: 12px; color: var(--text-2); width: max-content; }
+.su-all > summary:hover { color: var(--text); }
+.su-pickdl { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.su-run { display: block; margin-top: 6px; white-space: pre-wrap; font-size: 11.5px; }
+.cf-pick { display: flex; flex-direction: column; }
+.cf-pick .fl { margin: 12px 0 6px; }
+.cf-text { margin: 0; }
+.chat-banner { display: flex; align-items: center; gap: 10px; margin: 6px 10px; padding: 8px 12px; border-radius: 10px; background: var(--accent-soft); border: 1px solid var(--accent-line); font-size: 12.5px; color: var(--accent-text); }
+.chat-banner span { flex: 1; }
 .su-i svg .m-tick { fill: none; stroke: var(--ok-on, #fff); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .spin.big { width: 16px; height: 16px; }
 .su-b { display: flex; flex-direction: column; gap: 2px; min-width: 0; }

@@ -6,12 +6,43 @@ import { ChatSession, claudeInfo, ENGINES } from './claude.mjs';
 import { CodexSession, codexInfo } from './codex.mjs';
 import { PiSession, piInfo, piModels } from './pi.mjs';
 import { section } from './settings.mjs';
+import { settings } from './util.mjs';
 import { ccSource, sourceCheck, CC_SOURCES } from './claude-source.mjs';
 
 export { ENGINES }; // { id: name } of the three agents (defined in claude.mjs, which can't import this file)
 export const engineName = () => (ENGINES[section('claude').engine] ? section('claude').engine : 'claude');
 const CLASS = { claude: ChatSession, codex: CodexSession, pi: PiSession };
-export const makeChat = (id, context) => new CLASS[engineName()](id, context);
+export const makeChat = (id, context) => guardLocal(new CLASS[engineName()](id, context));
+
+// A local server's address: the default, or lmstudioUrl / ollamaUrl in local/settings.json (another port, or a test).
+export const localUrl = (id) => String(settings()[`${id}Url`] || CC_SOURCES[id].url).replace(/\/+$/, '');
+
+// The local model server the chats run on (Claude Code's model source, or Codex's provider): is it up? Down, a chat's
+// message still goes (nothing switches by itself), and the chat shows a banner: "LM Studio isn't running. Start it, or
+// switch this chat to Claude Code." Asked at most every few seconds.
+let localSeen = null;
+export const forgetLocal = () => { localSeen = null; };
+export async function localDown() {
+  const c = section('claude'), e = engineName();
+  const id = e === 'claude' && ['lmstudio', 'ollama'].includes(c.ccSource) ? c.ccSource : e === 'codex' && ['lmstudio', 'ollama'].includes(c.codexProvider) ? c.codexProvider : null;
+  if (!id) return null;
+  const url = e === 'claude' && c.ccUrl ? c.ccUrl.replace(/\/+$/, '') : localUrl(id);
+  if (localSeen && localSeen.key === `${id} ${url}` && Date.now() - localSeen.at < 5000) return localSeen.down;
+  const r = await sourceCheck({ id, label: CC_SOURCES[id].short, url, model: '', context: 0, local: true });
+  const name = CC_SOURCES[id].short;
+  const down = r.running ? null : { id, name, text: `${name} isn't running. Start it, or switch this chat to Claude Code.` };
+  localSeen = { key: `${id} ${url}`, at: Date.now(), down };
+  return down;
+}
+export function guardLocal(chat) {
+  const send = chat.send.bind(chat);
+  chat.send = async (text, o) => {
+    const down = await localDown().catch(() => null);
+    if (down) chat.emit({ t: 'local-down', ...down });
+    return send(text, o);
+  };
+  return chat;
+}
 
 // A chat made before the engine (or Claude Code's model source) changed in Settings: true when it should be replaced
 // (and it isn't working). A Claude Code chat knows its source once it has started.

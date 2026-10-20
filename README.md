@@ -18,10 +18,10 @@ Project types: YouTube tutorial, Faceless explainer, Short and Product explainer
 You need:
 - a Mac or a Windows PC;
 - [Node.js](https://nodejs.org) 20 or newer;
-- [Claude Code](https://claude.com/claude-code), signed in;
+- an agent: [Claude Code](https://claude.com/claude-code) signed in (recommended), or Codex, or a model running on your own computer;
 - Chrome or Edge, for recording.
 
-Setup checks the rest (ffmpeg, Python for the local transcription, PyTorch and the SAM 2.1 model for object separation) and says how to install anything that's missing.
+Setup checks the rest (ffmpeg, Python when something runs on your computer, the Whisper and SAM 2.1 models for your machine) and says how to install anything that's missing.
 
 ```bash
 git clone https://github.com/Barty-Bart/video-octopus.git
@@ -31,7 +31,7 @@ cd video-octopus
 
 On Windows, run `start.cmd` instead. Then open http://127.0.0.1:4800 if it doesn't open by itself. There are no npm packages to install.
 
-On the first run, **Setup** checks your computer and offers **Create my studio**: a folder for your projects, recordings and library, with starter skills (transcribe, rough cut, join check, production sheet, talking-head zoom, object separation). The Cut Editor is built into the app's Cut tab, so there's nothing to set up for it. You can add motion graphics skills from a GitHub repo in Setup.
+On the first run Video Octopus makes your studio, `~/Video Octopus` (a folder for your projects, recordings and library, with starter skills: transcribe, rough cut, join check, production sheet, talking-head zoom, object separation), and one screen scans your computer: the agents it finds (Claude Code recommended, then Codex, local model servers, pi), the tools (ffmpeg first) and, if you ask, the transcription and object-separation models that suit your machine (MLX Whisper on an Apple Silicon Mac). Nothing is connected, installed or downloaded until you click, and Continue works with whatever is there. The Cut Editor is built into the app's Cut tab, so there's nothing to set up for it. You can add motion graphics skills from a GitHub repo in Setup.
 
 ## Your stuff stays yours
 

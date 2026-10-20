@@ -43,6 +43,8 @@ export async function autoFrame(file, duration, { shape } = {}) {
   let found;
   try { found = JSON.parse(await run(bin, [...pre, ...imgs])); }
   catch (e) {
+    // The first time Auto-frame needs Python and it isn't there: say so, and where it's installed (with an OK).
+    if (!IS_MAC && /ENOENT|not found|is not recognized/i.test(e.message)) throw new Error('Auto-frame needs Python on this computer, which isn\'t set up yet: Ask Claude (the Video Octopus assistant) to install it, and it asks before each step. Until then, drag inside the camera to frame yourself.');
     if (!IS_MAC && /cv2|No module|face detector/i.test(e.message)) throw new Error('Auto-frame needs OpenCV 4 on this computer (pip install "opencv-python<5" for the Python Video Octopus uses). Until then, drag inside the camera to frame yourself.');
     throw e;
   }

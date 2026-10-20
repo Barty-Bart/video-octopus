@@ -11,7 +11,7 @@ import { codexInfo } from './codex.mjs';
 import { piInfo } from './pi.mjs';
 import { engineName, ENGINES } from './engines.mjs';
 import { formats } from './studio.mjs';
-import { settingsView, saveSection, section, profile, saveProfile, testKey, KEYS, PROVIDERS, machineInfo, whisperModels, autoWhisper, MODELS, settingsChanged } from './settings.mjs';
+import { settingsView, saveSection, section, profile, saveProfile, testKey, KEYS, PROVIDERS, machineInfo, whisperModels, autoWhisper, whisperEngine, needsLocalPython, MODELS, settingsChanged } from './settings.mjs';
 import { saveKey, removeKey, hasKey } from './keychain.mjs';
 import { createStudio, studioPathInfo, defaultStudioPath } from './starter.mjs';
 import { SAM2_MODELS, sam2Have, sam2Recommend, sam2Machine, sam2Download } from './sam2.mjs';
@@ -46,15 +46,27 @@ if out["torch"] and out["transformers"]:
         out["sam2video"] = False
 print(json.dumps(out))`;
 
+// The Setup page's cards: tools (ffmpeg first), then the machine's recommendations (models). The agent check (id
+// "claude", from when Claude Code was the only one) is for the assistant's context; the page's Agents card is the
+// scan in onboarding.mjs.
 export const CHECKS = [
-  ['claude', 'Agent (Claude Code, Codex or pi)'], // id "claude" from when Claude Code was the only one
-  ['ffmpeg', 'ffmpeg and ffprobe'],
-  ['python', 'Python and transcription'],
-  ['whisper', 'Transcription model (Whisper)'],
-  ['objsep', 'Object separation (SAM 2)'],
+  ['ffmpeg', 'ffmpeg: renders and exports your videos'],
   ['recorder', 'Recorder'],
   ['folders', 'Your studio and projects folders'],
+  ['python', 'Python'],
+  ['claude', 'Agent (Claude Code, Codex or pi)'],
+  ['whisper', 'Transcription model (Whisper)'],
+  ['objsep', 'Object separation (SAM 2)'],
 ];
+const CARD = { ffmpeg: 'tools', recorder: 'tools', folders: 'tools', python: 'tools', claude: 'agents', whisper: 'machine', objsep: 'machine' };
+
+// How ffmpeg gets installed here with one command, after the creator's OK: Homebrew on a Mac, winget on Windows (with
+// winget's package agreements, which the OK covers). Null when neither is there: the row links the manual install.
+export function ffmpegInstaller() {
+  if (IS_MAC) { const b = studioTool('brew'); return existsSync(b) ? { bin: b, args: ['install', 'ffmpeg'], cmd: 'brew install ffmpeg' } : null; }
+  if (IS_WIN) { const w = studioTool('winget'); return { bin: w, args: ['install', '--id', 'Gyan.FFmpeg', '-e', '--accept-source-agreements', '--accept-package-agreements'], cmd: 'winget install --id Gyan.FFmpeg -e' }; }
+  return null;
+}
 
 const run = async (bin, args, ms = 8000) => {
   const env = await childPathEnv();
@@ -118,24 +130,32 @@ const CHECK = {
     const [a, b] = await Promise.all([run(ff, ['-version']), run(fp, ['-version'])]);
     const ver = (r) => (/version (\S+)/.exec(r.out) || [])[1];
     const missing = [!a.ok && 'ffmpeg', !b.ok && 'ffprobe'].filter(Boolean);
-    if (missing.length) return { state: 'fail', detail: `${missing.join(' and ')} not found.`,
-      fix: `Setup check "ffmpeg and ffprobe" failed: Video Octopus can't find ${missing.join(' or ')}. Video Octopus looks on the PATH, in the studio's .venv, in ~/.local/bin and ${IS_WIN ? 'winget\'s Links folder' : '/opt/homebrew/bin and /usr/local/bin'} (or the "ffmpeg" / "ffprobe" paths in Video Octopus's local/settings.json). Get ${missing.join(' and ')} working on this computer so Video Octopus finds ${missing.length > 1 ? 'them' : 'it'}${IS_WIN ? ' (winget install Gyan.FFmpeg is the usual way on Windows)' : ''}. Tell me your plan first and ask before installing anything.` };
+    const inst = ffmpegInstaller();
+    if (missing.length) return { state: 'fail', detail: `${missing.join(' and ')} not found: exporting needs ${missing.length > 1 ? 'them' : 'it'}.`,
+      install: inst ? { action: 'ffmpeg', cmd: inst.cmd } : null, manual: 'https://ffmpeg.org/download.html',
+      fix: `Setup check "ffmpeg" failed: Video Octopus can't find ${missing.join(' or ')}. Video Octopus looks on the PATH, in the studio's .venv, in ~/.local/bin and ${IS_WIN ? 'winget\'s Links folder' : '/opt/homebrew/bin and /usr/local/bin'} (or the "ffmpeg" / "ffprobe" paths in Video Octopus's local/settings.json). Get ${missing.join(' and ')} working on this computer so Video Octopus finds ${missing.length > 1 ? 'them' : 'it'}${IS_WIN ? ' (winget install Gyan.FFmpeg is the usual way on Windows)' : ''}. Tell me your plan first and ask before installing anything.` };
     return { state: 'ok', detail: `ffmpeg ${ver(a) || ''} · ffprobe ${ver(b) || ''}`.replace(/ +·/, ' ·').trim() };
   },
 
+  // Only when something on this computer needs it (settings.mjs needsLocalPython): else "Not needed", greyed out, and
+  // it never blocks. Needed and missing: an Install that asks the Video Octopus assistant (it asks before each step).
   async python() {
-    const py = python();
+    if (!(await needsLocalPython())) return { state: 'skip', detail: 'Not needed: nothing here runs models on this computer (a cloud agent and cloud transcription). The rough cut, join check and apply_edit ask for Python the first time they need it.' };
+    const py = python(), mlx = await whisperEngine() === 'mlx';
     // cv2 (OpenCV 4): Auto-frame finds the face with it on Windows and Linux (tools/face.py); a Mac uses Vision.
-    const code = 'import sys, json\nout = {"py": sys.version.split()[0]}\nfor m in ("faster_whisper", "numpy", "cv2"):\n    try:\n        out[m] = __import__(m).__version__\n    except Exception:\n        out[m] = None\nprint(json.dumps(out))';
+    const code = 'import sys, json, platform\nout = {"py": sys.version.split()[0], "arch": platform.machine()}\nfor m in ("faster_whisper", "numpy", "cv2", "mlx_whisper"):\n    try:\n        out[m] = getattr(__import__(m), "__version__", "ok")\n    except Exception:\n        out[m] = None\nprint(json.dumps(out))';
     const r = await run(py, ['-c', code], 20000);
     let j = null;
     try { j = JSON.parse(r.out.split('\n').pop()); } catch {}
-    if (!j) return { state: 'fail', detail: `Python not found (${tilde(py)}).`,
-      fix: `Setup check "Python and transcription" failed: Video Octopus can't run Python (it tried ${py}). Transcription (faster-whisper) and the rough cut and join check skills (numpy) need Python 3.9 or newer. Set it up on this computer (a venv in the studio folder at .venv is what Video Octopus looks for first${IS_WIN ? '; on Windows, winget install Python.Python.3.12' : ''}). Tell me your plan first and ask before installing anything.` };
-    const missing = [!j.faster_whisper && 'faster-whisper', !j.numpy && 'numpy'].filter(Boolean);
-    const base = `Python ${j.py}${j.faster_whisper ? ` · faster-whisper ${j.faster_whisper}` : ''}`;
-    if (missing.length) return { state: 'fail', detail: `${base} · missing ${missing.join(' and ')}.`,
-      fix: `Setup check "Python and transcription" failed: Python ${j.py} (${py}) is there but ${missing.join(' and ')} can't be imported. faster-whisper is for transcribing on this computer, numpy is for the rough cut and join check skills. Install ${missing.join(' and ')} for that Python (pip; if it says "externally managed", use the studio's .venv). Ask me before installing.` };
+    const need = 'Python is needed to run models on this computer';
+    if (!j) return { state: 'fail', install: true, detail: `${need}: it isn't found (${tilde(py)}).`,
+      fix: `Setup check "Python" failed: Video Octopus can't run Python (it tried ${py}). Transcription on this computer (faster-whisper${mlx ? ' or MLX Whisper' : ''}) and the rough cut and join check skills (numpy) need Python 3.10 or newer. Set it up on this computer (a venv in the studio folder at .venv is what Video Octopus looks for first${IS_WIN ? '; on Windows, winget install Python.Python.3.12' : ''}), then install the studio's requirements.txt into it. Tell me your plan first and ask before installing anything.` };
+    const missing = [!j.faster_whisper && 'faster-whisper', !j.numpy && 'numpy', mlx && !j.mlx_whisper && 'mlx-whisper'].filter(Boolean);
+    const base = `Python ${j.py}${j.faster_whisper ? ` · faster-whisper ${j.faster_whisper}` : ''}${mlx && j.mlx_whisper ? ` · mlx-whisper ${j.mlx_whisper}` : ''}`;
+    if (mlx && j.arch !== 'arm64') return { state: 'warn', install: true, detail: `${base} · this Python is an Intel build (${j.arch}), which can't run MLX Whisper: transcription falls back to faster-whisper.`,
+      fix: `Setup check "Python": ${py} is an Intel (${j.arch}) Python running under Rosetta, so MLX Whisper can't run on it. Set up a native arm64 Python 3.10+ for the studio's .venv and install requirements.txt into it. Ask me before installing anything.` };
+    if (missing.length) return { state: 'fail', install: true, detail: `${need}: Python ${j.py} is there, but ${missing.join(' and ')} ${missing.length > 1 ? 'aren\'t' : 'isn\'t'} installed.`,
+      fix: `Setup check "Python" failed: Python ${j.py} (${py}) is there but ${missing.join(' and ')} can't be imported. faster-whisper${mlx ? ' and mlx-whisper are' : ' is'} for transcribing on this computer, numpy is for the rough cut and join check skills. Install ${missing.join(' and ')} for that Python (pip; if it says "externally managed", use the studio's .venv; the studio's requirements.txt lists them). Ask me before installing.` };
     // The Whisper model itself has its own row (whisper, below).
     if (!IS_MAC && !j.cv2) return { state: 'warn', detail: `${base} · no OpenCV, which Auto-frame needs.`,
       fix: `Setup check "Python and transcription" (${py}): OpenCV 4 isn't installed for that Python; Video Octopus's Auto-frame finds the face with it on this computer. Install it with pip: "opencv-python-headless<5" (it's in the studio's requirements.txt). Ask me before installing anything.` };
@@ -148,19 +168,27 @@ const CHECK = {
   // downloaded, and the row's Download. `whisper` carries what the row draws.
   async whisper() {
     const t = section('transcribe'), mac = await machineInfo(), rec = mac.whisper;
-    const have = whisperModels(), src = await sources('whisper'), dl = downloadState('whisper');
+    // The build: MLX Whisper (Apple Silicon's GPU, mlx-community's models) or faster-whisper (Systran's).
+    const engine = await whisperEngine(), fam = engine === 'mlx' ? 'mlx' : 'whisper';
+    const have = whisperModels(engine), src = await sources(fam), dl = downloadState(fam);
     const auto = autoWhisper(t.language === 'auto' ? null : t.language, have);
     // What Download offers: the pick, or for Auto the model it uses, else the recommended one.
     const picked = t.model !== 'auto' ? t.model : have.includes(auto) ? auto : rec.model;
     const there = have.includes(picked), size = (id) => src[id]?.size ? ` (${src[id].size})` : '';
-    const whisper = { family: 'whisper', choice: t.model, picked, recommended: rec.model, why: `${mac.chip}${mac.ramGB ? ` with ${mac.ramGB} GB` : ''}`, speed: rec.speed, auto, cache: tilde(hfHub()), there,
+    // The one recommended for this computer, in its own build (MLX Whisper's model is mlx-community's), for the row's
+    // short view: its source, whether it's here, and the download (of either build) under way.
+    const recFam = rec.engine === 'mlx' ? 'mlx' : 'whisper', recSrc = recFam === fam ? src : await sources(recFam);
+    const dls = ['whisper', 'mlx'].map((f) => ({ ...downloadState(f), family: f }));
+    const whisper = { family: fam, engine, engineChoice: t.whisperEngine, engineRec: rec.engine, mlxOk: Boolean(mac.arm64), cloud: t.engine === 'cloud',
+      choice: t.model, picked, recommended: rec.model, why: `${mac.chip}${mac.ramGB ? ` with ${mac.ramGB} GB` : ''}`, speed: rec.speed, auto, cache: tilde(hfHub()), there,
+      rec: { id: rec.model, family: recFam, engine: rec.engine, have: whisperModels(rec.engine).includes(rec.model), source: { ...recSrc[rec.model], line: sourceLine(recSrc[rec.model]) } },
       models: MODELS.map((id) => ({ id, have: have.includes(id), source: { ...src[id], line: sourceLine(src[id]) } })),
-      download: dl.state === 'downloading' || dl.size === picked ? dl : { state: 'idle' } };
-    const recLine = `recommended for this computer: ${rec.model} (${rec.speed})`;
+      download: dls.find((d) => d.state === 'downloading') || dls.find((d) => (d.family === fam && d.size === picked) || (d.family === recFam && d.size === rec.model)) || { state: 'idle' } };
+    const recLine = `recommended for this computer: ${rec.model} on ${rec.engine === 'mlx' ? 'MLX Whisper' : 'faster-whisper'} (${rec.speed})`;
     if (t.engine === 'cloud') return { state: 'ok', whisper, detail: `Transcription goes to ${PROVIDERS[t.provider]?.label || 'a cloud service'} (Settings → Transcription): no model needed here${have.length ? ` · downloaded: ${have.join(', ')}` : ''}` };
     if (!there) return { state: 'warn', whisper,
       detail: `${t.model === 'auto' ? `Auto uses the best model already downloaded, and none is yet: ${picked}${size(picked)} is the one recommended for this computer (${rec.speed})` : `${picked}${size(picked)}, your pick, isn't downloaded yet · ${recLine}`}${have.length ? ` · downloaded: ${have.join(', ')}` : ''}.` };
-    return { state: 'ok', whisper, detail: `${t.model === 'auto' ? `Auto: ${picked}, the best downloaded for a verbatim transcript` : `${picked}, your pick`} · ${recLine} · in ${tilde(hfHub())}` };
+    return { state: 'ok', whisper, detail: `${t.model === 'auto' ? `Auto: ${picked}, the best downloaded for a verbatim transcript` : `${picked}, your pick`} on ${engine === 'mlx' ? 'MLX Whisper' : 'faster-whisper'} · ${recLine} · in ${tilde(hfHub())}` };
   },
 
   // Object separation (the object-separation skill, starter/.claude/skills): torch, torchvision, transformers (SAM 2's
@@ -169,6 +197,9 @@ const CHECK = {
   // asking first); the model has the row's own Download button. `sam2` carries what the row draws: the three models
   // with their sizes and speed, the recommendation, the choice, the download.
   async objsep() {
+    // Only for a studio that has the skill (every studio from the starter does; one set up by hand may not).
+    const studio = settings().studio;
+    if (studio && existsSync(studio) && !existsSync(join(studio, '.claude', 'skills', 'object-separation'))) return { state: 'skip', hidden: true, detail: 'This studio has no object-separation skill.' };
     const py = python();
     const r = await run(py, ['-c', SAM2_PROBE], 60000);
     let j = null;
@@ -179,8 +210,9 @@ const CHECK = {
     const choice = section('objsep').model, picked = choice === 'auto' ? rec.size : choice;
     const have = sam2Have(), there = have.includes(picked), dl = sam2Download(), src = await sources('sam2');
     const sam2 = { family: 'sam2', choice, picked, recommended: rec.size, why: rec.why, slow: rec.slow, cache: tilde(hfHub()), there,
+      rec: { id: rec.size, family: 'sam2', have: have.includes(rec.size), source: { ...src[rec.size], line: sourceLine(src[rec.size]) } },
       models: Object.entries(SAM2_MODELS).map(([id, m]) => ({ id, repo: m.repo, speed: m.speed, for: m.for, have: have.includes(id), source: { ...src[id], line: sourceLine(src[id]) } })),
-      download: dl.state === 'downloading' || dl.size === picked ? dl : { state: 'idle' } };
+      download: dl.state === 'downloading' || dl.size === picked || dl.size === rec.size ? { ...dl, family: 'sam2' } : { state: 'idle' } };
     const model = `SAM 2.1 ${picked} (${[src[picked]?.size, choice === 'auto' ? `recommended for ${rec.why}` : 'your pick'].filter(Boolean).join(', ')})`;
     const slow = rec.slow ? ' · no GPU it can use: it runs on the CPU, which takes seconds a frame, so separate short parts' : '';
     const ask = 'Leave the model alone: the Download button on this Setup row fetches it into the Hugging Face cache. Tell me your plan first and ask before installing anything.';
@@ -257,19 +289,19 @@ export async function appRoute(req, res, url, { send, body }) {
       return send(res, 200, await testKey(b.name)), true;
     }
     if (p === '/api/app/profile') return send(res, 200, post ? saveProfile(b) : profile() || {}), true;
-    if (p === '/api/app/setup' && !post) return send(res, 200, { needed: setupNeeded(), done: section('setup').done, checks: CHECKS.map(([id, title]) => ({ id, title })), formats: formats() }), true;
+    if (p === '/api/app/setup' && !post) return send(res, 200, { needed: setupNeeded(), done: section('setup').done, checks: CHECKS.map(([id, title]) => ({ id, title, card: CARD[id] })), formats: formats() }), true;
     if (p === '/api/app/setup' && post) { saveSection('setup', { done: Boolean(b.done) }); return send(res, 200, { done: section('setup').done }), true; }
     if (p === '/api/app/setup/check') return send(res, 200, await runCheck(url.searchParams.get('id'))), true;
     // A model row's download (sam2: object separation, whisper: transcription): its progress, start it (the row's
     // picked model unless one is named), stop it.
-    const md = /^\/api\/app\/setup\/(sam2|whisper)(\/download|\/stop)?$/.exec(p);
+    const md = /^\/api\/app\/setup\/(sam2|whisper|mlx)(\/download|\/stop)?$/.exec(p);
     if (md) {
-      const fam = md[1], have = fam === 'sam2' ? sam2Have() : whisperModels();
+      const fam = md[1], have = fam === 'sam2' ? sam2Have() : whisperModels(fam === 'mlx' ? 'mlx' : 'faster-whisper');
       if (!md[2] && !post) return send(res, 200, { ...downloadState(fam), have }), true;
       if (md[2] === '/stop' && post) return send(res, 200, stopDownload(fam)), true;
       if (md[2] === '/download' && post) {
         const id = fam === 'sam2' ? 'objsep' : 'whisper';
-        const size = b.size ? String(b.size) : (lastChecks.get(id) || await runCheck(id))[fam].picked;
+        const size = b.size ? String(b.size) : (lastChecks.get(id) || await runCheck(id))[id === 'objsep' ? 'sam2' : 'whisper'].picked;
         return send(res, 200, startDownload(fam, size)), true;
       }
     }

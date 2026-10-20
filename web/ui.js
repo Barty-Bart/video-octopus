@@ -12,6 +12,25 @@ export async function api(path, data) {
 }
 
 let toastTimer;
+// A yes/no dialog for anything that installs, downloads, connects or switches: resolves true only on the OK button.
+// `body`: an element shown under the text (a model picker); `onOk(body)` may return false to keep it open.
+export function confirmBox({ title, text = '', ok = 'OK', cancel = 'Cancel', body = null, onOk = null } = {}) {
+  return new Promise((done) => {
+    const m = h(`<div class="modal cf-modal"><div class="dialog cf" role="dialog" aria-modal="true" aria-labelledby="cfTitle">
+      <h3 id="cfTitle">${esc(title)}</h3>${text ? `<p class="sub cf-text">${esc(text)}</p>` : ''}<div class="cf-body"></div>
+      <div class="actions"><button type="button" class="btn ghost" data-a="no">${esc(cancel)}</button><button type="button" class="btn primary" data-a="ok">${esc(ok)}</button></div></div></div>`);
+    if (body) m.querySelector('.cf-body').append(body);
+    const close = (v) => { document.removeEventListener('keydown', key); m.remove(); done(v); };
+    const key = (e) => { if (e.key === 'Escape') close(false); };
+    document.addEventListener('keydown', key);
+    m.querySelector('[data-a=no]').onclick = () => close(false);
+    m.querySelector('[data-a=ok]').onclick = async () => { if (onOk && (await onOk(body)) === false) return; close(true); };
+    m.onclick = (e) => { if (e.target === m) close(false); };
+    document.body.append(m);
+    m.querySelector('[data-a=ok]').focus();
+  });
+}
+
 export function toast(text) {
   const t = $('#toast');
   t.textContent = text; t.hidden = false;
