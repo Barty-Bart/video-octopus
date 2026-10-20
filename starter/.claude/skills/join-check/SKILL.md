@@ -1,6 +1,6 @@
 ---
 name: join-check
-description: Listen to every join of a cut and catch clipped words (half-word cuts) before any graphics are timed to the cut. Ranks joins worst first, with each one playable as it sounds now and with a suggested fix, and writes a fixed cut. Use right after rough-cut or a Cut Editor save, before production-sheet, motion or zooms, and whenever the creator says a word sounds chopped, a cut is "clicky" or "eats a word".
+description: Listen to every join of a cut and catch clipped words (half-word cuts) before any graphics are timed to the cut. Ranks joins worst first, with each one playable as it sounds now and with a suggested fix, and writes a fixed cut. Use right after rough-cut or a save in the Cut tab, before production-sheet, motion or zooms, and whenever the creator says a word sounds chopped, a cut is "clicky" or "eats a word".
 ---
 
 # Join check
@@ -9,9 +9,9 @@ description: Listen to every join of a cut and catch clipped words (half-word cu
 
 ## Where it sits in the edit
 
-`transcribe` → `rough-cut` (its apply step already snaps each edge to the quietest 20 ms) → **join-check** → fix in the Cut tab (the Cut Editor) → **lock the cut** → production-sheet, zooms, motion, B-roll.
+`transcribe` → `rough-cut` (its apply step already snaps each edge to the quietest 20 ms) → **join-check** → fix in the Cut tab → **lock the cut** → production-sheet, zooms, motion, B-roll.
 
-After the cut is locked, don't change it casually. If it must change, move the graphics with `tools/cut-editor/apply_edit.py --retime` (or `rough_map.json`), then run join-check again on the new cut.
+After the cut is locked, don't change it casually. If it must change, move the graphics with `tools/cut/apply_edit.py --retime` (or `rough_map.json`), then run join-check again on the new cut.
 
 ## Run it
 
@@ -22,7 +22,7 @@ The scripts are in the studio's `tools/join-check/`. From the project folder (`p
 python3 ../../tools/join-check/join_check.py source/raw.mp4 \
         --map work/rough_map.json --words work/tr/words.json --out work/joins --fix-out work/edl_fixed.json
 
-# after a Cut Editor save (EDL in source seconds)
+# after a save in the Cut tab (EDL in source seconds)
 python3 ../../tools/join-check/join_check.py source/raw.mp4 \
         --edl work/edl_manual.json --words work/tr/words.json --out work/joins --fix-out work/edl_fixed.json
 ```
@@ -52,9 +52,8 @@ A fix moves the edge outwards to the first quiet point plus about 30 ms of air: 
 
 1. Tell the creator in plain words: how many joins, how many likely clipped, and the worst two or three with their times.
 2. Fix them:
-   - **In Video Octopus:** `work/edl_fixed.json` is the cut Video Octopus uses from then on (the Cut tab opens it until the creator saves their own, and the export plays the newer of the two), so its fixes are applied: say so, don't call them pending. `rough.mp4` isn't re-rendered for it, and doesn't need to be. The Cut tab opens the creator's last save (`work/edl_manual.json`), or the fixed cut before there is one, with the flagged joins marked on the waveform (red likely clipped, amber check). **N** jumps to the next flagged join and plays it; the creator nudges an edge if needed, and the tab saves `work/edl_manual.json` by itself. Don't start your own Cut Editor server; point them to the Cut tab.
-   - **Without Video Octopus:** `python3 ../../tools/cut-editor/server.py --video source/raw.mp4 --words work/tr/words.json --edl work/edl_fixed.json --out work/edl_manual.json --joins work/joins.json`, then open the address it prints.
-   - Or render the fixed cut straight away with `../../tools/cut-editor/apply_edit.py`.
+   - **In Video Octopus:** `work/edl_fixed.json` is the cut Video Octopus uses from then on (the Cut tab opens it until the creator saves their own, and the export plays the newer of the two), so its fixes are applied: say so, don't call them pending. `rough.mp4` isn't re-rendered for it, and doesn't need to be. The Cut tab opens the creator's last save (`work/edl_manual.json`), or the fixed cut before there is one, with the flagged joins marked on the waveform (red likely clipped, amber check). **N** jumps to the next flagged join and plays it; the creator nudges an edge if needed, and the tab saves `work/edl_manual.json` by itself. Don't start your own editor or server; point them to the Cut tab.
+   - Or render the fixed cut straight away with `../../tools/cut/apply_edit.py`.
 3. Run join-check once more on the saved cut. When nothing is "likely clipped", the cut is locked: write "Cut locked (join-check: N joins, 0 clipped)" in `WORKLOG.md`, then start graphics.
 
 ## Rules

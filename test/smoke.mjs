@@ -5,7 +5,7 @@
 //                                   PLAYWRIGHT_PATH=<playwright package> adds the recorder test)
 // It never touches your own settings, studio or keys: everything lives in a temp folder that's removed at the end.
 import { spawn, execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, existsSync, renameSync, symlinkSync, statSync, utimesSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, existsSync, renameSync, symlinkSync, statSync, utimesSync, copyFileSync, realpathSync } from 'node:fs';
 import { gzipSync, deflateSync } from 'node:zlib';
 import { tmpdir, homedir } from 'node:os';
 import { join, resolve, dirname, sep } from 'node:path';
@@ -174,17 +174,22 @@ try {
     must(r2.status === 403, `write without X-Studio got ${r2.status}`);
   });
 
-  await check('Create my studio (starter: CLAUDE.md, skills, Cut Editor)', async () => {
+  await check('Create my studio (starter: CLAUDE.md, skills, tools; no Cut Editor copy, no Setup row for it)', async () => {
     const r = await api('/api/app/setup/create-studio', { path: STUDIO });
     must(r.status === 200, r.text);
     for (const f of ['CLAUDE.md', 'memory/preferences.md', '.claude/skills/transcribe/SKILL.md', '.claude/skills/rough-cut/SKILL.md',
-      '.claude/skills/join-check/SKILL.md', 'tools/cut-editor/server.py', 'tools/join-check', '.studio/starter.json', 'projects'])
+      '.claude/skills/join-check/SKILL.md', 'tools/cut/apply_edit.py', 'tools/join-check', '.studio/starter.json', 'projects'])
       must(existsSync(join(STUDIO, f)), `missing ${f}`);
-    for (const id of ['folders', 'cuteditor']) {
-      const c = (await api(`/api/app/setup/check?id=${id}`)).json;
-      must(c?.state === 'ok', `${id}: ${c?.state} ${c?.detail}`);
-    }
-    return `${readdirSync(join(STUDIO, '.claude', 'skills')).join(', ')}`;
+    // The Cut Editor is built into the app: nothing of it in a fresh studio, and Setup has nothing to check for it.
+    must(!existsSync(join(STUDIO, 'tools', 'cut-editor')), 'a fresh studio has tools/cut-editor');
+    const man = JSON.parse(readFileSync(join(STUDIO, '.studio', 'starter.json'), 'utf8'));
+    must(!Object.keys(man.files).some((f) => /cut-editor|server\.py/.test(f)), 'the starter manifest names a Cut Editor file');
+    const setup = (await api('/api/app/setup')).json;
+    must(setup?.checks?.length && !setup.checks.some((c) => c.id === 'cuteditor' || /cut editor/i.test(c.title)), `Setup rows: ${setup?.checks?.map((c) => c.title).join(', ')}`);
+    must((await api('/api/app/setup/check?id=cuteditor')).status !== 200, 'Setup still answers a Cut Editor check');
+    const c = (await api('/api/app/setup/check?id=folders')).json;
+    must(c?.state === 'ok', `folders: ${c?.state} ${c?.detail}`);
+    return `${readdirSync(join(STUDIO, '.claude', 'skills')).join(', ')} · tools: ${readdirSync(join(STUDIO, 'tools')).join(', ')} · Setup: ${setup.checks.map((x) => x.title).join(' / ')}`;
   });
 
   await check('Setup: ffmpeg and ffprobe found', async () => {
@@ -688,15 +693,107 @@ try {
     return `${words.length} words: "${text.slice(0, 60)}…" (filler pass in the same run: ${fill.length} words)`;
   });
 
-  await check('Cut Editor opens for the project (Python server)', async () => {
-    if (!words) return 'skipped (no words)';
+  // The Cut Editor is built into the app (web/cut-editor/, server/cuteditor.mjs). The words go into the smoke project as
+  // before; the checks run on a project of their own: the smoke take's playback copy, made-up words and a cut file
+  // written the way the separate Python editor wrote it (a project from before the editor was built in).
+  if (words) {
     mkdirSync(join(STUDIO, 'projects', id, 'work', 'tr'), { recursive: true });
     writeFileSync(join(STUDIO, 'projects', id, 'work', 'tr', 'words.json'), JSON.stringify(words));
-    const r = (await api(`/api/projects/${id}/cut`, {})).json;
-    must(r?.ok && r.url, `cut: ${JSON.stringify(r)}`);
-    const page = await fetch(r.url);
-    must(page.ok, `the Cut Editor page answered ${page.status}`);
-    return r.url;
+  }
+  const CB = 'cut-builtin', CBD = join(STUDIO, 'projects', CB), CB_WORDS = [[0.3, 0.8, 'hello'], [1.0, 1.5, 'there'], [1.8, 2.4, 'this'], [2.6, 3.2, 'is'], [3.4, 3.8, 'it']];
+  const CB_EDL = [[0.2, 1.6], [1.6667, 3.9]]; // with a 2-frame cut
+  const pyEdl = (src) => `{\n "source": ${JSON.stringify(src)},\n "fps": 30.0,\n "segments_sec": [\n  [\n   0.2,\n   1.6\n  ],\n  [\n   1.6667,\n   3.9\n  ]\n ],\n "saved_at": "2026-10-19 21:04:11",\n "edited_length": 3.633\n}`;
+  const SETTINGS = join(LOCAL, 'settings.json'), TRAP = join(ROOT, 'tool-trap'), RAN = join(TRAP, 'ran.txt'), ON_WIN = process.platform === 'win32';
+  // Python made unavailable to Video Octopus while fn runs: its python setting points at a stand-in that only notes that
+  // it ran, and fails (on Windows: at nothing). ffmpeg and ffprobe point at stand-ins that note each run and hand over to
+  // the real ones, so ran() lists every program Video Octopus started meanwhile (Mac and Linux).
+  const ran = () => { try { return readFileSync(RAN, 'utf8').trim().split('\n').filter(Boolean); } catch { return []; } };
+  const withoutPython = async (fn) => {
+    const before = readFileSync(SETTINGS, 'utf8'), tools = {};
+    mkdirSync(TRAP, { recursive: true }); rmSync(RAN, { force: true });
+    if (ON_WIN) tools.python = join(TRAP, 'python.exe'); // not there
+    else {
+      const stand = (name, then) => { const f = join(TRAP, name); writeFileSync(f, `#!/bin/sh\necho "${name} $*" >> "${RAN}"\n${then}\n`); execFileSync('chmod', ['755', f]); return f; };
+      tools.python = stand('python3', 'exit 1');
+      for (const t of ['ffmpeg', 'ffprobe']) tools[t] = stand(t, `exec "${execFileSync('sh', ['-c', `command -v ${t}`], { encoding: 'utf8' }).trim()}" "$@"`);
+    }
+    writeFileSync(SETTINGS, JSON.stringify({ ...JSON.parse(before), ...tools }, null, 2));
+    try { return await fn(); } finally { writeFileSync(SETTINGS, before); }
+  };
+  // The TCP ports the server listens on (Mac and Linux, with lsof).
+  const listening = (pid) => { try { return execFileSync('lsof', ['-a', '-p', String(pid), '-iTCP', '-sTCP:LISTEN', '-n', '-P', '-Fn'], { encoding: 'utf8' }).split('\n').filter((l) => l.startsWith('n')).map((l) => l.slice(1)); } catch { return null; } };
+
+  await check('Cut tab: the built-in Cut Editor opens with Python unavailable, starts no Python process and no second server', async () => {
+    const proxy = join(STUDIO, 'projects', id, 'work', `proxy_${take}_webcam.mp4`);
+    must(existsSync(proxy), 'no playback copy of the smoke take');
+    mkdirSync(join(CBD, 'source'), { recursive: true }); mkdirSync(join(CBD, 'work', 'tr'), { recursive: true });
+    copyFileSync(proxy, join(CBD, 'source', 'cb_webcam.mp4'));
+    writeFileSync(join(CBD, 'project.json'), JSON.stringify({ name: 'Cut built in', type: 'tutorial' }));
+    writeFileSync(join(CBD, 'work', 'tr', 'words.json'), JSON.stringify(CB_WORDS));
+    writeFileSync(join(CBD, 'work', 'edl_fixed.json'), JSON.stringify({ segments_sec: [[0.2, 3.9]] }));
+    writeFileSync(join(CBD, 'work', 'edl_manual.json'), pyEdl(join(CBD, 'source', 'cb_webcam.mp4')));
+    return withoutPython(async () => {
+      const py = (await api('/api/app/setup/check?id=python')).json;
+      must(py?.state === 'fail' && (ON_WIN || ran().some((l) => l.startsWith('python3 '))), `Python should be unavailable now: ${py?.state} ${py?.detail} · ran: ${ran().join(' | ')}`);
+      rmSync(RAN, { force: true });
+      const r = (await api(`/api/projects/${CB}/cut`, {})).json;
+      must(r?.ok && r.url === `/cut-editor/?p=${CB}`, `open: ${JSON.stringify(r)}`);
+      const page = await fetch(`${BASE}${r.url}&autosave=1&theme=studio`);
+      const html = await page.text();
+      must(page.ok && /<title>Cut Editor<\/title>/.test(html), `the page answered ${page.status}`);
+      for (const f of ['studio.js', 'studio.css']) must((await fetch(`${BASE}/cut-editor/${f}`)).ok, `no /cut-editor/${f}`);
+      const d = await api(`/api/projects/${CB}/cut/data.json`);
+      must(d.status === 200 && d.json?.pps === 200, `data: ${d.status} ${d.text.slice(0, 200)}`);
+      // Started: ffmpeg (the waveform) and ffprobe (the frame rate), nothing else; listening: Video Octopus's own port only.
+      const progs = ran(), ports = listening(server.pid);
+      if (!ON_WIN) must(progs.length && progs.every((l) => /^ff(mpeg|probe) /.test(l)) && progs.some((l) => l.startsWith('ffmpeg ')), `programs started: ${progs.join(' | ') || 'none'}`);
+      if (ports) must(ports.length === 1 && ports[0].endsWith(`:${PORT}`), `the server listens on ${ports.join(', ')}`);
+      const { duration, peaks, rms } = d.json;
+      must(Math.abs(duration - 4) < 0.15 && Math.abs(peaks.length - Math.floor(duration * 200)) <= 1 && rms.length === peaks.length && Math.max(...peaks) === 1,
+        `the waveform: ${duration} s, ${peaks.length} peaks, ${rms.length} rms, top ${Math.max(...peaks)}`);
+      return `${r.url} · ${peaks.length} peaks (${duration.toFixed(2)} s)${ON_WIN ? '' : ` · started: ${progs.map((l) => l.split(' ')[0]).join(', ')}`}${ports ? ` · listening: ${ports.join(', ')}` : ''}`;
+    });
+  });
+
+  await check('Cut tab: a project\'s edl_manual.json from the Python editor opens as it is; a save writes the same file; comments, the take, a stale save', async () => {
+    must(existsSync(join(CBD, 'work', 'edl_manual.json')), 'no project from the check before');
+    return withoutPython(async () => {
+      const video = join(CBD, 'source', 'cb_webcam.mp4');
+      const d = (await api(`/api/projects/${CB}/cut/data.json`)).json;
+      must(JSON.stringify(d.segments) === JSON.stringify(CB_EDL) && d.saved === true && d.source === 'cb_webcam.mp4', `opened: ${JSON.stringify({ segments: d.segments, saved: d.saved, source: d.source })}`);
+      must(JSON.stringify(d.words) === JSON.stringify(CB_WORDS) && d.joins.length === 0 && Math.abs(d.version - statSync(join(CBD, 'work', 'edl_manual.json')).mtimeMs / 1000) < 1e-3, 'words, joins or version');
+      must((await api(`/api/projects/${CB}/cut/version`)).json?.version === d.version, 'version');
+      // A save made on an older version is refused, and the file stays as it was.
+      const before = readFileSync(join(CBD, 'work', 'edl_manual.json'), 'utf8');
+      const stale = await api(`/api/projects/${CB}/cut/save`, { segments: [[0.2, 3.9]], version: d.version - 5 });
+      must(stale.status === 409 && stale.json?.conflict === true && readFileSync(join(CBD, 'work', 'edl_manual.json'), 'utf8') === before, `stale save: ${stale.status}`);
+      const unsigned = await fetch(`${BASE}/api/projects/${CB}/cut/save`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ segments: [[0, 1]], force: true }) });
+      must(unsigned.status === 403, `a save without X-Studio got ${unsigned.status}`);
+      // The save: slivers under 20 ms dropped, 4 decimals, the file in the Python editor's shape (whole floats as 30.0).
+      const sv = await api(`/api/projects/${CB}/cut/save`, { segments: [[0.2, 1.6], [1.66666, 2.5], [2.8, 3.9], [3.95, 3.96]], version: d.version });
+      must(sv.status === 200 && sv.json?.ok && sv.json.length === 3.333, `save: ${sv.text}`);
+      const text = readFileSync(join(CBD, 'work', 'edl_manual.json'), 'utf8'), f = JSON.parse(text);
+      must(JSON.stringify(Object.keys(f)) === JSON.stringify(['source', 'fps', 'segments_sec', 'saved_at', 'edited_length']), `keys: ${Object.keys(f)}`);
+      must(f.source === realpathSync(video) && f.fps === 30 && JSON.stringify(f.segments_sec) === '[[0.2,1.6],[1.6667,2.5],[2.8,3.9]]' && f.edited_length === 3.333 && /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(f.saved_at),
+        `saved: ${JSON.stringify(f)}`);
+      must(text.startsWith('{\n "source": ') && text.includes('\n "fps": 30.0,\n') && !text.endsWith('\n') && !/^\s+-?\d+,?$/m.test(text), `not the Python editor's layout:\n${text}`);
+      must((await api(`/api/projects/${CB}/cut/version`)).json?.version === sv.json.version, 'the version after the save');
+      // The app reads that cut like any other: the export's cut and Scenes' take.
+      const view = (await api(`/api/projects/${CB}`)).json, ct = (await api(`/api/projects/${CB}/cut-take`)).json;
+      must(view.cut?.ready && view.export?.cut?.file === 'work/edl_manual.json' && JSON.stringify(ct.segments) === JSON.stringify(f.segments_sec.map((x) => x.map((t) => Math.round(t * 1000) / 1000))),
+        `the app's cut: ${view.export?.cut?.file} · cut-take ${JSON.stringify(ct.segments)}`);
+      // Comments (work/editor_notes.json), and the take with Range.
+      const n = (await api(`/api/projects/${CB}/cut/notes`, { t: 1.234, edited_t: 1.034, text: 'Smoke comment' })).json;
+      must(n?.t === 1.23 && n.edited_t === 1.03 && /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(n.at) && Number.isInteger(n.id), `note: ${JSON.stringify(n)}`);
+      must((await api(`/api/projects/${CB}/cut/notes`)).json?.some((x) => x.id === n.id && x.text === 'Smoke comment'), 'the note is not listed');
+      await api(`/api/projects/${CB}/cut/notes/delete`, { id: n.id });
+      must(!(await api(`/api/projects/${CB}/cut/notes`)).json?.length && existsSync(join(CBD, 'work', 'editor_notes.json')), 'the note was not deleted');
+      const v = await fetch(`${BASE}/api/projects/${CB}/cut/video`, { headers: { Range: 'bytes=0-99' } });
+      const got = Buffer.from(await v.arrayBuffer());
+      must(v.status === 206 && got.length === 100 && v.headers.get('content-range') === `bytes 0-99/${statSync(video).size}` && got.equals(readFileSync(video).subarray(0, 100)), `video: ${v.status} ${got.length} ${v.headers.get('content-range')}`);
+      must(!ran().some((l) => l.startsWith('python')), `Python ran: ${ran().join(' | ')}`);
+      return `opened ${JSON.stringify(d.segments)} (2-frame cut kept) · saved ${JSON.stringify(f.segments_sec)} · 409 on a stale save · note · 206 on the take`;
+    });
   });
 
   // The Dashboard: totals from the folders, features from the usage log, and the log holds no paths or words.
@@ -1553,13 +1650,20 @@ try {
   });
 
   if (process.env.PLAYWRIGHT_PATH) {
-    await check('Cut Editor: the cut opens exactly (a 2-frame cut stays), a word delete cuts to safe edges, the save changes only that (headless Chrome)', async () => {
+    await check('Cut Editor (built in): the cut opens exactly (a 2-frame cut stays), a word delete cuts to safe edges, the save changes only that, all on Video Octopus\'s own address (headless Chrome)', async () => {
       let out;
       cutFixture();
+      // With Python unavailable to Video Octopus (its stand-in notes any run).
+      let py = [];
       try {
-        out = execFileSync(process.execPath, [join(APP, 'test', 'cuteditor.e2e.mjs')], { env: { ...process.env, CUT_DIR: CUTF, CUT_PY: PY }, encoding: 'utf8', timeout: 180000 });
+        out = await withoutPython(async () => { const o = execFileSync(process.execPath, [join(APP, 'test', 'cuteditor.e2e.mjs')], { env: { ...process.env, CUT_DIR: CUTF, STUDIO_URL: BASE }, encoding: 'utf8', timeout: 180000 }); py = ran().filter((l) => l.startsWith('python')); return o; });
       } catch (e) { throw new Error(String((e.stdout || '') + (e.stderr || '') || e.message).trim().split('\n').slice(-6).join(' | ')); }
-      const { opened, saved } = JSON.parse(out.trim().split('\n').pop());
+      must(!py.length, `Python ran: ${py.join(' | ')}`);
+      const { opened, saved, text, origins, video } = JSON.parse(out.trim().split('\n').pop());
+      must(origins.length === 1 && origins[0] === BASE, `the page asked other addresses: ${origins.join(', ')}`);
+      const file = JSON.parse(text);
+      must(JSON.stringify(Object.keys(file)) === JSON.stringify(['source', 'fps', 'segments_sec', 'saved_at', 'edited_length']) && file.source === realpathSync(video) && file.fps === 30 && text.includes('"fps": 30.0'),
+        `the saved file: ${text.slice(0, 300)}`);
       // Where the saved cut differs from the file (kept here, not in the other).
       const minus = (X, Y) => X.flatMap(([a, b]) => Y.reduce((ps, [c, d]) => ps.flatMap(([x, y]) => (d <= x || c >= y ? [[x, y]] : [[x, Math.min(y, c)], [Math.max(x, d), y]].filter(([p, q]) => q - p > 1e-6))), [[a, b]]));
       const ch = [...minus(CUT_EDL, saved), ...minus(saved, CUT_EDL)].filter(([a, b]) => b - a > 0.01);
@@ -1656,7 +1760,7 @@ try {
     v = (await api(`/api/projects/${nid}/cut-review`)).json;
     must(v.items.find((x) => x.key === fs.key).decision === null && v.needs === 3, `after Undo: ${JSON.stringify(v.items.find((x) => x.key === fs.key))} · ${v.needs}`);
     // The page: Keep / Cut send the range with safe edges, and an undo in the editor takes the decision back.
-    const page = readFileSync(join(APP, 'web', 'cutpanel.js'), 'utf8'), ed = readFileSync(join(APP, 'starter', 'tools', 'cut-editor', 'studio.js'), 'utf8');
+    const page = readFileSync(join(APP, 'web', 'cutpanel.js'), 'utf8'), ed = readFileSync(join(APP, 'web', 'cut-editor', 'studio.js'), 'utf8');
     must(/safe: Boolean\(it\.safe\)/.test(page) && /followUndo/.test(page) && /applyRanges\(op,m\.ranges,!!m\.safe\)/.test(ed), 'the page and the editor wire the safe edges and the undo');
     return 'false starts 0.3–1.4 s from the quoted words, the ending 3.0–3.7 s from its end, a word 2.4–2.7 s; Cut → decided, Undo → to check again';
   });
@@ -2819,13 +2923,13 @@ try {
     return `S → ${sA} at 0:09.01, "/" → ${sB} at 0:13.01 (w26), camera hidden in ${sA} only, zoom + ↺, Crossfade 0.4 → every change 0.6 → Cut, merge + undo, drag, rename`;
   });
 
-  // The page's files: the Shots lane is wired in, S / ⇧S and "/" are the timeline's, the Cut Editor copy knows "/".
+  // The page's files: the Shots lane is wired in, S / ⇧S and "/" are the timeline's, the Cut Editor knows "/".
   await check('shots editor: the page wires the Shots lane, the keys and the Cut tab', async () => {
     const tl = readFileSync(join(APP, 'web', 'timeline.js'), 'utf8'), core = readFileSync(join(APP, 'web', 'tlcore.js'), 'utf8'), app = readFileSync(join(APP, 'web', 'app.js'), 'utf8');
     must(/k: 'shots', label: 'Shots', note: 'you edit here'/.test(tl) && /splitShot: \(t\) => o\.shots\.split\(t\)/.test(tl), 'the Shots lane / S in web/timeline.js');
     must(/cfg\.splitShot && !e\.shiftKey/.test(core) && /case '\/': if \(cfg\.slash\)/.test(core), 'S / ⇧S / "/" in web/tlcore.js');
     must(/frameLooks\(t, \{ list: L, base/.test(app) && /makeShots\(/.test(app), 'the canvas draws frameLooks');
-    const ce = readFileSync(join(APP, 'starter', 'tools', 'cut-editor', 'studio.js'), 'utf8');
+    const ce = readFileSync(join(APP, 'web', 'cut-editor', 'studio.js'), 'utf8');
     must(/studio:shot-add/.test(ce) && /studio:shots/.test(ce), 'the Cut Editor shows and sends "/"');
     const css = readFileSync(join(APP, 'web', 'looks.css'), 'utf8');
     const looks = [...css.matchAll(/:root\[data-look="(\w+)"\] \{([^}]*)\}/g)].filter((m, i, a) => a.findIndex((x) => x[1] === m[1]) === i);

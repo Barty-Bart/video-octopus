@@ -1,5 +1,5 @@
 // The starter studio: Setup's "Create my studio" copies the app's starter/ folder (CLAUDE.md, memory/, the default
-// skills, the Cut Editor and join check, a library skeleton) into a new studio folder, never over a file that is
+// skills and their tools (join check, apply_edit), a library skeleton) into a new studio folder, never over a file that is
 // already there, and points Video Octopus at it. <studio>/.studio/starter.json records which starter files went in and
 // their sha1, so a later updater can tell files the creator never touched from ones they changed.
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, copyFileSync, constants } from 'node:fs';

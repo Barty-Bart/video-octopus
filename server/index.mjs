@@ -9,7 +9,7 @@ import { makeChat, staleChat, foreignSession, enginesView, modelSourceView, engi
 import { listProjects, createProject, projectDir, projectMeta, saveProjectMeta, listTakes, importTake, importTakeFrom, makeProxies,
   pipelineStatus, stepPrompt, formats, listSkills, roles, proxyName, sources, projectsRoot, probe, probeFile, formatId, formatInfo, isAudio, isTakeFile,
   importUpload, lockedCut, appendWorklog, setSkipped, takeDuration } from './studio.mjs';
-import { openCutEditor, cutPlan, cutEditorPath, closeAll } from './cuteditor.mjs';
+import { openCutEditor, cutPlan, cutEditorRoute, closeAll } from './cuteditor.mjs';
 import { onProjectFiles, syncCutItem, retimeOnSave, syncDocItems, markPackageBase, cutTake, saveCut } from './cutsync.mjs';
 import { cutReviewRoute, markEdits } from './cutreview.mjs';
 import { autoFrame } from './autoframe.mjs';
@@ -105,7 +105,7 @@ function projectContext(id) {
     `Work inside the project folder: source/ for originals (never change them), work/ for intermediate files, renders/ for videos, WORKLOG.md for the log.`,
     `Don't write outside this project's folder (other projects, the studio's library, memory, notes and logs, anything else), except a file the studio's own instructions (its CLAUDE.md, AGENTS.md, skills) tell you to write; when you do, say so in your reply: which file, and why. In Auto mode Video Octopus asks the creator before a change outside the project anyway. Temporary files are fine anywhere temporary.`,
     `Clocks: when you tell the creator a time, give it on the video as it plays: the cut's time (the locked cut's, else the rough cut's when there's no locked cut yet), as m:ss.s, the clock the Cut tab, Scenes, the renders and the canvas's "Play the locked cut" show. The take's own seconds (the words' and blocks' times, the cut files' segments) are for files only; if you ever have to name one, say "take 0:53.3" and give the cut time too. Cut time of take second t = the lengths of the kept segments before it, plus t minus the start of the segment it's in (segments_sec of work/edl_manual.json, else work/edl_fixed.json). Times in the production sheet, notes and renders are already on the cut's timeline.`,
-    `The app shows the project's files live: when a skill writes work/tr/words.json, work/rough_map.json, work/joins.json or work/edl_manual.json, the Cut tab and the step buttons update on their own, so don't start your own servers or review pages for the Cut Editor; tell the creator to open the Cut tab instead.`,
+    `The app shows the project's files live: when a skill writes work/tr/words.json, work/rough_map.json, work/joins.json or work/edl_manual.json, the Cut tab and the step buttons update on their own, so don't start your own servers or review pages for cutting (the Cut Editor is built into the Cut tab); tell the creator to open the Cut tab instead.`,
     `The canvas layout is "layout" in project.json, and you may edit it (the canvas follows): aspect "16:9"|"9:16"; preset "screen"|"camera"|"pip"|"split"|"boxed" (boxed = a screen card on two thirds and a tall camera card on the right third); side "right"|"left"; mirror "auto"|true|false; webcam {x,y,w} = the picture-in-picture box (top-left and width as fractions of the frame); pad 0-12 = PiP only, the screen as an inset card this % of the frame width from the edges; cam {shape "square"|"rounded"|"circle"|"frame", zoom 1-4 (1 = the whole camera height, 2 = twice as close), focus {x,y} = point of the camera picture the crop centres on, border "none"|"subtle"|"white"|"accent", borderW (export pixels), shadow true|false} = the camera framing and card edge in every layout; bg {kind "night"|"stars"|"led"|"image"|"video"|"code", file "assets/…" for image/video/code, name} = what shows behind the cards (stars and led are animated night backgrounds: drifting stars, an LED wave; code = an ES module export default {name, draw(g, W, H, t)}, a pure function of time); layers [{id, file (in source/), kind "cam"|"screen", x, y, w, shape, zoom, focus, border, borderW, shadow, audio, hidden}] = extra videos from other takes on top, from 0:00; hidden ["cam"|"screen"] = the canvas take's camera or screen left out of the picture and the export (a layer has its own hidden: true).`,
     `The app's Export button renders the canvas with ffmpeg into renders/<project>_<layout>_vN.mp4 on the locked cut, and puts a built block's render in for that block (your newest renders/*intro*.mp4 for the intro, on the production sheet's timeline; the creator can pick the canvas instead): its picture only, the export's own voice and sfx.json cues under it (so keep the cues for your render's transitions in work/sfx.json); each export leaves work/export/<time>/ with job.json and run.sh, which re-renders it. project.json finalRender is the render the creator marked Final on the Renders tab. The creator records with the Record button; the take lands in source/ by itself.`,
     `Export → Layers writes renders/<project>_layers_vN/: every layer as its own file from 0:00 (background, screen and camera cards, the scene's graphics layers or elements, the presenter cut-out, voice.wav, sound-cues.wav), README.txt with the stacking order, layers.json, motion.json (every Octopus.el element's times, boxes and painted bounds over time, and its element.keys from overrides.json) and FCPXML / FCP 7 XML timeline files. Export → Timeline file writes the same XML straight from the sources into renders/<project>_timeline_vN/.`,
@@ -271,9 +271,7 @@ function serveFile(req, res, file) {
     res.writeHead(206, { 'Content-Type': type, 'Content-Range': `bytes ${start}-${end}/${size}`, 'Accept-Ranges': 'bytes', 'Content-Length': end - start + 1 });
     return createReadStream(file, { start, end }).pipe(res);
   }
-  // Fonts may be read by the Cut Editor's page (its own port) for the Cut tab's look.
-  const cors = /\.(woff2|ttf)$/i.test(file) ? { 'Access-Control-Allow-Origin': '*' } : {};
-  res.writeHead(200, { 'Content-Type': type, 'Content-Length': size, 'Accept-Ranges': 'bytes', 'Cache-Control': 'no-store', ...cors });
+  res.writeHead(200, { 'Content-Type': type, 'Content-Length': size, 'Accept-Ranges': 'bytes', 'Cache-Control': 'no-store' });
   createReadStream(file).pipe(res);
 }
 
@@ -344,7 +342,8 @@ async function route(req, res) {
   // The background kit (core/kit), for the canvas backgrounds and the export's headless renderer.
   if (p.startsWith('/kit/')) return serveFile(req, res, inside(join(APP_DIR, 'core', 'kit'), '.' + p.slice(4)));
   if (!p.startsWith('/api/')) {
-    const file = p === '/' ? join(WEB, 'index.html') : inside(WEB, '.' + p);
+    // A folder's page is its index.html (the Cut Editor's is /cut-editor/).
+    const file = p === '/' ? join(WEB, 'index.html') : inside(WEB, '.' + (p.endsWith('/') ? `${p}index.html` : p));
     return serveFile(req, res, file);
   }
   if (!allowed(req)) return send(res, 403, { error: 'Forbidden' });
@@ -395,7 +394,7 @@ async function route(req, res) {
       permissionMode: s.permissionMode, model: s.model,
       claude: await claudeInfo(url.searchParams.has('refresh')),
       // modelSource: Claude Code on another model than the plan (then there are no plan limits to show).
-      cutEditor: Boolean(cutEditorPath()), formats: formats(), formatInfo: formatInfo(), usage: modelSourceView() ? null : planUsage, modelSource: modelSourceView(), engine: engineName(), engineLabel: ENGINES[engineName()],
+      formats: formats(), formatInfo: formatInfo(), usage: modelSourceView() ? null : planUsage, modelSource: modelSourceView(), engine: engineName(), engineLabel: ENGINES[engineName()],
       appearance: section('appearance', s), // Settings → Appearance: how Video Octopus looks (web/appearance.js applies it)
       help: section('help', s), // first-time help seen (help.stepsIntro: 'dismissed')
       // The computer, for the page: "Show in Finder" or "Show in File Explorer", and paths shortened to ~.
@@ -445,6 +444,14 @@ async function route(req, res) {
     // yet, which is fine: answer "nothing" rather than a 404 in the console.
     if (file && OPTIONAL_KIT_READS.has(rel) && !existsSync(file)) return send(res, 200, null);
     return serveFile(req, res, file);
+  }
+  // The Cut Editor's page (web/cut-editor/) reads the take, its words and the cut, and saves the cut (server/cuteditor.mjs).
+  const ce = /^\/api\/projects\/([^/]+)\/cut\/(data\.json|version|video|notes|notes\/delete|save)$/.exec(p);
+  if (ce) {
+    const cdir = projectDir(decodeURIComponent(ce[1]));
+    if (!cdir) return send(res, 404, { error: 'No such project' });
+    if (await cutEditorRoute(req, res, { dir: cdir, what: ce[2], send, body, serveFile })) return;
+    return send(res, 405, { error: 'Not here' });
   }
   const m = /^\/api\/projects\/([^/]+)(\/[a-z-]+)?$/.exec(p);
   if (!m) return send(res, 404, { error: 'Unknown route' });

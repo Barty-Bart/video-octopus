@@ -1,5 +1,5 @@
-/* Cut Editor: Video Octopus's look, for its Cut tab (index.html?theme=studio asks for this file and studio.js; server.py
-   serves both). Opened on its own the page never loads them and looks and works as it always has. */
+/* Cut Editor: Video Octopus's look, for its Cut tab (index.html?theme=studio asks for this file and studio.js). Opened on
+   its own (the inspector's "Own window") the page never loads them and keeps its own dark look. */
 html.studio{--bg:#f4f4f2;--panel:#ffffff;--line:#e6e5e1;--ink:#1a1a1c;--dim:#55555a;--acc:#c2410c;--sel:#dbe6fe;--selb:#2563eb;--cut:rgba(26,26,28,.06);--faint:#737378;--line2:#dcdbd6;--sans:"Geist",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;--mono:"Geist Mono",ui-monospace,"SF Mono",Menlo,monospace;color-scheme:light}
 .studio body{font:13px/1.45 var(--sans);-webkit-font-smoothing:antialiased}
 .studio header{gap:8px;row-gap:6px;padding:10px 14px;border-bottom:0}

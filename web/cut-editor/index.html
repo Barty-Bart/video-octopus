@@ -56,7 +56,7 @@ body.hidecut .w.cut{display:none}
  <button id="bJoin" title="J">Hear join</button><button id="bTidy" title="Remove wordless slivers under 0.3 s and micro-cuts under 0.08 s">Tidy</button><button class="pri" id="bSave" title="⌘S">Save</button>
 </header>
 <main>
- <div id="left"><div id="vwrap"><video id="v" src="/video" preload="auto" playsinline></video><canvas id="vc"></canvas><span class="tlab" id="trimM"></span><div id="trim"><canvas id="trimc"></canvas><span class="tlab" id="trimL"></span></div><video id="v2" src="/video" muted preload="auto" playsinline style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none"></video></div>
+ <div id="left"><div id="vwrap"><video id="v" preload="auto" playsinline></video><canvas id="vc"></canvas><span class="tlab" id="trimM"></span><div id="trim"><canvas id="trimc"></canvas><span class="tlab" id="trimL"></span></div><video id="v2" muted preload="auto" playsinline style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none"></video></div>
   <div class="help"><kbd>Space</kbd> play / pause (cuts are skipped) · click a word to jump · drag across words, or drag on the waveform to select, or drag the edge of a kept section on the waveform to trim it<br>
   <kbd>Delete</kbd> cut · <kbd>R</kbd> restore · <kbd>J</kbd> hear the nearest join · <kbd>N</kbd> next flagged join · <kbd>⌘Z</kbd> undo · <kbd>⌘S</kbd> save<br>
   <kbd>⇧</kbd>+drag on the waveform extends the selection · scroll to pan, <kbd>⌘</kbd>/<kbd>Ctrl</kbd>+scroll or the slider to zoom · <kbd>←</kbd><kbd>→</kbd> one frame · word bubbles: drag a word ◀ to erase what's before it, ▶ to open hidden audio before it · select by dragging on the waveform or the transcript, <kbd>Delete</kbd> · grab a cut's line (left half = the part before, right half = the part after) and pull ◀ ▶; while you drag the picture follows it, the corner shows the other side of the join and you hear a short blip (Scrub sound) · grab a block's edge at a red join and drag outward to bring audio back · drag the blue selection's edges to fine-tune · <kbd>]</kbd>/<kbd>[</kbd> next / previous comment · <kbd>⌘⇧Z</kbd> redo · <kbd>/</kbd> split at the playhead · <kbd>C</kbd> collapse / show cuts · <kbd>M</kbd> comment at the playhead · <kbd>1</kbd>–<kbd>3</kbd> speed</div>
@@ -67,6 +67,11 @@ body.hidecut .w.cut{display:none}
 <div id="toast"></div><div id="banner" style="display:none;position:fixed;top:0;left:0;right:0;z-index:50;background:#ff5a1f;color:#fff;padding:8px 14px;font:600 14px system-ui;text-align:center">Claude updated this edit since you opened it. Reload to get it (unsaved changes here will be lost) <button onclick="location.reload()" style="margin-left:10px">Reload</button></div>
 <script>
 const $=id=>document.getElementById(id),v=$('v'),cv=$('cv'),g=cv.getContext('2d');
+// The project this page edits (?p=, from the Cut tab) and its routes on Video Octopus's own server (server/cuteditor.mjs):
+// data.json, version, video, notes, save. Writes carry X-Studio, as every write to Video Octopus does.
+const API='/api/projects/'+encodeURIComponent(new URLSearchParams(location.search).get('p')||'')+'/cut/';
+const post=(p,b,o)=>fetch(API+p,{method:'POST',headers:{'Content-Type':'application/json','X-Studio':'1'},body:JSON.stringify(b),...o});
+v.src=API+'video';$('v2').src=API+'video';
 let D,kept=[],undo=[],sel=null,view=[0,8],dirty=false,words=[];
 // Colours and type for the waveform and the fine-trim pop-up: the page's own dark look, or Video Octopus's light one
 // (studio.js, loaded with studio.css only for ?theme=studio).
@@ -285,7 +290,7 @@ addEventListener('resize',()=>{if(lens)drawLens()});
 // Video Octopus's Cut tab listens: each save sends the cut as it was opened and as it is now, so Video Octopus can put "the cut
 // changed" in the change package and Claude re-times everything after the edits. Video Octopus can also point at a cut.
 let BASE=null;
-function tellStudio(){if(parent===window||!BASE)return;try{parent.postMessage({type:'studio:cut-saved',base:BASE,segments:kept.map(([a,b])=>[+a.toFixed(3),+b.toFixed(3)]),length:+edLen().toFixed(3)},'*')}catch(e){}}
+function tellStudio(){if(parent===window||!BASE)return;try{parent.postMessage({type:'studio:cut-saved',base:BASE,segments:kept.map(([a,b])=>[+a.toFixed(3),+b.toFixed(3)]),length:+edLen().toFixed(3)},location.origin)}catch(e){}}
 addEventListener('message',e=>{const m=e.data;if(!m||m.type!=='studio:cut-goto'||!D)return;if(!coll()){$('coll').checked=true;$('coll').onchange()}cum();
  let best=-1,bd=1e9;for(let i=1;i<kept.length;i++){const d=Math.abs(CUM[i]-m.t);if(d<bd){bd=d;best=i}}const hit=best>0&&bd<1.5,e0=hit?CUM[best]:m.t,w=Math.min(view[1]-view[0],6);
  view=[Math.max(0,e0-w/2),0];view[1]=view[0]+w;v.pause();v.currentTime=srcOf(e0);if(hit){hover={i:best,side:'L'};if(optLens())openLens(best)}draw()});
@@ -319,17 +324,17 @@ function loop(){if(D){const t=v.currentTime;if(rawStop!==null&&!v.paused&&t>=raw
 function play(){rawStop=null;if(!inKept(v.currentTime)){const n=nextKept(v.currentTime);if(n===null)return;v.currentTime=n}v.playbackRate=+$('spd').value;v.play()}
 let NOTES=[];function showNotes(){$('nl').innerHTML=NOTES.map(n=>`<li data-t="${n.t}"><b>${fmt(n.edited_t)}</b>${n.text.replace(/</g,'&lt;')}<span class="x" data-id="${n.id}">×</span></li>`).join('');
  $('nl').querySelectorAll('li').forEach(li=>li.onclick=e=>{if(e.target.classList.contains('x'))return;v.currentTime=+li.dataset.t;centre(v.currentTime)});
- $('nl').querySelectorAll('.x').forEach(x=>x.onclick=async()=>{await fetch('/notes/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:+x.dataset.id})});NOTES=NOTES.filter(n=>n.id!==+x.dataset.id);showNotes()})}
-async function addNote(){const text=$('nt').value.trim();if(!text)return;const t=v.currentTime;const n=await (await fetch('/notes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({t,edited_t:edTime(t),text})})).json();NOTES.push(n);NOTES.sort((a,b)=>a.t-b.t);$('nt').value='';$('nt').blur();showNotes();toast('Comment saved at '+fmt(edTime(t)))}
+ $('nl').querySelectorAll('.x').forEach(x=>x.onclick=async()=>{await post('notes/delete',{id:+x.dataset.id});NOTES=NOTES.filter(n=>n.id!==+x.dataset.id);showNotes()})}
+async function addNote(){const text=$('nt').value.trim();if(!text)return;const t=v.currentTime;const n=await (await post('notes',{t,edited_t:edTime(t),text})).json();NOTES.push(n);NOTES.sort((a,b)=>a.t-b.t);$('nt').value='';$('nt').blur();showNotes();toast('Comment saved at '+fmt(edTime(t)))}
 function hearJoin(){const t=v.currentTime;let best=null;for(let i=1;i<kept.length;i++){const j=kept[i][0];if(best===null||Math.abs(j-t)<Math.abs(best-t))best=j}if(best===null)return;
  const i=kept.findIndex(s=>s[0]===best),pre=kept[i-1];const et=edTime(best);let start=et-1.6;let d=0,st=pre[1]-1.6;for(const [a,b] of kept){if(d+(b-a)>=start){st=a+(start-d);break}d+=b-a}
  v.currentTime=Math.max(0,st);joinStop=et+1.6;rawStop=null;centre(best);v.play()}
-async function save(force,auto){const r=await fetch('/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({segments:kept,version:D.version,force:!!force})});const j=await r.json();
+async function save(force,auto){const r=await post('save',{segments:kept,version:D.version,force:!!force});const j=await r.json();
  if(r.status===409&&auto){autoConflict();return}
  if(r.status===409){if(confirm('Claude changed this edit after you opened the page.\n\nOK = reload and get Claude\'s version (your unsaved changes here are lost)\nCancel = keep working (Save stays blocked)')){dirty=false;location.reload()}else if(confirm('Overwrite Claude\'s version with yours?'))save(true);return}
  D.version=j.version;dirty=false;tellStudio();if(AUTOSAVE)autoSaved();if(!auto)toast(`Saved · ${fmt(j.length)}. Tell Claude “saved”.`)}
 // warn when the edit changes on disk (e.g. Claude applied fixes)
-setInterval(async()=>{if(!D||autoBusy)return;try{const j=await (await fetch('/version')).json();if(Math.abs(j.version-D.version)>1e-6){if(!dirty){toast('Claude updated the edit, reloading…');setTimeout(()=>location.reload(),900)}else{const b=$('banner');b.style.display='block'}}}catch(e){}},4000);
+setInterval(async()=>{if(!D||autoBusy)return;try{const j=await (await fetch(API+'version')).json();if(Math.abs(j.version-D.version)>1e-6){if(!dirty){toast('Claude updated the edit, reloading…');setTimeout(()=>location.reload(),900)}else{const b=$('banner');b.style.display='block'}}}catch(e){}},4000);
 // Autosave, only when Video Octopus's Cut tab opens the editor with ?autosave=1 (opened on its own, nothing here runs):
 // about a second after the cut stops changing, the same versioned save as ⌘S, with "Saved · just now" in the header.
 // It watches the cut itself, so every kind of edit counts, ⌘Z / ⌘⇧Z included. Opening the editor saves nothing.
@@ -351,13 +356,13 @@ if(AUTOSAVE){
  const css=document.createElement('style');css.textContent='#autoState.ok b,#autoState.ok{color:#7ee2a8}#autoState.bad{color:#f85149}';document.head.append(css);
  autoShow('Autosave on');setInterval(autoTick,250);setInterval(autoAgo,15000);
  // Leaving with a change not saved yet (the tab or the project closes): send it on the way out.
- addEventListener('pagehide',()=>{if(D&&!autoStop&&autoLast!==null&&JSON.stringify(kept)!==autoLast)navigator.sendBeacon('/save',new Blob([JSON.stringify({segments:kept,version:D.version,force:false})],{type:'application/json'}))});
+ addEventListener('pagehide',()=>{if(D&&!autoStop&&autoLast!==null&&JSON.stringify(kept)!==autoLast)post('save',{segments:kept,version:D.version,force:false},{keepalive:true}).catch(()=>{})});
 }
 $('bCut').onclick=()=>sel&&cut(...sel);$('bRest').onclick=()=>sel&&restore(...sel);$('bUndo').onclick=()=>{if(undo.length){redo.push(JSON.stringify(kept));kept=JSON.parse(undo.pop());refresh();toast('Undone')}};
 $('coll').onchange=()=>{const w=view[1]-view[0],c=axisOf(v.currentTime);view=[Math.max(0,c-w*.3),0];view[1]=view[0]+w;$('coll').blur();draw()};
 $('bJoin').onclick=hearJoin;$('bTidy').onclick=()=>tidy(false);$('bNote').onclick=addNote;$('spd').onchange=()=>{v.playbackRate=+$('spd').value;$('spd').blur()};
 $('nt').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();addNote()}else if(e.key==='Escape'){$('nt').blur()}e.stopPropagation()});
-fetch('/notes').then(r=>r.json()).then(n=>{NOTES=n;showNotes()}).catch(()=>{});$('bSave').onclick=save;$('hide').onchange=e=>document.body.classList.toggle('hidecut',e.target.checked);
+fetch(API+'notes').then(r=>r.json()).then(n=>{NOTES=n;showNotes()}).catch(()=>{});$('bSave').onclick=save;$('hide').onchange=e=>document.body.classList.toggle('hidecut',e.target.checked);
 addEventListener('keydown',e=>{if(e.target.tagName==='INPUT'&&e.target.type!=='checkbox'&&e.target.type!=='range')return;const k=e.key;
  if(k===' '){e.preventDefault();v.paused?play():v.pause()}
  else if(k==='Delete'||k==='Backspace'){e.preventDefault();sel&&cut(...sel)}
@@ -377,8 +382,9 @@ addEventListener('keydown',e=>{if(e.target.tagName==='INPUT'&&e.target.type!=='c
 addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue=''}});
 if(STUDIO)studioSetup(); // studio.js: the header menus and the line to Video Octopus's Cut inspector
 addEventListener('resize',fit);
-fetch('/data.json').then(r=>r.json()).then(d=>{D=d;words=d.words;KEEP0=new Set(d.segments.filter(([a,b])=>b>a).map(([a,b])=>pk(+a,+b)));kept=norm(d.segments.map(([a,b])=>[+a,+b]));$('src').textContent=d.source+(d.saved?' · your saved edit':'');$('dur').textContent=fmt(d.duration);
- buildTx();fit();setTimeout(()=>{const el=[...document.querySelectorAll('.w')].find(e=>!e.classList.contains('cut'));el&&el.scrollIntoView({block:'start'})},50);const f=kept[0]?kept[0][0]:0;view=coll()?[0,8]:[Math.max(0,f-1),Math.max(0,f-1)+8];v.currentTime=f;refresh();BASE=kept.map(([a,b])=>[+a.toFixed(3),+b.toFixed(3)]);autoLast=autoSnap=JSON.stringify(kept);requestAnimationFrame(loop);if(STUDIO)studioReady()});
+fetch(API+'data.json').then(r=>r.ok?r.json():r.json().then(j=>{throw new Error(j.error||r.status)})).then(d=>{D=d;words=d.words;KEEP0=new Set(d.segments.filter(([a,b])=>b>a).map(([a,b])=>pk(+a,+b)));kept=norm(d.segments.map(([a,b])=>[+a,+b]));$('src').textContent=d.source+(d.saved?' · your saved edit':'');$('dur').textContent=fmt(d.duration);
+ buildTx();fit();setTimeout(()=>{const el=[...document.querySelectorAll('.w')].find(e=>!e.classList.contains('cut'));el&&el.scrollIntoView({block:'start'})},50);const f=kept[0]?kept[0][0]:0;view=coll()?[0,8]:[Math.max(0,f-1),Math.max(0,f-1)+8];v.currentTime=f;refresh();BASE=kept.map(([a,b])=>[+a.toFixed(3),+b.toFixed(3)]);autoLast=autoSnap=JSON.stringify(kept);requestAnimationFrame(loop);if(STUDIO)studioReady()})
+ .catch(e=>{$('tx').textContent=`The cut couldn’t open: ${e.message}`});
 
 // Mirror the video into a canvas: some embedded browsers decode frames but never paint the <video> layer.
 (()=>{const v=document.getElementById('v'),c=document.getElementById('vc'),x=c.getContext('2d');

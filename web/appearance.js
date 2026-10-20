@@ -106,7 +106,7 @@ export function lookProject(id) {
 }
 
 // ---- The Cut Editor in the Cut tab follows the look ----
-// The Cut tab frames the Cut Editor (the studio's tools/cut-editor, ?theme=studio); it gets the look's colours,
+// The Cut tab frames the Cut Editor (web/cut-editor/, ?theme=studio); it gets the look's colours,
 // radii and fonts from here, resolved to plain rgba() so its waveform canvas can use them too: in the frame's address
 // at load (#look=, so it paints in the look at once) and in a studio:look message on every change (web/cutpanel.js).
 // Edit Bay sends only its id: the Cut Editor then keeps its own light Video Octopus theme, exactly as before.

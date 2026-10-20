@@ -14,7 +14,7 @@ This folder is a video studio: the projects, notes, skills and tools Claude uses
 - `BRAND.md` (who the creator is, what they make, tone, colours, fonts, the brand files in `library/brand/`; Video Octopus's Setup writes it) and `STYLE.md` (the fuller style guide, when there is one): the studio's own style. **Read them before planning or building anything.**
 - `memory/`: what you know about the creator. `preferences.md` (how they want edits done) and `style.md` (brand and style). **Read both before any edit**; they win over the defaults in the skills.
 - `library/`: reusable things for every project (brand files, backgrounds, sounds, styles, components, B-roll, stills, resources). See `library/README.md`.
-- `.claude/skills/`: one skill per step (below). `tools/`: the Cut Editor and join check, used by the skills and by Video Octopus's Cut tab.
+- `.claude/skills/`: one skill per step (below). `tools/`: join check (`tools/join-check/`) and `tools/cut/apply_edit.py` (render a saved cut, re-time graphics), used by the skills. The Cut Editor is built into Video Octopus's Cut tab.
 - `.studio/`: Video Octopus's files about this studio. `formats.json` adds or changes formats and Short styles (merged over the app's own); `starter.json` records what the starter put here.
 
 ## The order of work
@@ -22,14 +22,14 @@ This folder is a video studio: the projects, notes, skills and tools Claude uses
 2. **Rough cut** (`rough-cut`) → `work/rough.mp4`, `work/rough_map.json`, `work/rough_words.json`.
 3. **Join check** (`join-check`) → `work/joins.json`, `work/edl_fixed.json`.
    Video Octopus's **Prepare** step runs 1–3 in one go and only stops when it needs the creator.
-4. **Fix in the Cut tab**: the creator restores or removes cuts and nudges joins; it saves `work/edl_manual.json`. Don't start your own Cut Editor or review pages; point them to the Cut tab.
+4. **Fix in the Cut tab**: the creator restores or removes cuts and nudges joins in Video Octopus's Cut Editor; it saves `work/edl_manual.json`. Don't start your own editor or review pages; point them to the Cut tab.
 5. **Lock the cut**: join check on the saved cut, fix what's clipped, then write "Cut locked (join-check: N joins, 0 clipped)" in `WORKLOG.md`.
 6. **Plan scenes** (`production-sheet`) → `work/production.json`, approved by the creator before anything is built.
 7. **Edit**: build the scenes, zooms (`talking-head-zoom`), graphics, B-roll and sound from the sheet, into `renders/`, with the motion-graphics skills in `.claude/skills/` where one fits.
 8. **Review**: the creator leaves notes per scene in Video Octopus's Scenes tab (`work/notes.json`); work through them, re-render, reply on each note.
 9. **Export** from Video Octopus.
 
-**Graphics are only timed to a locked cut.** If the cut changes after that, move every time across to the new cut (`tools/cut-editor/apply_edit.py --retime`, or the cut maps) and run join check again.
+**Graphics are only timed to a locked cut.** If the cut changes after that, move every time across to the new cut (`tools/cut/apply_edit.py --retime`, or the cut maps) and run join check again.
 
 ## Rules
 - **Render on this computer.** ffmpeg, Playwright, transcription and any models run locally; nothing is uploaded unless the creator asks. Use the cores you have and run renders in parallel where you can.

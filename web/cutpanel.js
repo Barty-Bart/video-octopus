@@ -2,9 +2,10 @@
 // selected in the Cut Editor (the words, how long, Cut it / Bring back, Play, and why Claude cut it), what is in this
 // cut (raw → cut, cuts by kind, what still needs your ear, flagged joins), the Keep / Cut list of what Prepare left for
 // your ear, and "Save and lock the cut" (the rail's Lock step).
-// The Cut Editor is framed with ?theme=studio: it posts its selection and cut here (studio:cut-state), and every button
-// here posts it back an edit to make (studio:cut-do), so its undo, autosave and the change package work as for any edit
-// made in the page. Which asks are decided is kept by the server in work/cut_review.json (server/cutreview.mjs).
+// The Cut Editor (web/cut-editor/, on this same address) is framed with ?theme=studio: it posts its selection and cut
+// here (studio:cut-state), and every button here posts it back an edit to make (studio:cut-do), so its undo, autosave
+// and the change package work as for any edit made in the page. Which asks are decided is kept by the server in
+// work/cut_review.json (server/cutreview.mjs).
 // Shots: the editor shows a "/" where each shot starts (studio:shots); "/" typed with a word
 // selected, a "/" picked, deleted or dragged come back as studio:shot-* and go to the shots controller; the selection
 // section has a "/ New shot here" button.
@@ -29,34 +30,31 @@ function toCut(t, segs) {
 // like every time the creator reads (a duration, "pause 2.3s", stays as it is).
 const atCut = (text, segs) => String(text || '').replace(/\bat (\d+(?:\.\d+)?) ?s\b/g, (m, n) => (segs?.length ? `at ${clock(toCut(Number(n), segs))}` : m));
 
-// The Cut Editor's page is in the frame: until it loads, the frame holds a blank page on Video Octopus's own address, and a
-// message for the editor's address would only fail with a warning in the console. Its page is another origin, so
-// reading where the frame is throws once it's there.
+// The Cut Editor's page is in the frame: until it loads, the frame holds a blank page, and a message would go to that.
 export function editorThere(frame) {
-  try { return frame.contentWindow.location.href !== 'about:blank'; } catch { return true; }
+  try { return /\/cut-editor\/$/.test(frame.contentWindow.location.pathname); } catch { return false; }
 }
 
 export function makeCutPanel({ id, getP, runLock, shots = null }) {
   const url = `/api/projects/${encodeURIComponent(id)}/cut-review`;
-  let box = null, root = null, frame = null, origin = null, editorUrl = null;
+  let box = null, root = null, frame = null, editorUrl = null;
   let rv = null, live = null, view = 'main', filter = 'check', cur = null, loadAt = 0, loadTimer = null, flushDone = null, lastHTML = '';
-  let ready = false; // the editor said studio:cut-ready (a Cut Editor from before this never does)
+  let ready = false; // the editor said studio:cut-ready
   let pending = null; // a Keep or Cut pressed while the editor was still opening: made as soon as it says it's ready
 
   // ---- talking to the Cut Editor ----
   function post(m) {
-    if (!frame?.contentWindow || !origin || !frame.isConnected || !editorThere(frame)) return false;
-    try { frame.contentWindow.postMessage(m, origin); return true; } catch { return false; }
+    if (!frame?.contentWindow || !frame.isConnected || !editorThere(frame)) return false;
+    try { frame.contentWindow.postMessage(m, location.origin); return true; } catch { return false; }
   }
   // An edit for the editor to make; false (with a note) while it isn't there to make it.
   function ask(m) {
     if (ready && post(m)) return true;
-    toast(frame?.isConnected ? 'The Cut Editor is still opening, or it is older than this Video Octopus (update tools/cut-editor from Video Octopus\'s starter to use these buttons).' : 'The Cut Editor is still opening.');
+    toast('The Cut Editor is still opening.');
     return false;
   }
   // Settings → Appearance's look, for the editor to follow (it opened in the look its address carried).
-  // Only once the editor is there (studio:cut-ready sends it then): before, the frame still holds a blank page on
-  // Video Octopus's own address, and a message for the editor's address would only fail in the console.
+  // Only once the editor is there (studio:cut-ready sends it then): before, the frame still holds a blank page.
   const sendLook = () => ready && post({ type: 'studio:look', look: cutLook() });
   const offLook = onLook(sendLook);
   const sendReview = () => rv && post({ type: 'studio:cut-review', items: rv.items.filter((it) => it.group === 'ask').map((it) => ({ a: it.a, b: it.b, join: it.kind === 'Join', done: Boolean(it.decision) })) });
@@ -81,7 +79,7 @@ export function makeCutPanel({ id, getP, runLock, shots = null }) {
   }
   // Save whatever the page hasn't saved yet (it autosaves a second after each change). true / false, or null: no answer.
   function flush() {
-    if (!ready || !post({ type: 'studio:cut-do', op: 'save' })) return Promise.resolve(true); // an older editor saves by itself
+    if (!ready || !post({ type: 'studio:cut-do', op: 'save' })) return Promise.resolve(true); // not open yet: nothing unsaved
     return new Promise((done) => { const t = setTimeout(() => { flushDone = null; done(null); }, 6000); flushDone = (ok) => { clearTimeout(t); done(ok); }; });
   }
 
@@ -332,7 +330,7 @@ export function makeCutPanel({ id, getP, runLock, shots = null }) {
 
   return {
     render, onMessage, openList, flush,
-    attach(f, o, u) { frame = f; origin = o; editorUrl = u || null; live = null; ready = false; pending = null; lastHTML = ''; track.clear(); paint(); shots?.setCutPost((m) => ready && post(m)); },
+    attach(f, u) { frame = f; editorUrl = u || null; live = null; ready = false; pending = null; lastHTML = ''; track.clear(); paint(); shots?.setCutPost((m) => ready && post(m)); },
     destroy() { offLook(); document.removeEventListener('keydown', onKey); document.removeEventListener('keyup', onKeyUp); clearTimeout(loadTimer); },
   };
 }

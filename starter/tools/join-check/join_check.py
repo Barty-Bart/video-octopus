@@ -5,7 +5,7 @@
           [--words work/tr/words.json] [--out work/joins] [--recheck] [--fix-out work/edl_fixed.json]
 
 SOURCE is the untouched recording. The cut is given either as the rough-cut skill's rough_map.json
-(segments[].src) or as an EDL {"segments_sec": [[start, end], ...]} (Cut Editor / apply_edit.py).
+(segments[].src) or as an EDL {"segments_sec": [[start, end], ...]} (the Cut tab's save / apply_edit.py).
 Words are source-time [start, end, word] (the transcript the cut was made from).
 
 For each join it measures both edges:
@@ -19,10 +19,10 @@ It also catches the opposite: a leftover tail. A removed word whose sound runs o
 at the edge on the removed side, a voiced run from the edge into the kept part, then quiet before the next kept word.
 Its fix moves the edge inwards, to the quiet point after the leftover (never into the next word): "trim_ms".
 
-Writes  <out>.json  every join, worst first (the Cut Editor reads it with --joins and marks them)
+Writes  <out>.json  every join, worst first (Video Octopus's Cut tab reads it and marks them)
         <out>.html  the listening page: each join as it sounds now and with the fix, side by side
         --fix-out   the cut with the suggested fixes applied to "likely clipped" joins (an EDL that
-                    the Cut Editor opens and apply_edit.py renders). The input cut is never changed.
+                    the Cut tab opens and apply_edit.py renders). The input cut is never changed.
 """
 import argparse, base64, html, io, json, os, re, shutil, subprocess, sys, wave
 from pathlib import Path
@@ -198,7 +198,7 @@ def main():
     ap.add_argument("source")
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--map", help="rough_map.json from the rough-cut skill")
-    g.add_argument("--edl", help='EDL json {"segments_sec": [[s, e], ...]} (Cut Editor / apply_edit.py)')
+    g.add_argument("--edl", help='EDL json {"segments_sec": [[s, e], ...]} (the Cut tab\'s save / apply_edit.py)')
     ap.add_argument("--words", help="source-time words.json [[start, end, word], ...]")
     ap.add_argument("--audio", help="separate voice recording to listen to instead of the video's own audio")
     ap.add_argument("--offset", type=float, default=0.0,
@@ -297,7 +297,7 @@ def main():
     sliver_note = (f'<p class="j chk">{len(slivers)} leftover sliver{"s" if len(slivers) != 1 else ""} '
                    f'(kept pieces under {SLIVER * 1000:.0f} ms that would play as a blip) at source '
                    + ", ".join(tc(s) for s, _ in slivers) + '. They are left out of this check and of the fixed cut; '
-                   'remove them in the Cut Editor too.</p>') if slivers else ""
+                   'remove them in the Cut tab too.</p>') if slivers else ""
     page = f"""<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Join check</title>
 <style>:root{{--bg:#141412;--p:#1d1d1a;--fg:#ecebe6;--dim:#8d8b84;--line:#2e2e2a;--bad:#f85149;--chk:#e0a84a;--ok:#5fbf86;--acc:#ff5a1f}}
 body{{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,system-ui,sans-serif;padding:24px 20px 60px}}

@@ -1,4 +1,4 @@
-"""Apply a cut-editor save to an edit: render the new rough cut and move every time in the graphics to match.
+"""Apply a saved cut (the Cut tab's work/edl_manual.json) to an edit: render it and move every time in the graphics to match.
 
   python apply_edit.py OLD_EDL.json NEW_EDL.json SOURCE.mp4 OUT.mp4 [--retime scene.html compose.py r.cjs ...]
 

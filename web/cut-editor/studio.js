@@ -1,6 +1,7 @@
 // Cut Editor: Video Octopus's Cut tab. index.html?theme=studio loads this file (and studio.css) before its own script, which
 // then calls studioSetup(); opened on its own the page never loads it. Everything here runs in the page's own scope
-// (kept, words, cut(), save() …), so the edits Video Octopus asks for are the page's own edits.
+// (kept, words, cut(), save() …), so the edits Video Octopus asks for are the page's own edits. The page is served by
+// Video Octopus itself (web/cut-editor/), so its fonts come from /fonts/ and its messages stay on this one address.
 
 // The waveform and fine-trim colours in Video Octopus's light look (index.html's PAL has the page's own dark ones).
 const PAL_STUDIO={ruler:'#737378',mono:'"Geist Mono",ui-monospace,Menlo,monospace',sans:'Geist,-apple-system,system-ui,sans-serif',sans2:'Geist,-apple-system,system-ui',
@@ -16,7 +17,6 @@ const PAL_STUDIO={ruler:'#737378',mono:'"Geist Mono",ui-monospace,Menlo,monospac
 // colours (studio.css, html.studio[data-look]) and the waveform's (PAL_STUDIO) follow it. With no look, or Edit Bay,
 // nothing here applies and the page keeps the light theme above, exactly as before.
 const PAL_BASE={...PAL_STUDIO};
-const LOOK_SO=(()=>{try{const u=new URL(new URLSearchParams(location.search).get('studio')||'');return /^https?:$/.test(u.protocol)?u.origin:null}catch(e){return null}})();
 let LOOK_VARS=[];
 const lkParse=c=>{const m=/^rgba?\(([^)]+)\)$/.exec(String(c||'').trim());if(!m)return null;const p=m[1].split(/[\s,/]+/).filter(Boolean).map(Number);
  return p.length>=3&&p.every(Number.isFinite)?[p[0],p[1],p[2],p.length>3?Math.max(0,Math.min(1,p[3])):1]:null};
@@ -44,8 +44,8 @@ function applyStudioLook(L){
  for(const [k,v] of Object.entries(V)){root.style.setProperty(k,v);LOOK_VARS.push(k)}
  root.dataset.look=id;root.style.colorScheme=dark?'dark':'light';
  // the look's fonts, from Video Octopus's own files
- if(LOOK_SO&&Array.isArray(L.f)){const css=L.f.filter(f=>Array.isArray(f)&&/^[\w ]{1,40}$/.test(f[0])&&/^[a-z0-9-]{1,80}\.woff2$/.test(f[1])&&/^\d{3}( \d{3})?$/.test(f[2])&&/^(normal|italic)$/.test(f[3]))
-  .map(([fam,file,w,st])=>`@font-face{font-family:"${fam}";src:url("${LOOK_SO}/fonts/${file}") format("woff2");font-weight:${w};font-style:${st};font-display:swap}`).join('');
+ if(Array.isArray(L.f)){const css=L.f.filter(f=>Array.isArray(f)&&/^[\w ]{1,40}$/.test(f[0])&&/^[a-z0-9-]{1,80}\.woff2$/.test(f[1])&&/^\d{3}( \d{3})?$/.test(f[2])&&/^(normal|italic)$/.test(f[3]))
+  .map(([fam,file,w,st])=>`@font-face{font-family:"${fam}";src:url("/fonts/${file}") format("woff2");font-weight:${w};font-style:${st};font-display:swap}`).join('');
   if(css){const el=document.createElement('style');el.id='lookFonts';el.textContent=css;document.head.append(el)}}
  // the waveform and fine trim: the light theme's roles in the look's colours
  const ac=C.accent,se=C.sel,wave=C.wave||[tx[0],tx[1],tx[2],.6],mute=C.faint,ss=sans||PAL_BASE.sans,mm=mono||PAL_BASE.mono;
@@ -61,14 +61,14 @@ function lookRedraw(){try{if(typeof draw==='function')draw();if(typeof drawLens=
 (()=>{const id=new URLSearchParams(location.search).get('look');if(!id||id==='editbay')return;
  try{const m=/(?:^#|&)look=([^&]*)/.exec(location.hash);if(m)applyStudioLook(JSON.parse(decodeURIComponent(m[1])))}catch(e){}})();
 
-// ---- Inside Video Octopus's Cut tab (?theme=studio&studio=<Video Octopus's address>) ----
+// ---- Inside Video Octopus's Cut tab (?theme=studio) ----
 // Video Octopus's light look and fonts, a tidier header (Edit, Options and Keys menus), paragraph times, "pause
 // 2.7 s" chips where a pause was cut, join marks and "needs your ear" highlights in the transcript, and a line to
 // Video Octopus's Cut inspector: the selection and the cut go up as they change; Cut it, Bring back, Play, Keep / Cut and
 // "save now" come back and run as this page's own edits (so undo, autosave and the change package work as usual).
 // Opened on its own (no ?theme=studio) none of this runs.
-let PT=[],CH=[],EAR=[],stT=null,STUDIO_TO='*';
-function toStudio(m){if(!STUDIO||parent===window)return;try{parent.postMessage(m,STUDIO_TO)}catch(e){}}
+let PT=[],CH=[],EAR=[],stT=null;
+function toStudio(m){if(!STUDIO||parent===window)return;try{parent.postMessage(m,location.origin)}catch(e){}}
 function studioTx(){PT=[];CH=new Array(words.length+1).fill(null);const jm=new Map();
  // long paragraphs (the page breaks only at pauses over 1.4 s) also break at the first sentence end after 20 s
  for(const p of [...document.querySelectorAll('#tx p')]){let q=p,t0=null;for(const el of [...p.querySelectorAll('.w')]){const w=words[+el.dataset.i];if(t0===null)t0=w[0];
@@ -124,9 +124,9 @@ async function studioFlush(){let ok=true;
  try{if(AUTOSAVE){if(!autoStop&&autoLast!==null&&JSON.stringify(kept)!==autoLast){autoBusy=true;try{await save(false,true)}finally{autoBusy=false}if(!autoStop)autoAgo()}}else if(dirty)await save()}catch(e){ok=false}
  if(AUTOSAVE&&autoStop)ok=false;toStudio({type:'studio:cut-flushed',ok,length:+edLen().toFixed(3)})}
 function studioSetup(){
- const Q=new URLSearchParams(location.search);let SO=null;try{const u=new URL(Q.get('studio')||'');if(/^https?:$/.test(u.protocol))SO=u.origin}catch(e){}
- if(SO){STUDIO_TO=SO;const ff=(w,file,fam)=>`@font-face{font-family:"${fam||'Geist'}";src:url("${SO}/fonts/${file}") format("woff2");font-weight:${w};font-display:swap}`;
-  const st=document.createElement('style');st.textContent=ff('400','geist-sans-latin-400-normal.woff2')+ff('500 600','geist-sans-latin-600-normal.woff2')+ff('700','geist-sans-latin-700-normal.woff2')+ff('400 600','geist-mono-latin-500-normal.woff2','Geist Mono');document.head.append(st)}
+ // Geist, from Video Octopus's own fonts
+ const ff=(w,file,fam)=>`@font-face{font-family:"${fam||'Geist'}";src:url("/fonts/${file}") format("woff2");font-weight:${w};font-display:swap}`;
+ const st=document.createElement('style');st.textContent=ff('400','geist-sans-latin-400-normal.woff2')+ff('500 600','geist-sans-latin-600-normal.woff2')+ff('700','geist-sans-latin-700-normal.woff2')+ff('400 600','geist-mono-latin-500-normal.woff2','Geist Mono');document.head.append(st);
  // header: the lengths and the playhead, Undo, then Edit (cut, restore, hear the join, tidy), Options (speed and the
  // toggles) and Keys (the key help) as menus, autosave and Save
  const ls=$('len').parentNode;ls.innerHTML='<span id="dur">–</span> raw → <b id="len">–</b> cut';ls.title='The take, and the cut as it is now';
@@ -145,10 +145,10 @@ function studioSetup(){
  addEventListener('mousedown',e=>{for(const d of document.querySelectorAll('details.mn[open]'))if(!d.contains(e.target))d.open=false});
  for(const d of [edit,opts,keys])d.addEventListener('toggle',()=>{if(d.open)for(const o of [edit,opts,keys])if(o!==d)o.open=false});
  // Video Octopus's Cut inspector drives the page through the same edits as the keys and buttons here.
- addEventListener('message',e=>{const m=e.data;if(!m||e.source!==parent||typeof m.type!=='string')return;
+ addEventListener('message',e=>{const m=e.data;if(!m||e.source!==parent||e.origin!==location.origin||typeof m.type!=='string')return;
   if(m.type==='studio:cut-review'){setEar(m.items);return}
   if(m.type==='studio:shots'){setShots(m);return}
-  if(m.type==='studio:look'){if(STUDIO_TO==='*'||e.origin===STUDIO_TO)applyStudioLook(m.look);return}
+  if(m.type==='studio:look'){applyStudioLook(m.look);return}
   if(m.type!=='studio:cut-do'||!D)return;const op=m.op;
   if(op==='cut-sel'){if(sel)cut(...sel)}
   else if(op==='restore-sel'){if(sel)restore(...sel)}

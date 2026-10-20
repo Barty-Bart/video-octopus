@@ -31,7 +31,7 @@ cd video-octopus
 
 On Windows, run `start.cmd` instead. Then open http://127.0.0.1:4800 if it doesn't open by itself. There are no npm packages to install.
 
-On the first run, **Setup** checks your computer and offers **Create my studio**: a folder for your projects, recordings and library, with starter skills (transcribe, rough cut, join check, production sheet, talking-head zoom) and the Cut Editor. You can add motion graphics skills from a GitHub repo in Setup.
+On the first run, **Setup** checks your computer and offers **Create my studio**: a folder for your projects, recordings and library, with starter skills (transcribe, rough cut, join check, production sheet, talking-head zoom). The Cut Editor is built into the app's Cut tab, so there's nothing to set up for it. You can add motion graphics skills from a GitHub repo in Setup.
 
 ## Your stuff stays yours
 

@@ -1,4 +1,4 @@
-// End-to-end test of the Cut tab's Keep / Cut list with the real Cut Editor, through the page in headless Chromium,
+// End-to-end test of the Cut tab's Keep / Cut list with the built-in Cut Editor, through the page in headless Chromium,
 // on a made-up take (tone bursts where the words are):
 //   1. The count: a clipped join that join-check's fix already resolved (it's in work/edl_fixed.json) isn't one to
 //      check, so the list, the inspector and the server say what Prepare said (needs_you).
@@ -12,7 +12,7 @@
 //
 //   STUDIO_URL=http://127.0.0.1:4853 node test/cutlist.e2e.mjs
 //
-// Video Octopus must be running on a throwaway studio with the starter's Cut Editor (it writes the project cutlist-e2e into
+// Video Octopus must be running on a throwaway studio (it writes the project cutlist-e2e into
 // it). Env: STUDIO_URL; PLAYWRIGHT_PATH (default 'playwright'); HEADED=1 to watch. Nothing goes to Claude (the page's
 // chat and step requests are aborted). Prints one line.
 import { createRequire } from 'node:module';
@@ -83,8 +83,9 @@ await page.route('**/*', (route) => {
   if (r.method() === 'POST' && /\/(chat|step|send|ask|apply-notes)(\?|$)/.test(r.url())) return route.abort();
   return route.continue();
 });
-const errors = [];
+const errors = [], origins = new Set();
 page.on('pageerror', (e) => errors.push(e.message));
+page.on('request', (r) => { if (/^https?:/.test(r.url())) origins.add(new URL(r.url()).origin); });
 const results = [];
 let failures = 0;
 const expect = (ok, what, detail) => { if (ok) results.push(what); else { failures++; log(`FAIL ${what}: ${JSON.stringify(detail)}`); } };
@@ -102,6 +103,7 @@ try {
   await page.waitForSelector('.cutp [data-a=list]', { timeout: 60000 });
   const frame = await until('the Cut Editor', async () => page.frames().find((f) => f !== page.mainFrame() && /theme=studio/.test(f.url())), 60000);
   await frame.waitForFunction(() => typeof D !== 'undefined' && D && kept.length > 0, null, { timeout: 60000 });
+  expect(new URL(frame.url()).origin === BASE && new URL(frame.url()).pathname === '/cut-editor/', `the Cut Editor is built in: ${new URL(frame.url()).pathname} on Video Octopus's own address`, frame.url());
   await sleep(1500); // its first state reaches the inspector
   const ins = await page.evaluate(() => document.querySelector('.cutp .cp-in')?.innerText.replace(/\s+/g, ' ') || '');
   expect(/Still to listen to 2\b/.test(ins) && /1 fixed by Clean up/.test(ins), `the inspector: "${ins}"`, ins);
@@ -145,6 +147,7 @@ try {
   const len = (await api(`/api/projects/${ID}`)).export.cut.duration, mmss = (t) => `${Math.floor(t / 60)}:${String(Math.round(t % 60)).padStart(2, '0')}`;
   expect(on.endsWith(mmss(len)) && off.endsWith('0:08') && on !== off, `the canvas header: take "${off}", Play the cut on "${on}" (the cut is ${len.toFixed(2)} s)`, { on, off, len });
   expect(!errors.length, 'no page errors', errors);
+  expect(origins.size === 1 && origins.has(BASE), 'every request went to Video Octopus itself', [...origins]);
 } finally {
   await browser.close();
 }

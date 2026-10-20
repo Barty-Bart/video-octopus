@@ -92,7 +92,7 @@ export function updatesSection(V, save, { row, group, toggle }) {
       }
       if (st.waiting?.length) sc.append(h(`<div class="sub">Waiting in <code>.studio/updates/</code>: ${st.waiting.map((f) => `<code>${esc(f)}</code>`).join(' ')}. Compare each with yours, keep what you like, then delete it there.</div>`));
     }
-    const starter = group('Starter files', row('Your studio', 'What Create my studio copied (CLAUDE.md, skills, the Cut Editor) gets better with updates. Files you never changed are updated; yours stay as they are, with the new version next to them. Files you deleted stay deleted.', sc));
+    const starter = group('Starter files', row('Your studio', 'What Create my studio copied (CLAUDE.md, skills, their tools) gets better with updates. Files you never changed are updated; yours stay as they are, with the new version next to them. Files you deleted stay deleted.', sc));
 
     // ---- open when I log in ----
     const L = u.login;

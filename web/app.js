@@ -1,8 +1,8 @@
 // Video Octopus web app: home (projects + recorder takes) and the project screen
 // (Claude chat · canvas / Cut Editor / renders · steps and skills).
 
-// The Cut Editor runs on 127.0.0.1; framed from a "localhost" page it counts as another site and some
-// browsers (the Claude app's browser pane) show it blank. Same host, no problem.
+// One address for the app: the browser keeps camera and mic permissions and the page's saved settings per address,
+// and localhost and 127.0.0.1 are two.
 if (location.hostname === 'localhost') location.replace(location.href.replace('//localhost', '//127.0.0.1'));
 
 import { PRESETS, NIGHT, SHAPES, BG_KINDS, NO_CROP, MIN_KEEP, compose, withPreset, normalize, normCrop, animatedBg, borderLabel, effectiveLook, shotAt, transitionsOf, lookKeys,
@@ -865,9 +865,10 @@ async function openProject(id) {
     catch (e) { toast(e.message); }
   }
 
-  // Cut tab: the Cut Editor runs as its own little server; we frame it. Settings → Editing picks the trim options
-  // (A always; B highlight first, C the fine-trim pop-up), passed as ?trim=hl,lens.
-  let cutUrl = null, cutOrigin = null, cutTrim = null, cutBarAt = 0;
+  // Cut tab: the Cut Editor (web/cut-editor/, built in: server/cuteditor.mjs gives it the project's files), in a frame
+  // on this same address. Settings → Editing picks the trim options (A always; B highlight first, C the fine-trim
+  // pop-up), passed as ?trim=hl,lens.
+  let cutUrl = null, cutTrim = null, cutBarAt = 0;
   const trimParam = () => [P.editing?.trimHighlight && 'hl', P.editing?.trimLens && 'lens'].filter(Boolean).join(',');
   async function renderCut() {
     const pane = $('[data-pane=cut]', el);
@@ -882,14 +883,14 @@ async function openProject(id) {
     pane.replaceChildren(h(`<div class="blank"><span class="spin" style="display:inline-block"></span><div style="margin-top:10px">Opening the Cut Editor…</div></div>`));
     const r = await api(`/api/projects/${encodeURIComponent(id)}/cut`, {});
     if (!r.ok) { pane.replaceChildren(h(`<div class="blank"><h3>Couldn't open the Cut Editor</h3><div>${esc(r.why)}</div></div>`)); return; }
-    cutUrl = r.url; cutOrigin = new URL(r.url).origin; cutTrim = trimParam();
-    // ?autosave=1: the Cut Editor saves about a second after each change (its own window keeps Save / ⌘S only).
-    // ?theme=studio: Video Octopus's light look, Geist from this server (&studio=), and the line to the Cut inspector;
+    cutUrl = r.url; cutTrim = trimParam();
+    // &autosave=1: the Cut Editor saves about a second after each change (its own window keeps Save / ⌘S only).
+    // &theme=studio: Video Octopus's light look and Geist, and the line to the Cut inspector;
     // &look= and #look=: Settings → Appearance's look and its colours and fonts (web/appearance.js), followed live after.
-    const frame = h(`<iframe class="cut studio" src="${esc(cutUrl)}?autosave=1&amp;trim=${encodeURIComponent(cutTrim)}&amp;theme=studio&amp;studio=${encodeURIComponent(location.origin)}${esc(cutLookParams())}" allow="autoplay"></iframe>`);
+    const frame = h(`<iframe class="cut studio" src="${esc(cutUrl)}&amp;autosave=1&amp;trim=${encodeURIComponent(cutTrim)}&amp;theme=studio${esc(cutLookParams())}" allow="autoplay"></iframe>`);
     // The files it opened and "Open in its own window" are in the inspector (web/cutpanel.js).
     pane.replaceChildren(h('<div class="cut-bar" id="cutBar" role="status" hidden></div>'), frame);
-    cutPanel.attach(frame, cutOrigin, cutUrl);
+    cutPanel.attach(frame, cutUrl);
     refreshCutBar();
   }
 
@@ -919,7 +920,9 @@ async function openProject(id) {
     $('#cbOk', bar)?.addEventListener('click', async () => { try { paintCutBar((await notesApi({ op: 'update', id: c.id, status: 'resolved' })).notes); } catch (err) { toast(err.message); } });
   }
   async function onCutMessage(e) {
-    if (!cutOrigin || e.origin !== cutOrigin) return;
+    // Only the Cut tab's frame (other frames on this address, like a scene in Scenes, never speak for the cut).
+    const f = $('[data-pane=cut] iframe', el);
+    if (!f || e.source !== f.contentWindow || e.origin !== location.origin) return;
     if (cutPanel.onMessage(e.data)) return; // the selection and the cut as they change, for the inspector
     if (e.data?.type !== 'studio:cut-saved') return;
     // The server compares the cut with the one the scenes and renders are on (work/cut_scenes.json), and counts the
@@ -932,7 +935,7 @@ async function openProject(id) {
   // Scenes points at a cut: open the Cut tab there (the Cut Editor centres on it, and opens the fine trim when it's on).
   function openCutAt(t) {
     setTab('cut');
-    const go = (n = 0) => { const f = $('[data-pane=cut] iframe', el); if (f?.contentWindow && cutOrigin && editorThere(f)) f.contentWindow.postMessage({ type: 'studio:cut-goto', t }, cutOrigin); else if (n < 40) setTimeout(() => go(n + 1), 250); };
+    const go = (n = 0) => { const f = $('[data-pane=cut] iframe', el); if (f?.contentWindow && editorThere(f)) f.contentWindow.postMessage({ type: 'studio:cut-goto', t }, location.origin); else if (n < 40) setTimeout(() => go(n + 1), 250); };
     setTimeout(go, 400);
   }
 

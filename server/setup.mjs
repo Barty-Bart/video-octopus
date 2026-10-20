@@ -2,15 +2,14 @@
 // A failing check carries `fix` (a request for the Video Octopus assistant, see assistant.mjs) or `how` (what the
 // creator does by hand: installing and signing in to the agent is theirs alone, the app never touches that login).
 import { existsSync, statSync, accessSync, constants } from 'node:fs';
-import { join, relative, dirname } from 'node:path';
+import { join, dirname } from 'node:path';
 import { execFile } from 'node:child_process';
-import { settings, studioTool, python, childPathEnv, tildePath as tilde, IS_WIN, IS_MAC, APP_DIR, LOCAL_DIR } from './util.mjs';
+import { settings, studioTool, python, childPathEnv, tildePath as tilde, IS_WIN, IS_MAC, APP_DIR } from './util.mjs';
 import { claudeInfo } from './claude.mjs';
 import { ccSource, sourceProblem, settingsCredentials } from './claude-source.mjs';
 import { codexInfo } from './codex.mjs';
 import { piInfo } from './pi.mjs';
 import { engineName, ENGINES } from './engines.mjs';
-import { cutEditorPath } from './cuteditor.mjs';
 import { formats } from './studio.mjs';
 import { settingsView, saveSection, section, profile, saveProfile, testKey, KEYS, machineInfo, whisperModels, MODELS, settingsChanged } from './settings.mjs';
 import { saveKey, removeKey, hasKey } from './keychain.mjs';
@@ -22,7 +21,6 @@ export const CHECKS = [
   ['python', 'Python and transcription'],
   ['recorder', 'Recorder'],
   ['folders', 'Your studio and projects folders'],
-  ['cuteditor', 'Cut Editor'],
 ];
 
 const run = async (bin, args, ms = 8000) => {
@@ -100,7 +98,7 @@ const CHECK = {
     let j = null;
     try { j = JSON.parse(r.out.split('\n').pop()); } catch {}
     if (!j) return { state: 'fail', detail: `Python not found (${tilde(py)}).`,
-      fix: `Setup check "Python and transcription" failed: Video Octopus can't run Python (it tried ${py}). Transcription (faster-whisper) and the Cut Editor (numpy) need Python 3.9 or newer. Set it up on this computer (a venv in the studio folder at .venv is what Video Octopus looks for first${IS_WIN ? '; on Windows, winget install Python.Python.3.12' : ''}). Tell me your plan first and ask before installing anything.` };
+      fix: `Setup check "Python and transcription" failed: Video Octopus can't run Python (it tried ${py}). Transcription (faster-whisper) and the rough cut and join check skills (numpy) need Python 3.9 or newer. Set it up on this computer (a venv in the studio folder at .venv is what Video Octopus looks for first${IS_WIN ? '; on Windows, winget install Python.Python.3.12' : ''}). Tell me your plan first and ask before installing anything.` };
     const missing = [!j.faster_whisper && 'faster-whisper', !j.numpy && 'numpy'].filter(Boolean);
     const mac = await machineInfo();
     const t = section('transcribe');
@@ -108,7 +106,7 @@ const CHECK = {
     const have = whisperModels();
     const base = `Python ${j.py}${j.faster_whisper ? ` · faster-whisper ${j.faster_whisper}` : ''}`;
     if (missing.length) return { state: 'fail', detail: `${base} · missing ${missing.join(' and ')}.`,
-      fix: `Setup check "Python and transcription" failed: Python ${j.py} (${py}) is there but ${missing.join(' and ')} can't be imported. faster-whisper is for transcribing on this computer, numpy is for the Cut Editor. Install ${missing.join(' and ')} for that Python (pip; if it says "externally managed", use the studio's .venv). Ask me before installing.` };
+      fix: `Setup check "Python and transcription" failed: Python ${j.py} (${py}) is there but ${missing.join(' and ')} can't be imported. faster-whisper is for transcribing on this computer, numpy is for the rough cut and join check skills. Install ${missing.join(' and ')} for that Python (pip; if it says "externally managed", use the studio's .venv). Ask me before installing.` };
     const noModel = t.engine === 'local' && !have.includes(want), noCv = !IS_MAC && !j.cv2;
     if (noModel || noCv) return { state: 'warn',
       detail: [base, noModel && `the ${want} model isn't downloaded yet (about ${MODELS[want] || 'a few GB'})`, noCv && 'no OpenCV, which Auto-frame needs'].filter(Boolean).join(' · ') + '.',
@@ -143,14 +141,6 @@ const CHECK = {
     return { state: 'ok', detail: `${tilde(s.studio)} · projects in ${s.projectsDir}/` };
   },
 
-  async cuteditor() {
-    const p = cutEditorPath();
-    const s = settings();
-    if (!p && (!s.studio || !existsSync(s.studio))) return { state: 'fail', detail: 'Comes with the starter studio: create your studio above.' };
-    if (!p) return { state: 'fail', detail: 'tools/cut-editor/server.py not found in the studio.',
-      fix: `Setup check "Cut Editor" failed: Video Octopus can't find the Cut Editor (it looks for ${join(s.studio || '<studio>', 'tools', 'cut-editor', 'server.py')}, or the "cutEditor" path in Video Octopus's local/settings.json). Look for it on this computer and tell me what you find; if it's somewhere else, set "cutEditor" in ${join(LOCAL_DIR, 'settings.json')} to its server.py, after asking me.` };
-    return { state: 'ok', detail: s.studio && p.startsWith(s.studio) ? relative(s.studio, p) : tilde(p) };
-  },
 };
 
 export const setupNeeded = () => { const s = settings(); return !section('setup', s).done || !s.studio || !existsSync(s.studio); };

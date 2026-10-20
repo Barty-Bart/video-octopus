@@ -22,7 +22,7 @@ export function studioCreator({ suggest, onCreated, button = 'Create my studio' 
     <div class="su-pick"><input class="field mono" name="path" value="${esc(suggest?.shown || '~/Video Octopus')}" spellcheck="false" autocomplete="off" aria-label="Where your studio goes"><button class="btn small primary">${esc(button)}</button></div>
     <p class="su-warn" role="status" hidden></p>
     <p class="sub su-note" aria-live="polite"></p>
-    <p class="sub">A new folder with everything Claude needs to edit with you: its instructions (CLAUDE.md), your notes on preferences and style, the skills for Clean up, Plan the scenes and Add zooms, the Cut Editor, a library, and folders for projects and recordings. It's yours: app updates never change it.</p>
+    <p class="sub">A new folder with everything Claude needs to edit with you: its instructions (CLAUDE.md), your notes on preferences and style, the skills for Clean up, Plan the scenes and Add zooms, a library, and folders for projects and recordings. It's yours: app updates never change it.</p>
   </form>`);
   const input = el.elements.path, warn = $('.su-warn', el), note = $('.su-note', el);
   const show = (info) => {
