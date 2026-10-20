@@ -1,0 +1,31 @@
+name: Fresh install evidence
+on:
+  push:
+    branches: [codex/clean-install-check]
+    paths: [.github/workflows/fresh-install.yml]
+permissions:
+  contents: read
+jobs:
+  fresh-install:
+    name: Fresh install (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Supply the README Node prerequisite
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install browser test driver outside the application
+        continue-on-error: true
+        shell: bash
+        run: npm install --prefix "$RUNNER_TEMP/octopus-browser" --no-audit --no-fund playwright@1.58.2
+      - name: Follow first launch and collect evidence
+        shell: bash
+        run: node test/fresh-install.mjs
