@@ -1,5 +1,6 @@
-name: Windows release-fix verification
+name: Windows release verification
 on:
+  workflow_dispatch:
   push:
     branches: [codex/release-blocker-fixes]
     paths: [.github/workflows/fresh-install.yml]
@@ -18,6 +19,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Verify Node preflight and the Windows launcher
+        shell: bash
+        run: node --test --test-reporter=tap test/runtime-requirement.test.mjs
       - name: Install browser test driver outside the application
         shell: bash
         run: npm install --prefix "$RUNNER_TEMP/octopus-browser" --no-audit --no-fund playwright@1.58.2
