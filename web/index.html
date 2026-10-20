@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Record, transcribe, cut and edit videos with your own Claude Code, on your own computer.">
+<meta name="theme-color" content="#ffffff">
+<title>Video Octopus</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/geist-sans-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+<script>/* Settings → Appearance: the last look, before the stylesheets paint (web/appearance.js keeps this cache). */
+try { var a = JSON.parse(localStorage.getItem('studio.look') || 'null'), d = document.documentElement;
+  if (a && /^[a-z]+$/.test(a.look || '')) { d.dataset.look = a.look; if (a.calm) d.dataset.calm = '';
+    if (a.bg) document.querySelector('meta[name="theme-color"]').content = a.bg;
+    if (a.look === 'frost' && /^\/api\/projects\/[\w.%-]+\/thumb$/.test(a.frost || '')) { d.style.setProperty('--frost-image', 'url("' + a.frost + '")'); if (a.frostDim > 0 && a.frostDim <= 1) d.style.setProperty('--frost-dim', a.frostDim); } }
+} catch (e) {}</script>
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/onboarding.css">
+<link rel="stylesheet" href="/looks.css">
+</head>
+<body>
+<header class="bar">
+  <a class="brand" href="#/" title="All projects"><span class="logo" aria-hidden="true"><i></i></span>Video Octopus</a>
+  <nav class="crumbs" id="crumbs" aria-label="Where you are"></nav>
+  <nav class="rail" id="rail" aria-label="Steps"></nav>
+  <div class="bar-right">
+    <div class="usage" id="usage" hidden title="Your Claude plan's usage, as Claude Code reports it">
+      <span>5h</span><i><b id="u5"></b></i><span>7d</span><i><b id="u7"></b></i>
+    </div>
+    <div class="chip" id="claudeChip">Checking Claude Code…</div>
+    <div class="bar-actions" id="barActions"></div>
+    <a class="gear" href="#/settings" title="Settings" aria-label="Settings"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v1.8M8 12.4v1.8M1.8 8h1.8M12.4 8h1.8M3.6 3.6l1.3 1.3M11.1 11.1l1.3 1.3M3.6 12.4l1.3-1.3M11.1 4.9l1.3-1.3"/></svg></a>
+  </div>
+</header>
+<main id="app"></main>
+<div class="modal" id="modal" hidden></div>
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+<script src="/app.js" type="module"></script>
+</body>
+</html>

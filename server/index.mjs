@@ -1,0 +1,802 @@
+// Video Octopus: local server. Binds to 127.0.0.1 only and refuses requests from other web pages.
+import { createServer } from 'node:http';
+import { createReadStream, existsSync, statSync, readdirSync, watch, renameSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join, extname, relative, basename } from 'node:path';
+import { settings, saveSettings, inside, readJSON, writeJSON, expandHome, reveal, state, patchState, setProjectState, mtime, APP_DIR, LOCAL_DIR } from './util.mjs';
+import { claudeInfo, ChatSession, forReplay } from './claude.mjs';
+import { makeChat, staleChat, foreignSession, enginesView, modelSourceView, engineName, ENGINES } from './engines.mjs';
+import { listProjects, createProject, projectDir, projectMeta, saveProjectMeta, listTakes, importTake, importTakeFrom, makeProxies,
+  pipelineStatus, stepPrompt, formats, listSkills, roles, proxyName, sources, projectsRoot, probe, probeFile, formatId, formatInfo, isAudio, isTakeFile,
+  importUpload, lockedCut, appendWorklog, setSkipped, takeDuration } from './studio.mjs';
+import { openCutEditor, cutPlan, cutEditorPath, closeAll } from './cuteditor.mjs';
+import { onProjectFiles, syncCutItem, retimeOnSave, syncDocItems, markPackageBase, cutTake, saveCut } from './cutsync.mjs';
+import { cutReviewRoute, markEdits } from './cutreview.mjs';
+import { autoFrame } from './autoframe.mjs';
+import { exportInfo, startExport, cancelExport, stopAllExports, canvasSources } from './export.mjs';
+import { layersRoute, cancelLayers, stopAllLayers, layersRunning, listLayerExports } from './export-layers.mjs';
+import { audioRoute, cancelAudio, stopAllAudio, audioRunning } from './export-audio.mjs';
+import { textRoute, listTextExports } from './export-text.mjs';
+import { normalize, defaultLayout, newLayers } from '../web/layout.js';
+import { thumbFor } from './thumbs.mjs';
+import { timelineData, filePeaks, joinFlags } from './timeline.mjs';
+import { layoutsRoute } from './saved-layouts.mjs';
+import { scenesView, scenesSummary, notesOp, setOverride, applyBrief, kitBrief, updateKit, KIT } from './scenes.mjs';
+import { buildSteps, renderKind } from './built.mjs';
+import { appRoute } from './setup.mjs';
+import { onboardingRoute } from './onboarding.mjs';
+import { assistantRoute, killAssistant } from './assistant.mjs';
+import { onSettingsChange, restartWhenIdle, section, transcribeHow } from './settings.mjs';
+import { listBackgrounds, useLibraryBackground, saveUpload, saveToLibrary, generateBrief, libraryFile, bgJobRoute } from './backgrounds.mjs';
+import { kitRoute, libraryRoute, kitContext, kitSummary, KIT_ACTIONS } from './kit.mjs';
+import { saveToLibrary as addToLibrary } from './library.mjs';
+import { blocksRoute, blocksSummary, blocksContext, prepareState, stepBrief, noteStep, receiveBlockTake } from './blocks.mjs';
+import { shotsRoute, readShotsAndZooms, shotsContext, onShotNotes } from './shots.mjs';
+import { recRoute, unfinishedTakes, recorderChoices } from './browser-recorder.mjs';
+import { logUse, usageFromFiles, cutSaved, dashboard, backfill, catchUpUsage, planUsage } from './usage.mjs';
+import { schedulesRoute, startScheduler, stopScheduler, readSchedules } from './schedules.mjs';
+import { inboxRoute, inboxItems } from './inbox.mjs';
+import { updatesRoute, startUpdateChecks, updateCount, RESTART_CODE } from './updates.mjs';
+import { trackTurns, unfinishedOf, clearUnfinished, undoTurn } from './turns.mjs';
+
+const PORT = Number(process.env.PORT || settings().port || 4800);
+const WEB = join(APP_DIR, 'web');
+const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
+  '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.json': 'application/json', '.mp4': 'video/mp4', '.mov': 'video/quicktime',
+  '.m4v': 'video/mp4', '.webm': 'video/webm', '.jpg': 'image/jpeg', '.wav': 'audio/wav', '.md': 'text/plain; charset=utf-8',
+  '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4',
+  '.aif': 'audio/aiff', '.aiff': 'audio/aiff', '.flac': 'audio/flac' };
+
+// ---- per-project chat sessions and event streams ----
+const chats = new Map();
+const streams = new Map(); // project id -> Set(res)
+const watchers = new Map();
+// Which ways of trimming at a cut are on, for the usage log (Settings → Editing: A always, B and C optional).
+const trimModes = () => { const e = section('editing'); return ['A', e.trimHighlight && 'B', e.trimLens && 'C'].filter(Boolean).join('+'); };
+const uiTouched = new Map(); // project id -> when the window last saved its layout or blocks
+// The step whose brief went to a project's chat last, while that chat is still busy with it (the dock says it's
+// running; Clean up has its own state with its sub-steps, blocks.mjs prepareState).
+const stepRuns = new Map(); // project id -> { step, at }
+const OPTIONAL_KIT_READS = new Set(['work/overrides.json', 'work/production.json']);
+
+// Settings, keys or the profile changed: each chat picks them up when it next starts (once it's idle).
+// Appearance is only how the app looks, and Updates only the app's own update check, so the chats carry on.
+onSettingsChange((what) => { if (what === 'appearance' || what === 'updates' || what === 'help') return; for (const c of chats.values()) restartWhenIdle(c); });
+
+// The project's chat, for a POST (a message, a step, the sessions list, an answer): made on first use, and after an
+// agent switch in Settings the old conversation goes to earlier sessions here. GET routes use peekChat instead.
+function chatFor(id) {
+  let switched = false;
+  if (staleChat(chats.get(id))) { chats.get(id).kill(); chats.delete(id); switched = true; }
+  if (!chats.has(id)) {
+    const chat = makeChat(id, () => projectContext(id));
+    // pi runs inside the project's folder: weaker models write paths like "work/x.json" relative to where they run.
+    // (Claude Code and Codex run in the studio folder, where they find its skills and notes; pi gets those passed in.)
+    if (chat.engine === 'pi') chat.cwd = () => projectDir(id) || settings().studio;
+    // Auto mode: a change outside this project's folder asks first (server/outside-hook.mjs; Claude Code only).
+    chat.guard = () => projectDir(id);
+    chat.listeners.add((ev) => broadcast(id, ev));
+    chat.listeners.add((ev) => { if (ev.t === 'busy' && !ev.busy) stepRuns.delete(id); });
+    // When a turn ends: did its step get its result (else the dock says "Didn't finish"), and what can Undo put back.
+    trackTurns(id, chat, { broadcast: (ev) => broadcast(id, ev) });
+    chats.set(id, chat);
+    // The engine (or Claude Code's model source) changed in Settings: the conversation so far goes to "earlier
+    // sessions" (it belongs to the other agent or model), and this one starts fresh; the project's files and notes carry over.
+    const st = state().projects[id] || {};
+    if (switched || foreignSession(st, chat.engine)) { try { chat.newSession(); } catch {} }
+  }
+  return chats.get(id);
+}
+// A look at the chat for a GET (the project view, the event stream): the one in use, or one made just to read the
+// saved log. It's never kept, so nothing is renamed, written or logged until a POST calls chatFor.
+const peekChat = (id) => chats.get(id) || makeChat(id, () => projectContext(id));
+
+function projectContext(id) {
+  const s = settings();
+  const dir = projectDir(id);
+  const meta = (dir && projectMeta(dir)) || {};
+  const fmt = formats()[formatId(meta.type)] || 'not set';
+  const src = dir ? roles(dir).take.map((f) => `source/${f}`).join(', ') : '';
+  return [
+    `You are the chat panel inside Video Octopus, the creator's local video editing app. Everything you do is for one project.`,
+    engineName() === 'pi' && dir ? `Your studio folder: ${s.studio}. Your working directory is this project's folder (${dir}): write project files by their path inside it (work/blocks.json, project.json).` : `Your studio folder (your working directory): ${s.studio}`,
+    `Project folder: ${dir ? relative(s.studio, dir) : id} (type: ${fmt})${src ? `; source files: ${src}` : ''}.`,
+    `Recorder takes have a screen file and a webcam file that start together and carry the same microphone audio. A take can also be camera only (just <stamp>_webcam.mp4 from Video Octopus's recorder, or _webcam.mov in an older take, with the mic) or mic only (just <stamp>_audio.wav, 24-bit PCM, no picture: the canvas and the export show the layout's background under its sound; it can also be a block's file, e.g. a voiceover sponsor read).`,
+    `Work inside the project folder: source/ for originals (never change them), work/ for intermediate files, renders/ for videos, WORKLOG.md for the log.`,
+    `Don't write outside this project's folder (other projects, the studio's library, memory, notes and logs, anything else), except a file the studio's own instructions (its CLAUDE.md, AGENTS.md, skills) tell you to write; when you do, say so in your reply: which file, and why. In Auto mode Video Octopus asks the creator before a change outside the project anyway. Temporary files are fine anywhere temporary.`,
+    `Clocks: when you tell the creator a time, give it on the video as it plays: the cut's time (the locked cut's, else the rough cut's when there's no locked cut yet), as m:ss.s, the clock the Cut tab, Scenes, the renders and the canvas's "Play the locked cut" show. The take's own seconds (the words' and blocks' times, the cut files' segments) are for files only; if you ever have to name one, say "take 0:53.3" and give the cut time too. Cut time of take second t = the lengths of the kept segments before it, plus t minus the start of the segment it's in (segments_sec of work/edl_manual.json, else work/edl_fixed.json). Times in the production sheet, notes and renders are already on the cut's timeline.`,
+    `The app shows the project's files live: when a skill writes work/tr/words.json, work/rough_map.json, work/joins.json or work/edl_manual.json, the Cut tab and the step buttons update on their own, so don't start your own servers or review pages for the Cut Editor; tell the creator to open the Cut tab instead.`,
+    `The canvas layout is "layout" in project.json, and you may edit it (the canvas follows): aspect "16:9"|"9:16"; preset "screen"|"camera"|"pip"|"split"|"boxed" (boxed = a screen card on two thirds and a tall camera card on the right third); side "right"|"left"; mirror "auto"|true|false; webcam {x,y,w} = the picture-in-picture box (top-left and width as fractions of the frame); pad 0-12 = PiP only, the screen as an inset card this % of the frame width from the edges; cam {shape "square"|"rounded"|"circle"|"frame", zoom 1-4 (1 = the whole camera height, 2 = twice as close), focus {x,y} = point of the camera picture the crop centres on, border "none"|"subtle"|"white"|"accent", borderW (export pixels), shadow true|false} = the camera framing and card edge in every layout; bg {kind "night"|"stars"|"led"|"image"|"video"|"code", file "assets/…" for image/video/code, name} = what shows behind the cards (stars and led are animated night backgrounds: drifting stars, an LED wave; code = an ES module export default {name, draw(g, W, H, t)}, a pure function of time); layers [{id, file (in source/), kind "cam"|"screen", x, y, w, shape, zoom, focus, border, borderW, shadow, audio, hidden}] = extra videos from other takes on top, from 0:00; hidden ["cam"|"screen"] = the canvas take's camera or screen left out of the picture and the export (a layer has its own hidden: true).`,
+    `The app's Export button renders the canvas with ffmpeg into renders/<project>_<layout>_vN.mp4 on the locked cut, and puts a built block's render in for that block (your newest renders/*intro*.mp4 for the intro, on the production sheet's timeline; the creator can pick the canvas instead): its picture only, the export's own voice and sfx.json cues under it (so keep the cues for your render's transitions in work/sfx.json); each export leaves work/export/<time>/ with job.json and run.sh, which re-renders it. project.json finalRender is the render the creator marked Final on the Renders tab. The creator records with the Record button; the take lands in source/ by itself.`,
+    `Export → Layers writes renders/<project>_layers_vN/: every layer as its own file from 0:00 (background, screen and camera cards, the scene's graphics layers or elements, the presenter cut-out, voice.wav, sound-cues.wav), README.txt with the stacking order, layers.json, motion.json (every Octopus.el element's times, boxes and painted bounds over time, and its element.keys from overrides.json) and FCPXML / FCP 7 XML timeline files. Export → Timeline file writes the same XML straight from the sources into renders/<project>_timeline_vN/.`,
+    `Export → Audio, Transcript and Subtitles work on the final timeline (locked cut, blocks in order, sponsor-read files included): Audio writes renders/<project>_mix_vN.wav|m4a|mp3 (voice + sound cues, mixed like the video; _voice_vN = voice only; optional −14/−16 LUFS), Transcript renders/<project>_transcript_vN.txt|md (block headings, optional timecodes), Subtitles renders/<project>_subtitles_vN.srt|vtt, from work/words_refined.json, else work/tr/words.json (a file block's own words: work/tr/<file name>/words.json); the Video export can burn the captions in.`,
+    `Scenes: work/production.json is the production sheet. Video Octopus shows its scenes as blocks on the timeline and in its Scenes tab, where each scene plays from the newest render in renders/ (the canvas exports above don't count). Keep the scene times on the locked cut's timeline, the same timeline the renders are on, and give each new render the next version number (…_v4.mp4).`,
+    `Review notes: the creator leaves notes per scene and pins them on the picture in the Scenes tab. They are in work/notes.json {notes: [{id, scene, block, text, t (seconds on the render timeline), pos {x, y} (fractions of the frame, when pinned), el {id, label} (the scene element under the pin), version, status, reply}], approved: {scene id: time}}. "Apply my notes" sends you the open ones. When you've handled a note, set its status to "done" and its reply to one line on what you changed (or status "question" with your question in reply). Never delete notes.`,
+    `The change package: besides notes, the creator's quick edits in the Scenes tab are notes of kind "change" in the same file: {kind: "change", scene, field: "layout"|"background"|"transition"|"sfx"|"timing"|"style"|"text"|"cut", target {id, label} (a scene element, when it's about one), from, to, text}. Timing changes move a scene edge ({start, end}) or when an element is on screen ({in, out}); they never cut audio (the cut belongs to the Cut tab). A "cut" change (no scene) comes from the Cut tab: from and to are the kept parts of the take before and after ({segments: [[start, end], …]} in take seconds); the brief lists every edit with where it sits on the old cut and writes the old cut to work/cut_before_<id>.json, and before re-rendering you re-align everything that sits on the old timeline (production sheet times, scene files, keyframes and element times in work/overrides.json, note times, B-roll) so nothing drifts off its words. The creator sends the package with "Save changes → Claude". Every note and change with status "open", plus moves in work/overrides.json newer than the newest render, is the creator's change package. Video Octopus sends it to you as one message; if the creator asks you in this chat to send, apply or do "the package" or "my changes", read work/notes.json, tell them what's in it (how many items, which scenes), set those items to "sent", do them in one pass and re-render once, then mark each "done" with a one-line reply. If they ask what's waiting, read the open items and list them.`,
+    `Direct edits: the creator can drag and resize the titles, cards and boxes of an HTML scene in Video Octopus. The moves are in work/overrides.json {v: 1, scenes: {"<scene id>" or "*" (every scene): {"<element id>": {dx, dy (frame pixels), scale (around the element's centre)}}}}. Scenes that load the Video Octopus scene kit (assets/octopus-scene.js, a copy of ${KIT}) apply them by themselves whenever they draw, so renders pick them up: don't bake them into the scene code, and keep element ids stable. To make an element movable, draw it inside Octopus.el('<id>', [x, y, w, h], () => { ... }, { label }) in a canvas scene, or give it data-studio="<id>" in an HTML scene.`,
+    `Keyframes: an element's entry in work/overrides.json can also hold keys: [{t, dx, dy, s, o, e}], the creator's own keyframes from the scene timeline (◆). t = seconds on the render's timeline (the same as the production sheet), dx/dy = frame pixels, s = scale around the element's centre, o = opacity 0–1 (multiplies the element's own), e = "linear" or "hold" (default: ease in and out) for the way to the next key. Leave "at" out of entries you write: Video Octopus stamps the creator's own moves with it, and only those go into the change package. The kit (kit 2) interpolates them on top of your own animation whenever the scene draws, so the preview and every render show them; with keys, they replace that element's dx/dy/scale. Respect them: when you change a scene, keep element ids and their timing, don't animate the same property against the creator's keys, and if you have to move or rename a keyed element, say so and move its keys along with it (keep their times on the render timeline). Never remove keys unless the creator asks. If a project's assets/octopus-scene.js is older than kit 2, copy ${KIT} over it before relying on keys.`,
+    ...(dir ? kitContext(dir, meta) : []),
+    blocksContext(),
+    shotsContext(),
+    `Everything in this project's window is a file you can change, and the window follows within a second: the layout and frame (project.json layout), the blocks (work/blocks.json), sound cues (work/sfx.json), notes and Look changes (work/notes.json), keyframes and moves (work/overrides.json), the post kit (work/post.json). So when the creator asks for a change anywhere in the window, make it in the file rather than describing where to click. Read the file first and change only the keys you mean to (keep the rest exactly). Changes you make yourself don't go into the change package; the creator's do.`,
+    `The cut is work/edl_manual.json {segments_sec: [[start, end], …]}: the kept parts of the canvas take, in take seconds (the Cut tab and Scenes edit the same file). Change it only when asked; the Cut tab follows, and graphics are re-timed when the creator presses Save changes → Claude.`,
+    `Saved layouts are in ${join(settings().studio || '<studio>', '.studio', 'layouts.json')} ({layouts: [{id, name, layout}]}, made with "+ Save layout"): to use one, copy its layout keys into project.json layout (keep aspect and layers). Library backgrounds (${join(settings().studio || '<studio>', 'library', 'backgrounds')}) are copied into the project's assets/ and used as bg {kind "image"|"video"|"code", file "assets/…", name}.`,
+    `Things outside this project (Video Octopus's settings, other projects, scheduled runs, the library inbox) are the Video Octopus assistant's job (the Ask Claude button outside a project), which asks before each change: if the creator asks you for one, say so instead of changing Video Octopus's files.`,
+    `When the creator asks what you'd change, be concrete: which layout or background per block, where a sound cue or block should go (with times), what to cut. Offer to apply it, and apply it in the files when they say yes.`,
+    `The creator reads you in a narrow side panel: keep replies short and plain, and say what you're doing before long jobs. Talk about the video in their words (the cut, scene 3, the intro, the Cut tab's list, the change package), not in file names: leave paths like work/….json out of replies unless they ask where something is or a file is the thing they need to open.`,
+  ].join('\n');
+}
+
+// A line Video Octopus adds to a project's chat log (kept and replayed like the chat's own, e.g. a finished step's marker):
+// through the chat in use, else straight into its saved log and to the open pages. Like a GET, it never makes, starts
+// or switches the chat.
+function logEvent(id, ev) {
+  const live = chats.get(id);
+  if (live) return live.emit(ev);
+  peekChat(id).emit(ev);
+  broadcast(id, ev);
+}
+
+function broadcast(id, ev) {
+  for (const res of streams.get(id) || []) res.write(`data: ${JSON.stringify(ev)}\n\n`);
+}
+// A re-cut moved or merged shots or zooms (server/shots.mjs): one line each in the project's chat.
+onShotNotes((dir, notes) => { const id = basename(dir); if (projectDir(id) === dir) for (const text of notes) logEvent(id, { t: 'note', text }); });
+
+const exportJobs = new Map(); // project id -> last export job event (replayed to pages that open mid-export)
+
+// A finished take from the recorder (browser-recorder.mjs) goes into the project it was recorded for: replace,
+// layer or block, proxies, camera framing, events.
+function takeArrived(id, takeDir, target, duration) {
+  const dir = projectDir(id);
+  if (!dir) return console.error(`The take ${takeDir} was recorded for ${id}, which is gone; it stays in the recordings folder.`);
+  try {
+    receiveTake(id, dir, takeDir, target, duration, 'Recorded');
+  } catch (e) {
+    broadcast(id, { t: 'take', error: `Couldn't import the take: ${e.message}` });
+  }
+}
+
+// A finished take: replace the canvas take (and frame the camera around the head), or add it as new layers.
+function receiveTake(id, dir, takeDir, target, duration, how = 'Imported') {
+  logUse(how === 'Recorded' ? 'take.recorded' : 'take.imported', { project: id, ...(duration ? { secs: Math.round(duration) } : {}) });
+  // A take recorded for a block (Record setup opened from a block or "@Sponsor read record new") becomes that block's file.
+  if (/^block:/.test(target || '')) {
+    const r = receiveBlockTake(dir, takeDir, target, how);
+    makeProxies(dir, (ev) => broadcast(id, ev));
+    broadcast(id, { t: 'take', files: r.files, duration, block: r.block, blockLabel: r.label });
+    broadcast(id, { t: 'files' });
+    return r.files;
+  }
+  const hadTake = roles(dir).files.length > 0;
+  // A mic-only take has no picture to put in a box, so it always becomes the canvas take.
+  const asLayer = target === 'layer' && hadTake && !takeIsAudioOnly(takeDir);
+  const files = importTakeFrom(dir, takeDir, how, { keepActive: asLayer });
+  const meta = projectMeta(dir);
+  if (asLayer) {
+    const dims = Object.fromEntries(files.map((f) => { const p = probe(dir, f); return [f, p?.w ? [p.w, p.h] : null]; }));
+    const layout = normalize(meta.layout, meta.type);
+    layout.layers = [...layout.layers, ...newLayers(layout, files, dims)].slice(-8);
+    saveProjectMeta(dir, { layout });
+  }
+  makeProxies(dir, (ev) => broadcast(id, ev));
+  broadcast(id, { t: 'take', files, duration, layer: asLayer });
+  broadcast(id, { t: 'files' });
+  // Frame the new camera around the head (in the background; the canvas updates when it's done).
+  const cam = files.find((f) => /_webcam\./i.test(f));
+  if (cam) frameCamera(id, dir, asLayer ? { file: cam } : { main: true }).catch((e) => console.error(`Auto-frame after the take failed: ${e.message}`));
+  return files;
+}
+
+function takeIsAudioOnly(takeDir) {
+  try {
+    const files = readdirSync(takeDir).filter((f) => !f.startsWith('.') && isTakeFile(f));
+    return files.length > 0 && files.every(isAudio);
+  } catch { return false; }
+}
+
+async function frameCamera(id, dir, which) {
+  const meta = projectMeta(dir);
+  const layout = normalize(meta.layout, meta.type);
+  const file = which.main ? canvasSources(dir).cam : which.file;
+  if (!file) throw new Error('There is no camera to frame.');
+  const p = probe(dir, file);
+  const shape = which.main ? layout.cam.shape : layout.layers.find((x) => x.file === file)?.shape;
+  const fr = await autoFrame(join(dir, 'source', file), p?.duration, { shape });
+  if (!fr) return { layout, found: false };
+  const fresh = normalize(projectMeta(dir).layout, meta.type);
+  // A cropped camera zooms inside what its crop leaves (web/layout.js cropIn): the same head-and-shoulders height.
+  const fit = (f) => ({ ...fr, zoom: Math.round(Math.min(4, Math.max(1, fr.zoom * (1 - (f.crop?.t || 0) - (f.crop?.b || 0)))) * 1000) / 1000 });
+  if (which.main) Object.assign(fresh.cam, fit(fresh.cam));
+  else for (const x of fresh.layers) if (x.file === file) Object.assign(x, fit(x));
+  saveProjectMeta(dir, { layout: fresh });
+  broadcast(id, { t: 'files' });
+  return { layout: fresh, found: true };
+}
+const exportEmit = (id) => (ev) => {
+  if (ev.t === 'job') { if (ev.done) exportJobs.delete(id); else exportJobs.set(id, ev); }
+  // A finished export (a stopped one also ends "ok", but leaves no file or folder) goes into the usage log.
+  if (ev.t === 'job' && ev.done && ev.ok && (ev.file || ev.out || ev.folder)) logUse('export.done', { project: id, kind: ev.kind || 'video' });
+  broadcast(id, ev);
+};
+
+// Watch the project folder while someone has it open, so steps and the Cut tab refresh themselves.
+function watchProject(id, dir) {
+  if (watchers.has(id)) return;
+  let timer = null;
+  const changed = new Set();
+  // The cut changed (Cut tab, the Cut Editor on its own, or Claude), or a sheet or render was written: keep the
+  // package's cut item and the scenes' cut snapshot in step (cutsync.mjs), and say so in the chat when it first appears.
+  const cutHooks = (files) => {
+    try {
+      // Claude changed the layout or the blocks itself (its chat is working and the window saved nothing just now):
+      // that's already done, so it becomes the package's starting point instead of a change waiting for Claude.
+      const doc = files.some((f) => f === 'work/blocks.json' || f === 'project.json');
+      if (doc && chats.get(id)?.busy && Date.now() - (uiTouched.get(id) || 0) > 3000) markPackageBase(dir, { keepOpen: true });
+      for (const n of onProjectFiles(dir, files) || []) broadcast(id, { t: 'note', text: `Added to the change package: ${n.text}` });
+    } catch (e) { console.error('cut sync:', e.message); }
+  };
+  try { cutHooks(['work/edl_manual.json', 'work/blocks.json', 'project.json']); } catch {}
+  try {
+    const w = watch(dir, { recursive: true }, (_e, file) => {
+      if (file && /(^|\/)(seq|frames|parts|masks)[^/]*\//.test(file)) return; // render frames: too noisy
+      if (file) changed.add(String(file).split('\\').join('/'));
+      clearTimeout(timer);
+      timer = setTimeout(() => { const files = [...changed]; changed.clear(); cutHooks(files); try { usageFromFiles(id, dir, files); } catch {} broadcast(id, { t: 'files' }); }, 700);
+    });
+    watchers.set(id, w);
+  } catch {}
+}
+
+// ---- helpers ----
+function send(res, code, body, type = 'application/json') {
+  res.writeHead(code, { 'Content-Type': type, 'Cache-Control': 'no-store' });
+  res.end(type === 'application/json' ? JSON.stringify(body) : body);
+}
+
+async function body(req, limit = 1e6) {
+  let raw = '';
+  for await (const chunk of req) { raw += chunk; if (raw.length > limit) break; }
+  try { return JSON.parse(raw || '{}'); } catch { return {}; }
+}
+
+function serveFile(req, res, file) {
+  if (!file || !existsSync(file) || !statSync(file).isFile()) return send(res, 404, { error: 'Not found' });
+  const size = statSync(file).size;
+  const type = TYPES[extname(file).toLowerCase()] || 'application/octet-stream';
+  const range = /bytes=(\d*)-(\d*)/.exec(req.headers.range || '');
+  if (range) {
+    const start = range[1] ? Number(range[1]) : size - Number(range[2]);
+    const end = range[1] && range[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
+    res.writeHead(206, { 'Content-Type': type, 'Content-Range': `bytes ${start}-${end}/${size}`, 'Accept-Ranges': 'bytes', 'Content-Length': end - start + 1 });
+    return createReadStream(file, { start, end }).pipe(res);
+  }
+  // Fonts may be read by the Cut Editor's page (its own port) for the Cut tab's look.
+  const cors = /\.(woff2|ttf)$/i.test(file) ? { 'Access-Control-Allow-Origin': '*' } : {};
+  res.writeHead(200, { 'Content-Type': type, 'Content-Length': size, 'Accept-Ranges': 'bytes', 'Cache-Control': 'no-store', ...cors });
+  createReadStream(file).pipe(res);
+}
+
+// Only this app's own page may call the API (blocks other sites and DNS rebinding).
+function allowed(req) {
+  const hostOk = [`127.0.0.1:${PORT}`, `localhost:${PORT}`].includes(req.headers.host);
+  const origin = req.headers.origin;
+  const originOk = !origin || [`http://127.0.0.1:${PORT}`, `http://localhost:${PORT}`].includes(origin);
+  const writeOk = req.method === 'GET' || req.headers['x-studio'] === '1';
+  return hostOk && originOk && writeOk;
+}
+
+function projectView(id, dir) {
+  const meta = projectMeta(dir) || {};
+  const r = roles(dir);
+  // A sound file (mic-only take) plays as it is, so it is its own playback copy.
+  const proxies = Object.fromEntries(r.files.map((f) => [f, isAudio(f) ? `source/${f}` : existsSync(join(dir, proxyName(f))) ? proxyName(f) : null]));
+  const busy = Boolean(chats.get(id)?.busy); // read only: a GET never makes or switches the chat
+  const pipeline = meta.type ? pipelineStatus(dir, meta.type, { lines: true, seen: railSeen(id) }) : null;
+  return {
+    id, name: meta.name || id, type: formatId(meta.type), shortStyle: meta.shortStyle || null, app: Boolean(projectMeta(dir)),
+    path: dir, layout: normalize(meta.layout, meta.type),
+    // The steps with their words, each done step's line, and the newest step finished since the page last looked.
+    roles: r, canvas: canvasSources(dir), proxies, pipeline,
+    running: busy ? stepRuns.get(id)?.step || null : null, // the step Claude is working on (the dock on the message box)
+    runningAt: busy ? stepRuns.get(id)?.at || null : null, // when it started (the dock shows how long it has run)
+    cut: cutPlan(dir), busy, renders: listRenders(dir),
+    export: exportInfo(id, dir), recorder: recorderChoices(id), recUnfinished: unfinishedTakes(id), scenes: scenesSummary(dir), kit: kitSummary(dir, meta), editing: section('editing'),
+    brandColors: section('look').colors, // Settings → Look → Brand (and the Brand kit): the canvas's border picker offers them
+    blocks: blocksSummary(dir), prepare: prepareState(id, dir, busy),
+    layerExports: listLayerExports(dir), // Layers and Timeline file exports (server/export-layers.mjs)
+    textExports: listTextExports(dir, probeFile), // Audio, Transcript and Subtitles exports (server/export-text.mjs)
+    joins: joinFlags(dir), // the join check's flags on the canvas timeline (server/timeline.mjs)
+    finalRender: meta.finalRender || null, // the render marked Final on the Renders tab
+    // Shots and zooms (server/shots.mjs, web/shots.js): work/shots.json { v: 1, shots } and work/zooms.json { v: 2, items },
+    // settled (sections, re-cuts, block layouts moved in) and on the take's own seconds; the page refreshes on any change.
+    ...shotsView(dir),
+    // A step whose turn ended without its result ("Didn't finish", server/turns.mjs), and what each tab had when the
+    // creator last opened it (its glow survives a reload).
+    unfinished: unfinishedOf(id, pipeline),
+    tabSeen: state().projects?.[id]?.tabSeen || null,
+  };
+}
+const shotsView = (dir) => { try { return readShotsAndZooms(dir); } catch (e) { console.error('shots:', e.message); return { shots: null, zooms: { v: 2, items: [] } }; } };
+
+// The steps that were done when the page last looked at a project (local state; null until it first does, so a
+// project opened for the first time after an update shows no done moment or chat marker for old steps).
+const railSeen = (id) => { const v = state().projects?.[id]?.railSeen; return Array.isArray(v) ? v : null; };
+
+function listRenders(dir) {
+  try {
+    // What each is (server/built.mjs): a Build step's video ("Intro builds"), Export → Video ("Video exports"), or other.
+    const steps = buildSteps(projectMeta(dir)?.type), id = basename(dir), what = { export: 'Video export', other: null };
+    return readdirSync(join(dir, 'renders')).filter((f) => /\.(mp4|mov)$/i.test(f))
+      .map((f) => { const st = statSync(join(dir, 'renders', f)), k = renderKind(id, f, steps);
+        return { file: `renders/${f}`, at: st.mtimeMs, bytes: st.size, kind: k.kind, group: k.group, what: k.kind === 'build' ? `${k.label} build` : what[k.kind] }; })
+      .sort((a, b) => b.at - a.at).slice(0, 12)
+      // length, size and sound for the Renders tab (ffprobe, cached until the file changes; half-written files skipped)
+      .map((r) => { const p = r.bytes > 0 ? probeFile(join(dir, r.file)) : null; return p ? { ...r, duration: p.duration, w: p.w, h: p.h, audio: p.audio, codec: p.codec } : r; });
+  } catch { return []; }
+}
+
+// ---- routes ----
+async function route(req, res) {
+  const url = new URL(req.url, `http://127.0.0.1:${PORT}`);
+  const p = url.pathname;
+
+  // The background kit (core/kit), for the canvas backgrounds and the export's headless renderer.
+  if (p.startsWith('/kit/')) return serveFile(req, res, inside(join(APP_DIR, 'core', 'kit'), '.' + p.slice(4)));
+  if (!p.startsWith('/api/')) {
+    const file = p === '/' ? join(WEB, 'index.html') : inside(WEB, '.' + p);
+    return serveFile(req, res, file);
+  }
+  if (!allowed(req)) return send(res, 403, { error: 'Forbidden' });
+  // Settings, Setup and the Video Octopus assistant (server/setup.mjs, server/assistant.mjs).
+  // The Dashboard: totals from the folders, features and activity from the local usage log (server/usage.mjs).
+  if (p === '/api/app/dashboard/catch-up' && req.method === 'POST') return send(res, 200, catchUpUsage());
+  if (p === '/api/app/dashboard') return send(res, 200, dashboard(['week', 'month'].includes(url.searchParams.get('range')) ? url.searchParams.get('range') : 'all'));
+  // The numbers in Home's sidebar: scheduled runs that are on, pieces waiting in the Library inbox, and (update) new
+  // commits for the app, the badge on Settings.
+  if (p === '/api/app/counts') { let inbox = 0; try { inbox = settings().studio ? inboxItems().length : 0; } catch {} return send(res, 200, { schedules: readSchedules().filter((x) => x.enabled).length, inbox, update: await updateCount() }); }
+  // Settings → Updates: the app's update (git), Restart, starter files, Open Video Octopus when I log in (server/updates.mjs).
+  if (await updatesRoute(req, res, url, { send, body, restart: () => shutdown(RESTART_CODE) })) return;
+  if (await schedulesRoute(req, res, url, { send, body })) return;
+  // Which agent runs the chats (Settings → Claude): Claude Code or Codex, and what each install reports.
+  if (p === '/api/app/engines' && req.method === 'GET') return send(res, 200, await enginesView(url.searchParams.has('refresh'), { models: url.searchParams.has('models'), source: url.searchParams.has('source') }));
+  // Archived projects: moved aside into <projects>/_archive/ (hidden from Home, never deleted), listed and brought back.
+  if (p === '/api/app/archive' && req.method === 'POST') {
+    const b = await body(req), arch = join(projectsRoot(), '_archive');
+    if (b.op === 'list') { let names = []; try { names = readdirSync(arch).filter((n) => !n.startsWith('.')); } catch {} return send(res, 200, { archived: names }); }
+    if (b.op === 'restore') {
+      const aid = String(b.id || '');
+      if (!/^[\w.-]+$/.test(aid) || aid.startsWith('.') || !existsSync(join(arch, aid))) return send(res, 400, { error: 'No such archived project.' });
+      if (existsSync(join(projectsRoot(), aid))) return send(res, 400, { error: `A project called ${aid} exists already.` });
+      renameSync(join(arch, aid), join(projectsRoot(), aid));
+      return send(res, 200, { restored: aid });
+    }
+    return send(res, 400, { error: 'Unknown archive action' });
+  }
+  if (await onboardingRoute(req, res, url, { send, body })) return; // brand kit uploads, BRAND.md, skills from GitHub (server/onboarding.mjs)
+  if (await assistantRoute(req, res, url, { send, body }) || await appRoute(req, res, url, { send, body })) return;
+  if (await inboxRoute(req, res, url, { send, body })) return; // the Library inbox (server/inbox.mjs)
+  // Library add: a file inside the studio copied into a library section, with its INDEX.md line.
+  if (p === '/api/library/add' && req.method === 'POST') {
+    const b = await body(req);
+    try {
+      const src = inside(settings().studio, String(b.file || ''));
+      if (!src) throw new Error('Only files inside the studio folder can go into the library.');
+      return send(res, 200, addToLibrary(String(b.kind || ''), src, { name: b.name, note: b.note }));
+    } catch (e) { return send(res, 400, { error: e.message }); }
+  }
+  if ((p === '/api/library' || p.startsWith('/api/library/')) && await libraryRoute(req, res, url, { send, body, serveFile })) return;
+
+  if (p === '/api/status' && req.method === 'GET') {
+    const s = settings();
+    const studioOk = Boolean(s.studio) && existsSync(s.studio);
+    return send(res, 200, {
+      studio: s.studio, studioOk, projectsDir: s.projectsDir, recordingsDir: s.recordingsDir,
+      permissionMode: s.permissionMode, model: s.model,
+      claude: await claudeInfo(url.searchParams.has('refresh')),
+      // modelSource: Claude Code on another model than the plan (then there are no plan limits to show).
+      cutEditor: Boolean(cutEditorPath()), formats: formats(), formatInfo: formatInfo(), usage: modelSourceView() ? null : planUsage, modelSource: modelSourceView(), engine: engineName(), engineLabel: ENGINES[engineName()],
+      appearance: section('appearance', s), // Settings → Appearance: how Video Octopus looks (web/appearance.js applies it)
+      help: section('help', s), // first-time help seen (help.stepsIntro: 'dismissed')
+      // The computer, for the page: "Show in Finder" or "Show in File Explorer", and paths shortened to ~.
+      platform: process.platform, home: homedir(),
+    });
+  }
+  if (p === '/api/settings' && req.method === 'POST') {
+    const b = await body(req);
+    const patch = {};
+    for (const k of ['studio', 'projectsDir', 'recordingsDir', 'permissionMode', 'model']) if (typeof b[k] === 'string') patch[k] = b[k];
+    if (patch.studio && !existsSync(expandHome(patch.studio))) return send(res, 400, { error: 'That folder does not exist.' });
+    const s = saveSettings(patch);
+    if (patch.permissionMode || patch.model !== undefined) for (const c of chats.values()) c.restart();
+    return send(res, 200, s);
+  }
+  if (p === '/api/projects' && req.method === 'GET') return send(res, 200, listProjects());
+  if (p === '/api/projects' && req.method === 'POST') {
+    const b = await body(req);
+    if (!b.name?.trim()) return send(res, 400, { error: 'Give the project a name.' });
+    try {
+      const id = createProject(b.name.trim(), b.type, b.style);
+      const dir = projectDir(id);
+      logUse('project.created', { project: id, type: b.type || null });
+      if (b.take) { importTake(dir, b.take); logUse('take.imported', { project: id }); makeProxies(dir, (ev) => broadcast(id, ev)); }
+      return send(res, 200, { id });
+    } catch (e) { return send(res, 400, { error: e.message }); }
+  }
+  if (p === '/api/takes') return send(res, 200, listTakes().map((t) => ({ ...t, duration: takeDuration(t) })));
+  // Saved layouts (the canvas's "+ Save layout"), shared by every project of the studio (server/saved-layouts.mjs).
+  if (p === '/api/layouts') return layoutsRoute(req, res, { send, body, touched: (pid) => uiTouched.set(pid, Date.now()) });
+  // Built-in recorder takes that never got saved (the page closed mid-take), for every project: Home lists them.
+  if (p === '/api/rec-unfinished') return send(res, 200, { takes: unfinishedTakes(null) });
+  if (p === '/api/skills') return send(res, 200, listSkills(url.searchParams.get('type')));
+  // Backgrounds: the library's files, and the export's headless background renderer.
+  const lb = /^\/api\/library\/backgrounds\/([^/]+)$/.exec(p);
+  if (lb) { let n = ''; try { n = decodeURIComponent(lb[1]); } catch {} return serveFile(req, res, libraryFile(n)); }
+  if (p.startsWith('/api/bgjob/')) return bgJobRoute(req, res, p, send);
+
+  // Project files by path, so a scene's HTML loads its own fonts and images (the Scenes tab frames it).
+  const pf = /^\/api\/projects\/([^/]+)\/files\/(.+)$/.exec(p);
+  if (pf) {
+    const pdir = projectDir(decodeURIComponent(pf[1]));
+    let rel = '';
+    try { rel = pf[2].split('/').map(decodeURIComponent).join('/'); } catch {}
+    const file = pdir && rel ? inside(pdir, rel) : null;
+    // The scene kit reads work/overrides.json and work/production.json when a scene loads; a project may have neither
+    // yet, which is fine: answer "nothing" rather than a 404 in the console.
+    if (file && OPTIONAL_KIT_READS.has(rel) && !existsSync(file)) return send(res, 200, null);
+    return serveFile(req, res, file);
+  }
+  const m = /^\/api\/projects\/([^/]+)(\/[a-z-]+)?$/.exec(p);
+  if (!m) return send(res, 404, { error: 'Unknown route' });
+  const id = decodeURIComponent(m[1]);
+  const dir = projectDir(id);
+  if (!dir) return send(res, 404, { error: 'No such project' });
+  const action = m[2] || '';
+
+  if (action === '' && req.method === 'GET') return send(res, 200, projectView(id, dir));
+  if (KIT_ACTIONS.has(action)) return kitRoute(action, req, res, url, { id, dir, send, body, chat: () => chatFor(id) });
+
+  if (action === '/events') {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
+    const chat = peekChat(id); // events still arrive from the chat a later POST makes (broadcast goes by project id)
+    const open = new Set(chat.openRequests());
+    const history = chat.history();
+    const done = new Set(history.filter((e) => e.t === 'permission_done').map((e) => e.id));
+    for (const ev of forReplay(history)) {
+      // Old approval cards that nobody answered and Claude no longer waits on show as expired.
+      if ((ev.t === 'permission' || ev.t === 'question') && !open.has(ev.id) && !done.has(ev.id)) ev.expired = true;
+      res.write(`data: ${JSON.stringify({ ...ev, replay: true })}\n\n`);
+    }
+    res.write(`data: ${JSON.stringify({ t: 'busy', busy: chat.busy })}\n\n`);
+    if (chat.contextEvent()) res.write(`data: ${JSON.stringify(chat.contextEvent())}\n\n`);
+    // The model the session runs on (the "· opus…" next to Claude), also after a reload.
+    const sm = state().projects?.[id]?.model;
+    if (sm) res.write(`data: ${JSON.stringify({ t: 'session', model: sm, replay: true })}\n\n`);
+    if (exportJobs.has(id)) res.write(`data: ${JSON.stringify(exportJobs.get(id))}\n\n`);
+    if (!streams.has(id)) streams.set(id, new Set());
+    streams.get(id).add(res);
+    watchProject(id, dir);
+    const ping = setInterval(() => res.write(': ping\n\n'), 20000);
+    req.on('close', () => { clearInterval(ping); streams.get(id)?.delete(res); });
+    return;
+  }
+  if (action === '/media') {
+    const rel = url.searchParams.get('f') || '';
+    return serveFile(req, res, inside(dir, rel));
+  }
+  if (action === '/timeline') return send(res, 200, await timelineData(dir));
+  // Home's Continue card: how long the video is (the locked cut, else the take) and how many scenes it has.
+  if (action === '/summary') {
+    const cut = lockedCut(dir), main = canvasSources(dir);
+    const take = main.cam || main.screen || main.audio;
+    const length = cut ? cut.segments.reduce((t, [a, b]) => t + Math.max(0, b - a), 0) : take ? probe(dir, take)?.duration || 0 : 0;
+    return send(res, 200, { length, cut: Boolean(cut), scenes: scenesSummary(dir)?.count || 0 });
+  }
+  if (action === '/scenes') return send(res, 200, scenesView(dir));
+  // Scenes trims the cut too: the take the Cut Editor plays, its words and the cut now (server/cutsync.mjs).
+  if (action === '/cut-take') return send(res, 200, cutTake(dir));
+  if (action === '/peaks') {
+    const rel = url.searchParams.get('f') || '';
+    if (!inside(dir, rel)) return send(res, 400, { error: 'Bad file' });
+    return send(res, 200, (await filePeaks(dir, rel)) || { rate: 0, data: [] });
+  }
+  if (action === '/backgrounds') return send(res, 200, listBackgrounds(dir));
+  if (action === '/thumb') {
+    const file = await thumbFor(id, dir);
+    if (!file) { res.writeHead(204, { 'Cache-Control': 'no-store' }); return res.end(); } // no picture yet: nothing to show, not an error
+    return serveFile(req, res, file);
+  }
+  // The Cut tab's review list: Claude's reasons for each cut, what Prepare asked about, Keep / Cut decisions.
+  if (await cutReviewRoute(req, res, { dir, action, send, body })) return;
+  // Edits made in the window (layout, blocks) go into the change package; the same files changed by Claude during its
+  // turn don't (watchProject tells them apart by this time).
+  if (req.method === 'POST' && ['/layout', '/blocks', '/shots', '/zooms', '/upload', '/final', '/type', '/rename', '/import', '/take-upload', '/rail'].includes(action)) uiTouched.set(id, Date.now());
+  // Blocks (M3b): the band, the strip, @mentions and dropped files (uploads stream, so this comes before the JSON body).
+  if (await blocksRoute(req, res, { dir, action, url, send, body, chat: () => chatFor(id), broadcast: (ev) => broadcast(id, ev) })) return;
+  // Shots and zooms (server/shots.mjs): GET /shots, /zooms; POST { op, … } like /blocks.
+  if (await shotsRoute(req, res, { dir, action, send, body })) return;
+  // Export → Layers / Timeline file (server/export-layers.mjs; reads its own body, the canvas PNGs are large).
+  if (await layersRoute(req, res, { id, dir, action, send, body, emit: exportEmit(id) })) return;
+  // The built-in recorder's chunks (raw bodies, so this comes before the JSON body), finish and recovery.
+  if (await recRoute(req, res, { id, action, url, send, body, emit: (ev) => broadcast(id, ev), receiveTake: takeArrived })) return;
+  // Export → Audio / Transcript / Subtitles (server/export-audio.mjs, server/export-text.mjs).
+  if (await audioRoute(req, res, { id, dir, action, url, send, body, emit: exportEmit(id) })) return;
+  if (await textRoute(req, res, { id, dir, action, url, send, body })) return;
+  // The record panel's script (POST /script below saves it): empty when there's none, so the page logs no 404.
+  if (action === '/script' && req.method === 'GET') { const f = join(dir, 'script.md'); return send(res, 200, { text: existsSync(f) ? readFileSync(f, 'utf8') : '' }); }
+  if (req.method !== 'POST') return send(res, 405, { error: 'POST only' });
+  // New project → "Import a file…": the file becomes the take (streams, so before the JSON body).
+  if (action === '/take-upload') {
+    try {
+      const files = await importUpload(dir, req, url.searchParams.get('name') || 'take.mp4');
+      makeProxies(dir, (ev) => broadcast(id, ev));
+      broadcast(id, { t: 'files' });
+      return send(res, 200, { files });
+    } catch (e) { return send(res, 400, { error: e.message }); }
+  }
+  if (action === '/background-upload') {
+    try { return send(res, 200, { bg: await saveUpload(dir, req, url.searchParams.get('name') || '') }); }
+    catch (e) { return send(res, 400, { error: e.message }); }
+  }
+  const b = await body(req, action === '/export' ? 60e6 : 1e6);
+
+  if (action === '/chat') {
+    if (!b.text?.trim()) return send(res, 400, { error: 'Empty message' });
+    try { await chatFor(id).send(b.text.trim()); return send(res, 200, { ok: true }); }
+    catch (e) { return send(res, 500, { error: e.message }); }
+  }
+  if (action === '/step') {
+    const meta = projectMeta(dir);
+    if (!meta?.type) return send(res, 400, { error: 'Pick a project type first.' });
+    try {
+      // Transcribing steps follow Settings → Transcription (a cloud service without its key: this computer, said once).
+      const tx = ['prepare', 'transcribe'].includes(b.step) ? await transcribeHow({ fill: b.step === 'prepare' }) : null;
+      const text = stepBrief(dir, meta.type, b.step) || stepPrompt(dir, meta.type, b.step, { transcribe: tx?.text });
+      // The chat shows where the step's work starts as one line, "▶ Build the intro · started 14:32", with Video Octopus's
+      // brief folded under it (the user event's brief), and names a new session after the step.
+      const st = pipelineStatus(dir, meta.type), step = [...(st?.steps || []), ...(st?.more || [])].find((x) => x.id === b.step);
+      if (tx?.fallback && !state().noKeyTold?.[tx.fallback]) {
+        chatFor(id).emit({ t: 'note', text: `Transcription is set to ${tx.fallback} in Settings, but no ${tx.fallback} key is saved, so ${step?.name || 'this step'} transcribes on this computer (${tx.model}). Add the key in Settings → Transcription to use ${tx.fallback}.` });
+        patchState({ noKeyTold: { ...(state().noKeyTold || {}), [tx.fallback]: new Date().toISOString() } });
+      }
+      stepRuns.set(id, { step: b.step, at: Date.now() });
+      clearUnfinished(id);
+      await chatFor(id).send(text, { brief: { step: b.step, name: String(step?.name || step?.label || b.step).slice(0, 60) } });
+      noteStep(id, b.step);
+      return send(res, 200, { ok: true, text });
+    } catch (e) { return send(res, 400, { error: e.message }); }
+  }
+  if (action === '/skill') {
+    if (!/^[\w:-]+$/.test(b.skill || '')) return send(res, 400, { error: 'Bad skill name' });
+    await chatFor(id).send(`/${b.skill} ${b.ask || 'for this project'}`.trim());
+    logUse('skill.run', { project: id, skill: b.skill });
+    return send(res, 200, { ok: true });
+  }
+  // Chat sessions (list, start a new one, continue an earlier one) and Compact.
+  if (action === '/chat-sessions') {
+    try {
+      const chat = chatFor(id);
+      if (b.op === 'new') chat.newSession();
+      else if (b.op === 'open') chat.openSession(String(b.log || ''));
+      return send(res, 200, chat.sessions());
+    } catch (e) { return send(res, 400, { error: e.message }); }
+  }
+  if (action === '/chat-compact') {
+    try { await chatFor(id).compact(); return send(res, 200, { ok: true }); } catch (e) { return send(res, 400, { error: e.message }); }
+  }
+  if (action === '/answer') {
+    const ok = chatFor(id).answer(b.id, { allow: Boolean(b.allow), message: b.message, answers: b.answers, always: Boolean(b.always) });
+    return send(res, ok ? 200 : 409, ok ? { ok } : { error: 'Claude is no longer waiting on that.' });
+  }
+  if (action === '/stop') return send(res, 200, { ok: chatFor(id).stop() });
+  // The quick reply "Undo the change to …": Video Octopus puts the window's files back as they were before Claude's last reply.
+  if (action === '/undo-turn') {
+    try {
+      const r = undoTurn(id, String(b.offer || ''), chats.get(id));
+      logEvent(id, { t: 'note', text: r.note });
+      broadcast(id, { t: 'files' });
+      return send(res, 200, r);
+    } catch (e) { return send(res, 409, { error: e.message }); }
+  }
+  // The step rail: the steps the page has seen done (the dock's green "done" moment), and Skip on an optional step
+  // (Undo skip). A step the page sees done for the first time also gets one line in the chat log, "✓ <step> · <done
+  // line>" with Show me, so the chat keeps it after a reload (once: the next page or tab already finds it seen). Not on
+  // the first look at a project (nothing seen yet), so old steps don't fill the chat.
+  if (action === '/rail') {
+    const meta = projectMeta(dir);
+    if (!meta?.type) return send(res, 400, { error: 'Pick a project type first.' });
+    try {
+      if (b.op === 'seen') {
+        // Only steps that are done here count as seen, so a step reported early still gets its marker when it's done.
+        const st = pipelineStatus(dir, meta.type, { lines: true });
+        // Clean up's line counts what needs the creator, and work/prepare.json (written last) adds to that: while
+        // Claude is still finishing it, its marker waits for that file or the end of the turn, so the line is final.
+        const finishing = (x) => x.id === 'prepare' && chats.get(id)?.busy && mtime(join(dir, 'work/prepare.json')) < mtime(join(dir, 'work/joins.json'));
+        const ids = new Set((st?.steps || []).filter((x) => x.done && !finishing(x)).map((x) => x.id));
+        const now = [...new Set((Array.isArray(b.done) ? b.done : []).filter((x) => typeof x === 'string' && ids.has(x)))];
+        const before = railSeen(id);
+        setProjectState(id, { railSeen: now });
+        if (before) for (const s of st.steps) if (s.done && now.includes(s.id) && !before.includes(s.id)) logEvent(id, { t: 'marker', done: true, step: s.id, text: s.name, line: s.line || '', show: s.show });
+      } else if (b.op === 'skip' || b.op === 'unskip') setSkipped(dir, meta.type, String(b.step || ''), b.op === 'skip');
+      else if (b.op === 'unfinished-ok') clearUnfinished(id);
+      else if (b.op === 'tabs') {
+        // What each tab had when the creator last looked at it (web/app.js tabNews): numbers only.
+        const cur = state().projects?.[id]?.tabSeen || {}, next = { ...cur };
+        for (const k of ['scenes', 'renders', 'cut', 'post']) if (Number.isFinite(Number(b.seen?.[k]))) next[k] = Number(b.seen[k]);
+        setProjectState(id, { tabSeen: next });
+        return send(res, 200, { tabSeen: next });
+      } else throw new Error('Unknown rail action');
+      return send(res, 200, pipelineStatus(dir, meta.type, { lines: true, seen: railSeen(id) }));
+    } catch (e) { return send(res, 400, { error: e.message }); }
+  }
+  if (action === '/type') {
+    if (!formats()[formatId(b.type)]) return send(res, 400, { error: 'Unknown type' });
+    const old = projectMeta(dir);
+    saveProjectMeta(dir, { name: old?.name || id, type: b.type, layout: old?.layout ? normalize(old.layout, b.type) : defaultLayout(b.type) });
+    return send(res, 200, projectView(id, dir));
+  }
+  if (action === '/import') {
+    try {
+      if (!b.take || /[/\\]|\.\./.test(b.take)) throw new Error('Bad take');
+      const files = receiveTake(id, dir, join(settings().recordingsDir, b.take), b.target);
+      return send(res, 200, { files });
+    } catch (e) { return send(res, 400, { error: e.message }); }
+  }
+  if (action === '/proxies') { makeProxies(dir, (ev) => broadcast(id, ev)); return send(res, 200, { ok: true }); }
+  if (action === '/layout') {
+    const layout = normalize(b.layout, projectMeta(dir)?.type);
+    saveProjectMeta(dir, { layout });
+    return send(res, 200, { layout });
+  }
+  if (action === '/export') {
+    try { if (layersRunning(id) || audioRunning(id)) throw new Error('A layers or audio export is running for this project.'); return send(res, 200, startExport(id, dir, b, exportEmit(id))); }
+    catch (e) { return send(res, 400, { error: e.message }); }
+  }
+  if (action === '/export-stop') return send(res, 200, { ok: cancelExport(id) || cancelLayers(id) || cancelAudio(id) });
+  if (action === '/background') {
+    try {
+      if (b.op === 'use') return send(res, 200, { bg: useLibraryBackground(dir, b.file) });
+      if (b.op === 'save') return send(res, 200, { saved: saveToLibrary(dir, b.file) });
+      if (b.op === 'generate') {
+        if (!String(b.prompt || '').trim()) throw new Error('Describe the background first.');
+        await chatFor(id).send(generateBrief(dir, String(b.prompt)), { brief: { name: 'Generate a background' } });
+        return send(res, 200, { ok: true });
+      }
+      throw new Error('Unknown background action');
+    } catch (e) { return send(res, 400, { error: e.message }); }
+  }
+  if (action === '/autoframe') {
+    try {
+      const r = await frameCamera(id, dir, b.layer ? { file: (normalize(projectMeta(dir)?.layout).layers.find((x) => x.id === b.layer) || {}).file } : { main: true });
+      return send(res, 200, r);
+    } catch (e) { return send(res, 400, { error: e.message }); }
+  }
+  if (action === '/cut') return send(res, 200, await openCutEditor(id, dir));
+  // Rename: the name Video Octopus shows (project.json); the folder keeps its name.
+  if (action === '/archive') {
+    if (chats.get(id)?.busy) return send(res, 409, { error: 'Claude is working in this project: wait for it or stop it first.' });
+    if (exportInfo(id, dir).running || layersRunning(id) || audioRunning(id)) return send(res, 409, { error: 'An export is running for this project.' });
+    const arch = join(projectsRoot(), '_archive');
+    mkdirSync(arch, { recursive: true });
+    let to = join(arch, id);
+    for (let i = 2; existsSync(to); i++) to = join(arch, `${id}-${i}`);
+    watchers.get(id)?.close(); watchers.delete(id);
+    renameSync(dir, to);
+    return send(res, 200, { archived: to });
+  }
+  if (action === '/rename') {
+    const name = String(b.name || '').trim().slice(0, 120);
+    if (!name) return send(res, 400, { error: 'Give the project a name.' });
+    saveProjectMeta(dir, { name });
+    return send(res, 200, { id, name });
+  }
+  // The record panel's script (web/prompter.js): script.md in the project folder, read back through /files/. Empty removes it.
+  if (action === '/script') {
+    const text = String(b.text ?? '').replace(/\r\n?/g, '\n');
+    if (text.length > 400000) return send(res, 400, { error: 'That script is too long: 400,000 characters at most.' });
+    const f = join(dir, 'script.md');
+    if (text.trim()) writeFileSync(f, text.endsWith('\n') ? text : `${text}\n`); else rmSync(f, { force: true });
+    return send(res, 200, { ok: true });
+  }
+  if (action === '/notes') {
+    try {
+      // The Cut tab replaces one cut item on every save: say so in the chat only when it first appears.
+      const hadCut = b.field === 'cut' && (readJSON(join(dir, 'work/notes.json'), {})?.notes || []).some((n) => n.kind === 'change' && n.field === 'cut' && n.status === 'open');
+      const doc = notesOp(dir, b);
+      if (b.op === 'add' && b.kind !== 'change') logUse('scenes.note', { project: id });
+      if (b.op === 'add' && b.field === 'cut') cutSaved(id, trimModes());
+      if (b.op === 'approve') logUse('scenes.approved', { project: id });
+      // A change landing in the package shows as a line in the chat, so the package is never a surprise.
+      if (b.op === 'add' && b.kind === 'change' && !hadCut) {
+        const n = doc.notes.filter((x) => x.kind === 'change' && x.status === 'open').at(-1);
+        const k = doc.notes.filter((x) => x.status === 'open').length;
+        if (n) broadcast(id, { t: 'note', text: `Added to the change package (${k} waiting): ${n.text}${n.scene ? ` · scene ${n.scene}` : ''}` });
+      }
+      return send(res, 200, doc);
+    } catch (e) { return send(res, 400, { error: e.message }); }
+  }
+  if (action === '/overrides') {
+    try { return send(res, 200, setOverride(dir, b)); } catch (e) { return send(res, 400, { error: e.message }); }
+  }
+  // "Apply my notes": the open notes (and new moves) go to the project's Claude as one message.
+  // The Cut Editor just saved: bring the package's cut item up to date now (the file watcher would, a moment later).
+  if (action === '/cut-sync') {
+    try {
+      // The edit itself (the cut as the editor opened it, and now): a direct edit decides the parts it touches.
+      if (Array.isArray(b.base) && Array.isArray(b.segments)) markEdits(dir, b.base, b.segments);
+      const r = syncCutItem(dir);
+      cutSaved(id, trimModes());
+      if (r?.created) broadcast(id, { t: 'note', text: `Added to the change package: ${r.item.text}` });
+      return send(res, 200, notesOp(dir, { op: 'list' }));
+    } catch (e) { return send(res, 400, { error: e.message }); }
+  }
+  // A cut pulled in Scenes (One scene's cut lines, Whole video's trim lens): the one cut, saved like the Cut Editor does.
+  if (action === '/cut-save') {
+    try {
+      const before = lockedCut(dir)?.segments || null;
+      const r = saveCut(dir, b.segments, b.version);
+      if (!r.conflict && before) markEdits(dir, before, b.segments);
+      if (r.conflict) return send(res, 409, { ok: false, conflict: true, error: 'The cut changed in the Cut tab (or Claude changed it) after Scenes read it.' });
+      if (r.created) broadcast(id, { t: 'note', text: `Added to the change package: ${r.item.text}` });
+      return send(res, 200, { ok: true, version: r.version, ...notesOp(dir, { op: 'list' }) });
+    } catch (e) { return send(res, 400, { error: e.message }); }
+  }
+  if (action === '/apply-notes') {
+    try {
+      // first: a scene to show as a short preview before the full render ("Show me scene N first").
+      const first = b.first != null ? String(b.first) : null;
+      // preview: what Claude would get, without sending (the package view shows it).
+      if (b.preview) return send(res, 200, { ok: true, ...applyBrief(dir, { preview: true, first }) });
+      // A cut change in the package: Video Octopus re-times the sheet, keyframes and notes to the new cut first.
+      syncCutItem(dir); syncDocItems(dir);
+      const retimed = retimeOnSave(dir);
+      if (retimed) { broadcast(id, { t: 'note', text: `Re-timed to the new cut: ${retimed.files.join('; ')}` }); logUse('retime.done', { project: id, files: retimed.files.length }); }
+      const brief = applyBrief(dir, { first });
+      markPackageBase(dir); // the blocks and canvas look as Claude now has them
+      await chatFor(id).send(brief.text, { brief: { name: 'Save changes → Claude' } });
+      logUse('package.sent', { project: id, items: (brief.notes || 0) + (brief.changes || 0) + (brief.moves || 0) });
+      broadcast(id, { t: 'files' });
+      return send(res, 200, { ok: true, notes: brief.notes, changes: brief.changes, moves: brief.moves });
+    } catch (e) { return send(res, 400, { error: e.message }); }
+  }
+  // The scene timeline's "Update the scene kit": the project's copy of core/kit/octopus-scene.js, for keys and markers.
+  if (action === '/kit-update') {
+    try { const r = updateKit(dir); broadcast(id, { t: 'files' }); return send(res, 200, r); } catch (e) { return send(res, 400, { error: e.message }); }
+  }
+  if (action === '/kit') {
+    try { await chatFor(id).send(kitBrief(dir), { brief: { name: 'Set up the scene kit' } }); return send(res, 200, { ok: true }); }
+    catch (e) { return send(res, 400, { error: e.message }); }
+  }
+  // Renders tab: mark one render as the final version (or unmark it).
+  if (action === '/final') {
+    const f = b.file == null ? null : String(b.file);
+    if (f && !(/^renders\/[^/\\]+\.(mp4|mov|m4v)$/i.test(f) && existsSync(join(dir, f)))) return send(res, 400, { error: 'That render is gone.' });
+    saveProjectMeta(dir, { finalRender: f || undefined });
+    if (f) appendWorklog(dir, `Marked ${f} as the final render`);
+    return send(res, 200, { finalRender: f });
+  }
+  if (action === '/reveal') { const f = inside(dir, String(b.file || 'WORKLOG.md')); if (!f) return send(res, 400, { error: 'Bad file' }); reveal(f); return send(res, 200, { ok: true }); }
+  return send(res, 404, { error: 'Unknown action' });
+}
+
+const server = createServer((req, res) => {
+  route(req, res).catch((e) => { console.error(e); try { send(res, 500, { error: e.message }); } catch {} });
+});
+server.listen(PORT, '127.0.0.1', () => {
+  console.log(`Video Octopus is running: http://127.0.0.1:${PORT}`);
+  // Where this Video Octopus answers, for bin/octopus.mjs (the command the Video Octopus assistant uses to act on the app) and for
+  // every chat Video Octopus starts (they inherit STUDIO_URL).
+  process.env.STUDIO_URL = `http://127.0.0.1:${PORT}`;
+  try { writeJSON(join(LOCAL_DIR, 'server.json'), { url: process.env.STUDIO_URL, port: PORT, pid: process.pid, at: Date.now() }); } catch {}
+  console.log(`Your studio folder: ${settings().studio || '(not set yet)'}  ·  projects in ${projectsRoot()}`);
+  // The usage log's history, once, from the files already there (the Dashboard isn't empty on day one).
+  setTimeout(() => { try { if (settings().studio) backfill(); } catch (e) { console.error('usage backfill:', e.message); } }, 1500);
+  // Scheduled runs (server/schedules.mjs): catch up on any missed while Video Octopus was closed, then a timer.
+  if (process.env.STUDIO_NO_SCHEDULES !== '1') setTimeout(() => { try { startScheduler(); } catch (e) { console.error('schedules:', e.message); } }, 3000);
+  // A quiet look for a new version on GitHub, at most once a day (Settings → Updates; off there).
+  startUpdateChecks();
+});
+// Stop everything Video Octopus started. Restart exits with RESTART_CODE, and start.sh / start.cmd start the server again.
+const shutdown = (code) => { for (const c of chats.values()) c.kill(); killAssistant(); stopScheduler(); closeAll(); stopAllExports(); stopAllLayers(); stopAllAudio(); process.exit(Number.isInteger(code) ? code : 0); };
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);

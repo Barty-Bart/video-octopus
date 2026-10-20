@@ -1,0 +1,595 @@
+// The studio folder: projects, recorder takes, imports, proxies, pipeline status, skills.
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync, copyFileSync, cpSync, renameSync, rmSync, createWriteStream, constants, openSync, readSync, closeSync } from 'node:fs';
+import { pipeline } from 'node:stream/promises';
+import { join, basename, extname } from 'node:path';
+import { spawn, execFileSync } from 'node:child_process';
+import { settings, readJSON, writeJSON, globExists, mtime, slugify, studioTool, APP_DIR, h264 } from './util.mjs';
+import { defaultLayout, cutMap } from '../web/layout.js';
+import { motionNote } from './skills-gh.mjs';
+import { needsYou, lockState } from './cutreview.mjs';
+import { builtEnd, isBuilt } from './built.mjs'; // (functions only: built.mjs imports this module too)
+
+const VIDEO = /\.(mov|mp4|m4v|mkv|webm)$/i;
+// Sound-only files: they need no playback copy (the browser plays them) and have no picture. Only the recorder's
+// mic-only takes (<stamp>_audio.wav, 24-bit PCM) are take files; other sound files in source/ (voice drafts, a
+// separate recorder's track, a dropped voiceover) stay out of roles(), but a block can still use them.
+export const AUDIO = /\.(wav|m4a|mp3|aif|aiff|caf|flac)$/i;
+export const MEDIA = /\.(mov|mp4|m4v|mkv|webm|wav|m4a|mp3|aif|aiff|caf|flac)$/i;
+export const isAudio = (f) => AUDIO.test(f || '');
+const TAKE_AUDIO = /_audio\.(wav|m4a|mp3|aif|aiff|caf|flac)$/i;
+export const isTakeFile = (f) => VIDEO.test(f || '') || TAKE_AUDIO.test(f || '');
+// The formats: the app's generic ones (core/pipelines.json) with the studio's own on top (<studio>/.studio/formats.json),
+// so creator-specific formats and Short styles live in the studio, not in the app.
+export const STUDIO_FORMATS = join('.studio', 'formats.json');
+const PIPELINES = () => {
+  const core = readJSON(join(APP_DIR, 'core', 'pipelines.json'));
+  const studio = settings().studio;
+  return studio ? mergeFormats(core, readJSON(join(studio, STUDIO_FORMATS), null)) : core;
+};
+
+// Merge a studio's formats.json over the core: a format by id (an old alias counts), its plain fields replaced,
+// `styles` added or replaced by id, `blocks` / `steps` / `more` replaced when given. `defaultStyle` puts that style
+// first (new projects and projects without a style start with the first one). A new format needs a label and steps.
+// `shared` steps and `blockTypes` are merged by key, so a studio's own steps can be named in its formats.
+export function mergeFormats(core, over) {
+  if (!over || typeof over !== 'object' || !over.formats || typeof over.formats !== 'object') return core;
+  const out = { ...core, shared: { ...core.shared, ...(over.shared || {}) }, blockTypes: { ...core.blockTypes, ...(over.blockTypes || {}) }, formats: { ...core.formats } };
+  for (const [rawId, f] of Object.entries(over.formats)) {
+    if (!f || typeof f !== 'object' || rawId.startsWith('_')) continue;
+    const id = core.aliases?.[rawId] || rawId;
+    const base = core.formats[id];
+    if (!base && !(f.label && Array.isArray(f.steps))) continue;
+    const { styles, defaultStyle, ...rest } = f;
+    const next = { ...(base || {}), ...rest };
+    let list = [...(base?.styles || [])];
+    for (const st of Array.isArray(styles) ? styles : []) {
+      if (!st?.id) continue;
+      const i = list.findIndex((x) => x.id === st.id);
+      if (i >= 0) list[i] = { ...list[i], ...st }; else list.push(st);
+    }
+    const first = defaultStyle || base?.defaultStyle;
+    if (first && list.some((x) => x.id === first)) list = [list.find((x) => x.id === first), ...list.filter((x) => x.id !== first)];
+    if (list.length) next.styles = list;
+    out.formats[id] = next;
+  }
+  return out;
+}
+// Old format ids stay readable: a project.json with "long" or "reel" is a tutorial or a Short (the file isn't rewritten).
+export const formatId = (type) => (type && PIPELINES().aliases?.[type]) || type || null;
+
+export const projectsRoot = () => join(settings().studio, settings().projectsDir);
+
+export function projectDir(id) {
+  if (!id || /[\\/]/.test(id) || id.includes('..') || id.startsWith('.')) return null;
+  const dir = join(projectsRoot(), id);
+  return existsSync(dir) && statSync(dir).isDirectory() ? dir : null;
+}
+
+export const projectMeta = (dir) => readJSON(join(dir, 'project.json'), null);
+export const saveProjectMeta = (dir, patch) => writeJSON(join(dir, 'project.json'), { ...(projectMeta(dir) || {}), ...patch });
+
+export function sources(dir) {
+  try {
+    return readdirSync(join(dir, 'source')).filter((f) => isTakeFile(f) && !f.startsWith('.')).sort();
+  } catch { return []; }
+}
+
+// Every video and sound file in source/ (takes, dropped files, voiceovers), for picking a block's file.
+export function projectMedia(dir) {
+  try {
+    return readdirSync(join(dir, 'source')).filter((f) => MEDIA.test(f) && !f.startsWith('.')).sort();
+  } catch { return []; }
+}
+
+// Which source plays which role: the screen recording and the camera. With several takes in a
+// project, the newest imported take (project.json activeTake) is the one on the canvas.
+// A take can be screen + camera, camera only (just _webcam), or mic only (just _audio.wav):
+// audio is that sound file, and it is the main file only when the take has no video at all.
+export function roles(dir) {
+  const files = sources(dir);
+  const active = projectMeta(dir)?.activeTake;
+  const pool = active && files.some((f) => f.startsWith(active)) ? files.filter((f) => f.startsWith(active)) : files;
+  const screen = pool.find((f) => /_screen\./i.test(f)) || null;
+  const webcam = pool.find((f) => /_webcam\./i.test(f)) || null;
+  const audio = pool.find((f) => TAKE_AUDIO.test(f)) || null;
+  const main = webcam || screen || pool.find((f) => !isAudio(f)) || audio || null;
+  return { files, take: pool, screen, webcam, audio, main, audioOnly: Boolean(main && isAudio(main)) };
+}
+
+// Size, frame rate, length and audio of a source file (ffprobe, cached until the file changes).
+const probes = new Map();
+export const probe = (dir, f) => probeFile(join(dir, 'source', f));
+// An MP4 / MOV still being written (Claude's ffmpeg, an export, a take being saved) has no index ("moov") yet: it isn't
+// probed until it has one, so its length is unknown for now (null, not cached) and the next look tries again. ffprobe's
+// own complaints never reach the log.
+export function mp4Whole(p) {
+  if (!/\.(mp4|mov|m4v|m4a)$/i.test(p)) return true;
+  let fd = null;
+  try {
+    const size = statSync(p).size, b = Buffer.alloc(16);
+    fd = openSync(p, 'r');
+    for (let off = 0, i = 0; i < 64 && off + 8 <= size; i++) {
+      if (readSync(fd, b, 0, 16, off) < 8) return false;
+      const type = b.toString('latin1', 4, 8);
+      if (type === 'moov') return true;
+      let n = b.readUInt32BE(0);
+      if (n === 1) n = Number(b.readBigUInt64BE(8));
+      if (n < 8) return false; // 0: the box runs to the end of the file (ffmpeg's mdat while it writes)
+      off += n;
+    }
+    return false;
+  } catch { return false; } finally { if (fd != null) try { closeSync(fd); } catch {} }
+}
+// The same for any file (renders use it too).
+export function probeFile(p) {
+  const key = `${p}:${mtime(p)}`;
+  if (probes.has(key)) return probes.get(key);
+  if (!mp4Whole(p)) return null;
+  try {
+    const out = JSON.parse(String(execFileSync(studioTool('ffprobe'), ['-v', 'error', '-show_entries',
+      'stream=codec_type,codec_name,width,height,avg_frame_rate:format=duration', '-of', 'json', p], { timeout: 8000, stdio: ['ignore', 'pipe', 'pipe'] })));
+    const v = out.streams.find((s) => s.codec_type === 'video');
+    const [n, d] = String(v?.avg_frame_rate || '0/1').split('/').map(Number);
+    const info = { w: v?.width || 0, h: v?.height || 0, fps: d ? n / d : 0, duration: Number(out.format?.duration) || 0,
+      audio: out.streams.some((s) => s.codec_type === 'audio'), codec: v?.codec_name || null };
+    probes.set(key, info);
+    return info;
+  } catch { return null; }
+}
+
+// The locked cut, if any: the newest of the Cut Editor save and the join-check fix (segments in source seconds).
+// A cut saved before the canvas take was replaced belongs to the old take, so it doesn't count.
+export function lockedCut(dir) {
+  const since = projectMeta(dir)?.activeSince || 0;
+  const files = ['work/edl_manual.json', 'work/edl_fixed.json'].filter((f) => existsSync(join(dir, f)) && mtime(join(dir, f)) > since)
+    .sort((a, b) => mtime(join(dir, b)) - mtime(join(dir, a)));
+  for (const f of files) {
+    const segs = readJSON(join(dir, f), {})?.segments_sec;
+    if (Array.isArray(segs) && segs.length) return { file: f, segments: segs };
+  }
+  return null;
+}
+
+export const proxyName = (file) => `work/proxy_${basename(file, extname(file))}.mp4`;
+
+export function listProjects() {
+  const root = projectsRoot();
+  let names = [];
+  try { names = readdirSync(root); } catch { return []; }
+  return names
+    .filter((n) => !n.startsWith('.') && !n.startsWith('_'))
+    .map((n) => join(root, n))
+    .filter((d) => statSync(d).isDirectory())
+    .map((dir) => {
+      const meta = projectMeta(dir);
+      const id = basename(dir);
+      const status = meta ? pipelineStatus(dir, meta.type) : null;
+      const next = status?.steps.find((s) => s.id === status.next);
+      return {
+        id,
+        name: meta?.name || id,
+        type: formatId(meta?.type),
+        updated: Math.max(mtime(dir), mtime(join(dir, 'work')), mtime(join(dir, 'WORKLOG.md'))),
+        next: next ? next.name : null,
+        // one entry per step for the progress bar on Home: 1 done, 2 next, 0 still to do
+        progress: status ? status.steps.map((s) => (s.done ? 1 : s.id === status.next ? 2 : 0)) : null,
+        steps: status ? status.steps.map((s) => s.name) : null,
+        // notes and changes waiting in the change package (Home's "waiting for you")
+        waiting: (readJSON(join(dir, 'work', 'notes.json'), null)?.notes || []).filter((n) => n?.status === 'open').length,
+        app: Boolean(meta),
+      };
+    })
+    .sort((a, b) => (b.app - a.app) || (b.updated - a.updated));
+}
+
+export function createProject(name, type, style) {
+  const formats = PIPELINES().formats;
+  type = formatId(type);
+  if (!formats[type]) throw new Error('Unknown project type');
+  const styles = formats[type].styles || [];
+  style = styles.some((x) => x.id === style) ? style : styles[0]?.id;
+  const root = projectsRoot();
+  mkdirSync(root, { recursive: true });
+  let id = slugify(name);
+  for (let i = 2; existsSync(join(root, id)); i++) id = `${slugify(name)}-${i}`;
+  const dir = join(root, id);
+  for (const sub of ['source', 'work', 'renders']) mkdirSync(join(dir, sub), { recursive: true });
+  const today = new Date().toISOString().slice(0, 10);
+  writeFileSync(join(dir, 'WORKLOG.md'),
+    `# ${name}\n\nType: ${formats[type].label}${style ? ` (${styles.find((x) => x.id === style).label})` : ''}\nStarted: ${today} (Video Octopus app)\n\n## Log\n`);
+  saveProjectMeta(dir, { name, type, ...(style ? { shortStyle: style } : {}), created: today, takes: [], layout: defaultLayout(type) });
+  return id;
+}
+
+// Takes from the recorder: one folder per take with <stamp>_screen.mp4 / _webcam.mp4 (.mov in older takes; or only
+// the _webcam file, or only _audio.wav for a mic-only take).
+export function listTakes() {
+  const root = settings().recordingsDir;
+  let names = [];
+  try { names = readdirSync(root); } catch { return []; }
+  // Takes already copied into a project (project.json "takes"): Home only offers the unused ones. by: take -> the
+  // names of the projects that use it (the New project dialog's full list says so).
+  const used = new Set(), by = new Map();
+  try {
+    for (const n of readdirSync(projectsRoot())) {
+      if (n.startsWith('.') || n.startsWith('_')) continue;
+      const m = projectMeta(join(projectsRoot(), n));
+      for (const t of m?.takes || []) { used.add(t); by.set(t, [...(by.get(t) || []), m.name || n]); }
+    }
+  } catch {}
+  return names
+    .map((n) => join(root, n))
+    .filter((d) => { try { return statSync(d).isDirectory(); } catch { return false; } })
+    .map((d) => {
+      const files = readdirSync(d).filter((f) => isTakeFile(f) && !f.startsWith('.'));
+      const bytes = files.reduce((t, f) => t + statSync(join(d, f)).size, 0);
+      // transcribed: "Transcribe new recordings" wrote its words into the take's own tr/ folder (schedules.mjs)
+      return { id: basename(d), files, bytes, at: mtime(d), used: used.has(basename(d)), projects: by.get(basename(d)) || [], transcribed: existsSync(join(d, 'tr', 'words.json')) };
+    })
+    .filter((t) => t.files.length)
+    .sort((a, b) => b.at - a.at);
+}
+
+// How long a take is: its main file (the camera, else the screen, else the sound), probed once until it changes.
+export function takeDuration(t) {
+  const f = takeMain(t.files);
+  return f ? probeFile(join(settings().recordingsDir, t.id, f))?.duration || null : null;
+}
+
+// The file of a take to transcribe, as roles() picks the main one: the camera (it carries the mic), else the screen,
+// else any video, else the mic-only sound.
+export const takeMain = (files = []) => files.find((f) => /_webcam\./i.test(f)) || files.find((f) => /_screen\./i.test(f)) || files.find((f) => VIDEO.test(f)) || files.find((f) => TAKE_AUDIO.test(f)) || null;
+
+// Copy a take into the project. On APFS this is a clone: instant, no extra disk space.
+export function importTake(dir, takeId) {
+  if (!takeId || /[\\/]/.test(takeId) || takeId.includes('..')) throw new Error('Bad take');
+  return importTakeFrom(dir, join(settings().recordingsDir, takeId));
+}
+
+// The same for a take folder anywhere (a take the recorder just saved). The take becomes the active one,
+// unless it's added as a layer (keepActive), which leaves the canvas take as it is.
+export function importTakeFrom(dir, takeDir, how = 'Imported', { keepActive = false } = {}) {
+  const takeId = basename(takeDir);
+  const files = readdirSync(takeDir).filter((f) => isTakeFile(f) && !f.startsWith('.'));
+  if (!files.length) throw new Error('That take has no video or sound files.');
+  mkdirSync(join(dir, 'source'), { recursive: true });
+  for (const f of files) {
+    const to = join(dir, 'source', f);
+    if (!existsSync(to)) copyFileSync(join(takeDir, f), to, constants.COPYFILE_FICLONE);
+  }
+  const meta = projectMeta(dir) || {};
+  const active = keepActive && meta.activeTake ? meta.activeTake : keepActive ? (meta.takes || [])[0] || takeId : takeId;
+  // activeSince: cuts saved before this moment belong to an earlier take (see lockedCut).
+  const since = active !== meta.activeTake && (meta.activeTake || (meta.takes || []).length) ? { activeSince: Date.now() } : {};
+  saveProjectMeta(dir, { takes: [...new Set([...(meta.takes || []), takeId])], activeTake: active, ...since });
+  appendWorklog(dir, `${how} take ${takeId}${keepActive ? ' as a new layer' : ''}: ${files.join(', ')}`);
+  // A take transcribed before it was in a project (its tr/ folder, from "Transcribe new recordings") brings its
+  // transcript when it becomes the canvas take of a project that has none: the Transcribe step is done already.
+  if (active === takeId && existsSync(join(takeDir, 'tr', 'words.json')) && !['work/tr/words.json', 'work/words.json'].some((f) => existsSync(join(dir, f)))) {
+    try { cpSync(join(takeDir, 'tr'), join(dir, 'work', 'tr'), { recursive: true }); appendWorklog(dir, `Transcript of take ${takeId} (made before it was in a project) copied into work/tr/`); } catch {}
+  }
+  return files;
+}
+
+// New project → "Import a file…": a video or sound file from this computer becomes the project's take. It streams
+// into source/ (a sound file is named <name>_audio.<ext>, like a mic-only take) and becomes the canvas take.
+export async function importUpload(dir, req, name) {
+  const ext = extname(String(name || '')).toLowerCase();
+  if (!MEDIA.test(ext)) throw new Error('Pick a video (.mov, .mp4, .m4v, .mkv, .webm) or a sound file (.wav, .m4a, .mp3, .aif, .flac).');
+  const stem = basename(String(name), extname(String(name))).replace(/[^\w.() -]/g, '_').replace(/^[.\s]+/, '').slice(0, 80) || 'take';
+  let take = stem;
+  for (let i = 2; sources(dir).some((f) => f.startsWith(take)); i++) take = `${stem} (${i})`;
+  const file = isAudio(ext) ? `${take}_audio${ext}` : `${take}${ext}`;
+  mkdirSync(join(dir, 'source'), { recursive: true });
+  const part = join(dir, 'source', `.${file}.part`);
+  try { await pipeline(req, createWriteStream(part)); } catch (e) { rmSync(part, { force: true }); throw e; }
+  if (!statSync(part).size) { rmSync(part, { force: true }); throw new Error('The file was empty.'); }
+  renameSync(part, join(dir, 'source', file));
+  const meta = projectMeta(dir) || {};
+  saveProjectMeta(dir, { activeTake: take, ...(meta.activeTake ? { activeSince: Date.now() } : {}) });
+  appendWorklog(dir, `Imported ${name} as the take: source/${file}`);
+  return [file];
+}
+
+export function appendWorklog(dir, line) {
+  const p = join(dir, 'WORKLOG.md');
+  const today = new Date().toISOString().slice(0, 10);
+  const text = existsSync(p) ? readFileSync(p, 'utf8') : '# Worklog\n';
+  writeFileSync(p, text.replace(/\n*$/, '\n') + `- ${today}: ${line}\n`);
+}
+
+// 720p H.264 + AAC proxies so the browser can play takes (the recorder writes PCM audio).
+// Sound files (a mic-only take) play as they are: no copy, the timeline reads their waveform directly.
+const running = new Map();
+export function makeProxies(dir, onEvent) {
+  // A project folder made by hand (or by Claude) may have no work/ yet: ffmpeg can't write the copy there otherwise.
+  try { mkdirSync(join(dir, 'work'), { recursive: true }); } catch {}
+  for (const f of sources(dir).filter((x) => !isAudio(x))) {
+    const out = join(dir, proxyName(f));
+    const key = out;
+    if (existsSync(out) || running.has(key)) continue;
+    const args = ['-y', '-v', 'error', '-progress', 'pipe:1', '-i', join(dir, 'source', f),
+      '-vf', 'scale=-2:720', ...h264('4M'),
+      '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', out + '.part.mp4'];
+    const ff = spawn(studioTool('ffmpeg'), args);
+    running.set(key, ff);
+    const total = duration(dir, f);
+    onEvent({ t: 'job', id: f, label: `Preparing ${f} for playback`, progress: 0 });
+    ff.stdout.on('data', (d) => {
+      const m = /out_time_ms=(\d+)/.exec(String(d));
+      if (m && total) onEvent({ t: 'job', id: f, label: `Preparing ${f} for playback`, progress: Math.min(1, m[1] / 1e6 / total) });
+    });
+    ff.on('exit', (code) => {
+      running.delete(key);
+      if (code === 0) {
+        try { renameSync(out + '.part.mp4', out); } catch {}
+      }
+      onEvent({ t: 'job', id: f, label: code === 0 ? `${f} ready` : `Couldn't prepare ${f} (ffmpeg ${code})`, progress: 1, done: true, ok: code === 0 });
+      onEvent({ t: 'files' });
+    });
+  }
+}
+
+const durations = new Map();
+function duration(dir, f) {
+  const p = join(dir, 'source', f);
+  if (durations.has(p)) return durations.get(p);
+  try {
+    const out = execFileSync(studioTool('ffprobe'), ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', p], { timeout: 5000 });
+    const d = parseFloat(String(out)) || 0;
+    durations.set(p, d);
+    return d;
+  } catch { return 0; }
+}
+
+// ---- pipeline ----
+// The five stages a video goes through, always the same (core/pipelines.json "stages": name, title, what for the
+// first-time help). Every step names one (`stage`); a studio's own step without one joins the stage before it.
+export const STAGE_NAMES = ['Record', 'Cut', 'Plan', 'Build', 'Polish'];
+const TABS = new Set(['canvas', 'scenes', 'cut', 'renders', 'post']);
+const two = (t) => { t = Math.max(0, Math.round(t || 0)); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; };
+const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+// "your intro, main body, sponsor read and outro": a format's block names, for a step's {blocks}.
+const blockList = (fmt) => {
+  const names = (fmt.blocks || []).map((b) => (/^[A-Z]{2,}$/.test(b.label) ? b.label : String(b.label || '').toLowerCase())).filter(Boolean);
+  if (!names.length) return 'each part';
+  return `your ${names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names[0]}`;
+};
+
+// opts.lines: each done step's line from its files (the dock's done moment and chat marker, the stage list); opts.seen: the steps done when
+// the page last looked (local state, index.mjs), so `finished` is the newest step that finished since then.
+export function pipelineStatus(dir, type, opts = {}) {
+  const p = PIPELINES();
+  const fmt = p.formats[formatId(type)];
+  if (!fmt) return null;
+  const worklog = (() => { try { return readFileSync(join(dir, 'WORKLOG.md'), 'utf8'); } catch { return ''; } })();
+  const skippedIds = new Set((projectMeta(dir)?.skipped || []).filter((x) => typeof x === 'string'));
+  let prevStage = null;
+  const stepOf = (s) => {
+    const step = typeof s === 'string' ? { id: s, ...p.shared[s] } : s;
+    const d = step.done || {};
+    let done = (d.files || []).some((f) => globExists(dir, f)) || (d.worklog ? worklog.includes(d.worklog) : false)
+      || (Array.isArray(d.json) ? Boolean(readJSON(join(dir, d.json[0]), null)?.[d.json[1]]) : false)
+      || (typeof d.kept === 'string' ? keptItems(dir, d.kept).kept > 0 : false);
+    // The cut changed after it was locked (a word deleted since): the lock no longer holds, and the step waits to run
+    // again (Claude checks the new joins). changed says why, for the Cut tab, the canvas and Export's words.
+    const changed = done && step.id === 'lock' && lockState(dir).changed;
+    if (changed) done = false;
+    const optional = Boolean(step.optional), kind = step.kind || 'claude';
+    // The words the creator reads. A step without them (a studio's own) shows its label and a plain line.
+    const stage = STAGE_NAMES.includes(step.stage) ? step.stage : prevStage || (step.action === 'import' ? 'Record' : 'Build');
+    prevStage = stage;
+    const show = step.show && TABS.has(step.show.tab) ? { tab: step.show.tab, target: String(step.show.target || step.show.tab) } : null;
+    const what = step.what || (kind === 'app' ? 'Opens a part of Video Octopus for you to do this step.' : step.skill ? `Claude runs the ${step.skill} skill for this project.` : 'Claude does this step in the chat.');
+    return { id: step.id, label: step.label, name: step.name || step.label || step.id, stage,
+             what: String(what).replaceAll('{blocks}', blockList(fmt)), where: step.where || (kind === 'app' ? '' : 'what changed, in Claude’s reply'), show,
+             kind, action: step.action || null,
+             skill: step.skill || null, ask: step.ask || '', brief: step.brief || null, motion: step.motion || null, optional, done, ...(changed ? { changed: true } : {}),
+             skipped: optional && !done && skippedIds.has(step.id),
+             subs: step.subs ? step.subs.map((x) => ({ id: x.id, label: x.label, done: x.files.some((f) => globExists(dir, f)) })) : null,
+             ...(opts.lines && done ? { line: doneLine(dir, step, worklog) } : {}) };
+  };
+  const steps = fmt.steps.map(stepOf);
+  const next = steps.find((s) => !s.done && !s.optional)?.id || null;
+  // The step the dock and the lit stage show: the next one that must be done, else an optional one that isn't
+  // done or skipped (Add zooms at the end of a tutorial), else none (every step done).
+  const current = next || steps.find((s) => !s.done && !s.skipped)?.id || null;
+  const cur = steps.find((s) => s.id === current);
+  const words = new Map((Array.isArray(p.stages) ? p.stages : []).map((x) => [x.name, x]));
+  const stages = STAGE_NAMES.map((name) => {
+    const ss = steps.filter((s) => s.stage === name);
+    return { name, title: words.get(name)?.title || '', what: words.get(name)?.what || '', steps: ss.map((s) => s.id),
+      done: ss.length > 0 && ss.every((s) => s.done || s.optional), current: cur?.stage === name };
+  });
+  // Single steps that stay reachable from the rail's ⋯ menu (Clean up runs them in one go).
+  prevStage = 'Cut';
+  const more = (fmt.more || []).map(stepOf);
+  const out = { format: fmt.label, steps, next, current, stages, skipped: steps.filter((s) => s.skipped).map((s) => s.id), learn: p.learn, more };
+  if (Array.isArray(opts.seen)) {
+    out.seen = opts.seen;
+    const fin = steps.filter((s) => s.done && !opts.seen.includes(s.id)).at(-1);
+    out.finished = fin ? { id: fin.id, name: fin.name, line: fin.line || '', show: fin.show } : null;
+  }
+  return out;
+}
+
+// ---- what a finished step made, in one line, from its files (the dock, the chat's done marker, the stage list) ----
+// The newest file a pattern matches ("renders/*intro*.mp4"), relative to the project.
+function newestMatch(dir, pattern) {
+  if (!pattern.includes('*')) return existsSync(join(dir, pattern)) ? pattern : null;
+  const sub = pattern.split('/').slice(0, -1).join('/');
+  const re = new RegExp('^' + pattern.split('/').pop().split('*').map((x) => x.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$', 'i');
+  let best = null, at = -1;
+  try { for (const f of readdirSync(join(dir, sub))) if (re.test(f) && !f.startsWith('.')) { const m = mtime(join(dir, sub, f)); if (m > at) { at = m; best = sub ? `${sub}/${f}` : f; } } } catch {}
+  return best;
+}
+export const cutCount = (dir) => {
+  const p = readJSON(join(dir, 'work/prepare.json'), null), map = readJSON(join(dir, 'work/rough_map.json'), null);
+  return Number.isFinite(Number(p?.cuts)) ? Number(p.cuts) : Array.isArray(map?.applied) ? map.applied.length : Math.max(0, (map?.segments?.length || 1) - 1);
+};
+// Joins checked, and what still needs the creator (cutreview.mjs needsYou: the same count as the dock, the Cut chip,
+// the Cut inspector and the Keep / Cut list).
+const joinCounts = (dir) => {
+  const p = readJSON(join(dir, 'work/prepare.json'), null), j = readJSON(join(dir, 'work/joins.json'), null);
+  const joins = Number.isFinite(Number(p?.joins)) ? Number(p.joins) : Number(j?.summary?.joins) || (Array.isArray(j?.joins) ? j.joins.length : 0);
+  return { joins, look: needsYou(dir) };
+};
+const lookText = (n) => (n ? `${n} to check` : 'nothing to check');
+// Edits in the Cut tab's save against the cut it started from: each place where the kept parts differ (a word
+// deleted, an edge trimmed, a cut brought back) is one edit, however many edges it moved.
+function cutEdits(dir) {
+  const segs = (f) => readJSON(join(dir, f), null)?.segments_sec;
+  const mine = segs('work/edl_manual.json');
+  if (!Array.isArray(mine)) return null;
+  // The cut the creator's editing started from: kept by Video Octopus at the first Cut tab save (cutreview.mjs markEdits),
+  // else join-check's fixed cut (unless the Lock remade it from the creator's own save), else the rough cut.
+  const fixed = readJSON(join(dir, 'work/edl_fixed.json'), null);
+  const base = readJSON(join(dir, 'work/cut_review.json'), null)?.editBase?.segments
+    || (fixed?.segments_sec && !/edl_manual/.test(String(fixed.from || '')) ? fixed.segments_sec : null)
+    || (readJSON(join(dir, 'work/rough_map.json'), null)?.segments || []).map((s) => s.src).filter(Array.isArray);
+  if (!base?.length) return { parts: mine.length, edits: null };
+  return { parts: mine.length, edits: cutChanges(base, mine).length };
+}
+// The places where two cuts differ (take seconds; under 20 ms doesn't count), merged when they touch.
+export function cutChanges(A, B) {
+  const num = (L) => L.map((s) => [Number(s[0]), Number(s[1])]).filter(([a, b]) => Number.isFinite(a) && Number.isFinite(b) && b > a);
+  const minus = (X, Y) => X.flatMap(([a, b]) => Y.reduce((parts, [c, d]) => parts.flatMap(([x, y]) => (d <= x || c >= y ? [[x, y]] : [[x, Math.min(y, c)], [Math.max(x, d), y]].filter(([p, q]) => q - p > 1e-6))), [[a, b]]));
+  const a = num(A), b = num(B);
+  const diff = [...minus(a, b), ...minus(b, a)].sort((x, y) => x[0] - y[0]), out = [];
+  for (const r of diff) { const l = out.at(-1); if (l && r[0] <= l[1] + 1e-3) l[1] = Math.max(l[1], r[1]); else out.push([...r]); }
+  return out.filter(([x, y]) => y - x >= 0.02);
+}
+// The items of a zooms (or shots) file: how many are kept and how many wait as Claude's proposals (a v1 zooms file's
+// punch-ins count as kept).
+function keptItems(dir, rel) {
+  const f = readJSON(join(dir, rel), null);
+  const list = Array.isArray(f?.items) ? f.items : Array.isArray(f?.zooms) ? f.zooms : Array.isArray(f?.shots) ? f.shots : [];
+  const proposed = list.filter((x) => x && x.status === 'proposed').length;
+  return { kept: list.filter((x) => x && typeof x === 'object').length - proposed, proposed };
+}
+const RENDERED = { intro: 'Intro', 'edit-short': 'Short', 'edit-explainer': 'Explainer' };
+const DONE_LINES = {
+  import: (dir) => { const r = roles(dir); const d = r.main ? probe(dir, r.main)?.duration : 0; return d ? `Take added: ${two(d)}` : 'Take added'; },
+  prepare: (dir) => { const { joins, look } = joinCounts(dir); return `${plural(cutCount(dir), 'cut')} made, ${plural(joins, 'join')} checked, ${lookText(look)}`; },
+  transcribe: (dir) => { const w = readJSON(join(dir, existsSync(join(dir, 'work/tr/words.json')) ? 'work/tr/words.json' : 'work/words.json'), []); return Array.isArray(w) && w.length ? `${plural(w.length, 'word')} transcribed` : 'Transcript written'; },
+  'rough-cut': (dir) => `${plural(cutCount(dir), 'cut')} made`,
+  'join-check': (dir) => { const { joins, look } = joinCounts(dir); return `${plural(joins, 'join')} checked, ${lookText(look)}`; },
+  sections: (dir) => {
+    const list = (readJSON(join(dir, 'work/blocks.json'), null)?.blocks || []).filter((b) => b && Array.isArray(b.source?.take));
+    if (!list.length) return 'Sections marked';
+    // On the video as it plays (the cut's clock), like every time the creator reads.
+    const at = (t) => two(cutMap(lockedCut(dir)?.segments).toCut(t));
+    if (list.length === 1) return `1 section added: ${list[0].label}, ${at(list[0].source.take[0])}–${at(list[0].source.take[1])}`;
+    const names = list.map((b) => b.label);
+    return `${list.length} sections added: ${names.length > 4 ? `${names.slice(0, 4).join(', ')}…` : names.join(', ')}`;
+  },
+  'cut-editor': (dir) => { const c = cutEdits(dir); return !c ? 'Cut saved' : c.edits != null ? `Cut saved: ${plural(c.edits, 'edit')}` : `Cut saved: ${plural(c.parts, 'part')}`; },
+  lock: (dir, worklog) => { const m = /Cut locked[^\n]*?(\d+) joins?,\s*(\d+) clipped/.exec(worklog); return m ? `Cut locked: ${plural(Number(m[1]), 'join')}, ${m[2]} clipped` : 'Cut locked'; },
+  plan: (dir) => { const n = (readJSON(join(dir, 'work/production.json'), null)?.scenes || []).length; return n ? `${plural(n, 'scene')} planned` : 'Scene plan written'; },
+  review: (dir) => {
+    const n = (readJSON(join(dir, 'work/production.json'), null)?.scenes || []).filter((s) => s && s.id != null);
+    const ok = readJSON(join(dir, 'work/notes.json'), null)?.approved || {};
+    // The scenes there are to approve: the ones a render has built (server/built.mjs), else all of them.
+    const end = builtEnd(dir), built = end > 0 ? n.filter((s) => isBuilt({ start: Number(s.start) || 0 }, end)) : n;
+    return n.length ? `${built.filter((s) => ok[s.id]).length} of ${built.length} ${built.length < n.length ? 'built ' : ''}scenes approved` : 'Scenes approved';
+  },
+  zooms: (dir) => {
+    const f = readJSON(join(dir, 'work/zooms.json'), null), { kept, proposed } = keptItems(dir, 'work/zooms.json');
+    const waiting = proposed ? ` · ${plural(proposed, 'proposal')} to keep or turn down` : '';
+    // Nothing to zoom on the face is a finished step too: zooms.json with the reason ("you're never full frame").
+    const short = (t) => { t = t.trim().split(/(?<=[.!?])\s/)[0].replace(/[.\s]+$/, ''); return t.length > 80 ? `${t.slice(0, 78).replace(/[\s,;:(]+\S*$/, '')}…` : t; };
+    if (!kept && typeof f?.reason === 'string' && f.reason.trim()) return `No zooms needed: ${short(f.reason)}${waiting}`;
+    if (!kept) return proposed ? `${plural(proposed, 'zoom')} proposed, none kept yet` : 'No zooms needed';
+    return `${plural(kept, 'zoom')} placed${waiting}`;
+  },
+  'post-kit': () => 'Post kit written',
+};
+export function doneLine(dir, step, worklog = '') {
+  try {
+    if (DONE_LINES[step.id]) return DONE_LINES[step.id](dir, worklog);
+    // A build step, or a studio's own step: the video it made and how long it is, else the file or the worklog line.
+    const d = step.done || {};
+    const f = (d.files || []).map((x) => newestMatch(dir, x)).find(Boolean);
+    if (f && (RENDERED[step.id] || /\.(mp4|mov|m4v)$/i.test(f))) {
+      const dur = probeFile(join(dir, f))?.duration;
+      return `${RENDERED[step.id] || basename(f)} rendered${dur ? `: ${two(dur)}` : ''}`;
+    }
+    if (f) return `Made ${f}`;
+    if (d.worklog) { const ln = worklog.split('\n').reverse().find((x) => x.includes(d.worklog)); if (ln) return ln.replace(/^[-*]\s*(\d{4}-\d\d-\d\d:\s*)?/, '').slice(0, 100); }
+    if (Array.isArray(d.json)) return `Saved in ${d.json[0]}`;
+  } catch {}
+  return 'Done';
+}
+
+// Skip an optional step, or take the skip back (project.json "skipped"): the dock moves on.
+export function setSkipped(dir, type, id, on) {
+  const step = pipelineStatus(dir, type)?.steps.find((s) => s.id === id);
+  if (!step) throw new Error('Unknown step');
+  if (!step.optional) throw new Error(`${step.name} can't be skipped: the steps after it need it.`);
+  const list = new Set((projectMeta(dir)?.skipped || []).filter((x) => typeof x === 'string'));
+  if (on) list.add(id); else list.delete(id);
+  saveProjectMeta(dir, { skipped: [...list] });
+}
+
+// opts.transcribe: how to transcribe, from Settings → Transcription (settings.mjs transcribeHow), for {transcribe}.
+export function stepPrompt(dir, type, stepId, opts = {}) {
+  const st = pipelineStatus(dir, type);
+  const step = stepId === 'learn' ? { ...st.learn, skill: null } : [...st.steps, ...st.more].find((s) => s.id === stepId);
+  if (!step) throw new Error('Unknown step');
+  const src = roles(dir).take.map((f) => `source/${f}`).join(', ') || 'no source yet';
+  const ask = (step.ask || '').replaceAll('{source}', src).replaceAll('{style}', styleText(dir, type))
+    .replaceAll('{transcribe}', opts.transcribe || 'How: as Video Octopus\'s Settings → Transcription say (the system prompt has them).').replace(/ +\n/g, '\n').trim() + audioOnlyNote(dir, step.id)
+    + (step.motion ? motionNote(step.motion) : ''); // the studio's motion-graphics skills, or what to do without any
+  return step.skill ? `/${step.skill} ${ask}`.trim() : ask;
+}
+
+// A mic-only take (no screen, no camera) has no picture: the steps that touch the recording work on the sound.
+const SOUND_STEPS = new Set(['prepare', 'transcribe', 'rough-cut', 'join-check']);
+export function audioOnlyNote(dir, stepId) {
+  const r = roles(dir);
+  if (!r.audioOnly || !SOUND_STEPS.has(stepId)) return '';
+  return `\nThis take is audio only: a mic-only recording, source/${r.main} (uncompressed PCM, no picture). Transcribe that file as the recording.` +
+    (stepId === 'transcribe' ? '' : ' The rough cut has no video to render: find and apply the cuts on the sound alone, writing work/rough.wav (the kept parts joined) instead of work/rough.mp4, with work/rough_map.json and work/rough_words.json as usual; if the rough-cut script insists on a video stream, build rough_map.json from work/cuts.json yourself and cut the WAV with ffmpeg (atrim + concat). Run the join check with source/' + r.main + ' as the source.') +
+    ' Video Octopus\'s canvas shows the layout\'s background for this take, and its export renders that background with this sound.';
+}
+
+// A Short's style ("Talking head style", or "<label> style (use the <skill> skill)" for a style with its own skill);
+// Shorts are one format with styles inside.
+// project.json "shortStyle" is the preset; "style" is the kit's style file from samples (server/kit.mjs), named too.
+export function styleText(dir, type) {
+  const meta = projectMeta(dir) || {};
+  const styles = PIPELINES().formats[formatId(type)]?.styles || [];
+  const st = styles.find((x) => x.id === meta.shortStyle) || styles[0];
+  const preset = st ? `${st.label} style${st.skill ? ` (use the ${st.skill} skill)` : ''}` : 'the studio\'s own style';
+  return meta.style ? `${preset}, following this project's "${meta.style}" style file` : preset;
+}
+
+export const formats = () => Object.fromEntries(Object.entries(PIPELINES().formats).map(([k, v]) => [k, v.label]));
+// What the New project dialog shows per format: frame shape, hint, its block row and (Shorts) its styles.
+export const formatInfo = () => Object.fromEntries(Object.entries(PIPELINES().formats).map(([k, v]) => [k, {
+  label: v.label, aspect: v.aspect || '16:9', hint: v.hint || '', platforms: v.platforms || null, camera: v.record?.camera !== false,
+  blocks: (v.blocks || []).map((b) => ({ type: b.type, label: b.label, optional: Boolean(b.optional) })),
+  steps: (v.steps || []).map((s) => { const x = typeof s === 'string' ? { id: s, ...PIPELINES().shared[s] } : s; return { id: x.id, label: x.label || x.id, name: x.name || x.label || x.id }; }),
+  styles: (v.styles || []).map((x) => ({ id: x.id, label: x.label, hint: x.hint || '' })),
+}]));
+export const formatTemplate = (type) => PIPELINES().formats[formatId(type)] || null;
+export const blockTypes = () => PIPELINES().blockTypes || {};
+// A format's steps with the shared ones filled in (their done files and all), for server/built.mjs.
+export const formatSteps = (type) => { const p = PIPELINES(), f = p.formats[formatId(type)]; return (f?.steps || []).map((s) => (typeof s === 'string' ? { id: s, ...p.shared[s] } : s)); };
+
+// ---- the studio's skills (for the "More skills" list) ----
+export function listSkills(type) {
+  const dir = join(settings().studio, '.claude', 'skills');
+  let names = [];
+  try { names = readdirSync(dir); } catch { return []; }
+  return names.flatMap((n) => {
+    let text;
+    try { text = readFileSync(join(dir, n, 'SKILL.md'), 'utf8'); } catch { return []; }
+    const fm = /^---\n([\s\S]*?)\n---/.exec(text)?.[1] || '';
+    const field = (k) => new RegExp(`^\\s*${k}:\\s*(.+)$`, 'm').exec(fm)?.[1]?.trim().replace(/^["']|["']$/g, '');
+    const fmts = (field('formats') || '').replace(/[[\]]/g, '').split(',').map((x) => x.trim()).filter(Boolean);
+    if (type && fmts.length && !fmts.map(formatId).includes(formatId(type))) return [];
+    const description = (field('description') || '').split(/(?<=\.)\s/)[0].slice(0, 160);
+    return [{ name: field('name') || n, description, button: field('button') || null }];
+  }).sort((a, b) => a.name.localeCompare(b.name));
+}

@@ -1,0 +1,89 @@
+/* Cut Editor: Video Octopus's look, for its Cut tab (index.html?theme=studio asks for this file and studio.js; server.py
+   serves both). Opened on its own the page never loads them and looks and works as it always has. */
+html.studio{--bg:#f4f4f2;--panel:#ffffff;--line:#e6e5e1;--ink:#1a1a1c;--dim:#55555a;--acc:#c2410c;--sel:#dbe6fe;--selb:#2563eb;--cut:rgba(26,26,28,.06);--faint:#737378;--line2:#dcdbd6;--sans:"Geist",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;--mono:"Geist Mono",ui-monospace,"SF Mono",Menlo,monospace;color-scheme:light}
+.studio body{font:13px/1.45 var(--sans);-webkit-font-smoothing:antialiased}
+.studio header{gap:8px;row-gap:6px;padding:10px 14px;border-bottom:0}
+.studio header h1{display:none}
+.studio .hbtns{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-left:auto}
+.studio .stat{font-size:12px;color:var(--dim);white-space:nowrap}.studio .stat b,.studio #dur{font-family:var(--mono);color:var(--ink);font-weight:500}.studio #dur{color:var(--dim);font-weight:400}
+.studio .vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.studio button,.studio details.mn>summary{height:32px;padding:0 11px;border:1px solid var(--line2);border-radius:8px;background:#fff;color:var(--ink);font:500 12px/1 var(--sans);display:inline-flex;align-items:center;gap:6px;white-space:nowrap;cursor:pointer}
+.studio button:hover,.studio details.mn>summary:hover{background:#fafaf8;border-color:#c9c8c3}
+.studio button.pri{background:#1a1a1c;border-color:#1a1a1c;color:#fff;font-weight:600}.studio button.pri:hover{background:#000;border-color:#000}
+.studio details.mn{position:relative}.studio details.mn>summary{list-style:none;user-select:none}.studio details.mn>summary::-webkit-details-marker{display:none}
+.studio details.mn>summary svg{fill:none;stroke:currentColor;stroke-width:1.4;stroke-linecap:round}
+.studio details.mn[open]>summary{background:#f0efec;border-color:var(--line2)}
+.studio .mbody{position:absolute;right:0;top:calc(100% + 6px);z-index:60;min-width:250px;padding:6px;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 16px 40px -12px rgba(20,20,22,.22),0 0 0 1px rgba(20,20,22,.06);display:flex;flex-direction:column;gap:1px}
+.studio .mbody label.ck{color:var(--ink);padding:7px 8px;border-radius:7px;font-size:13px}.studio .mbody label.ck:hover{background:#f6f6f4}
+.studio .mbody .mh{padding:6px 8px 2px;font-size:11px;font-weight:600;color:var(--dim);letter-spacing:.04em;text-transform:uppercase}
+.studio .mbody #src{display:block;padding:2px 8px 8px;border-bottom:1px solid #efeeea;margin-bottom:4px;font-size:11px;color:var(--faint);white-space:normal;word-break:break-all}
+.studio .mbody>button{width:100%;justify-content:space-between;border-color:transparent;background:transparent;font-size:13px;font-weight:400;height:32px;padding:0 8px}.studio .mbody>button:hover{background:#f6f6f4;border-color:transparent}
+.studio .mbody kbd{font:11px var(--mono);color:var(--faint)}
+.studio #mKeys>summary{width:32px;padding:0;justify-content:center}
+.studio .mbody .help{width:min(560px,78vw);max-height:62vh;overflow:auto;padding:6px 8px;font-size:12.5px;line-height:1.75}
+.studio input[type=checkbox]{accent-color:#1a1a1c}
+.studio #spd{height:26px;border:1px solid var(--line2);border-radius:6px;background:#fff;color:var(--ink);padding:0 4px;font:inherit}
+.studio main{gap:12px;padding:0 14px}
+.studio #left{width:34%;min-width:250px;max-width:440px;align-self:flex-start;max-height:100%;border:1px solid var(--line);border-radius:14px;background:#fff;padding:12px}
+.studio video{border-radius:8px;background:#141416}.studio #vc{border-radius:8px}
+.studio #tx{border:1px solid var(--line);border-radius:14px;background:#fff;padding:22px 26px;font-size:16px;line-height:1.75;color:var(--ink)}
+.studio #tx p{position:relative;max-width:760px;margin:0 auto 18px;padding-left:58px}
+.studio .ptime{position:absolute;left:0;top:0;font:11px/28px var(--mono);color:#737378;cursor:pointer}.studio .ptime:hover{color:var(--ink)}
+.studio .w.cut{color:#a1a09b;text-decoration-color:#b5b4af}
+.studio .w.sel{background:#dbe6fe;box-shadow:0 0 0 2px #dbe6fe;border-radius:3px}
+.studio .w.now{background:rgba(194,65,12,.15);color:var(--ink)}
+.studio .w.ear{background:#fef3c7;box-shadow:inset 0 -2px #d97706;border-radius:2px}.studio .w.ear.sel{background:#dbe6fe}.studio .w.ear.now{background:rgba(194,65,12,.15)}
+.studio .w.pt{background:rgba(220,38,38,.14);color:#991b1b}.studio .w.pb{background:rgba(37,99,235,.14);color:#1e3a8a}
+.studio .pchip{display:inline-block;margin:0 2px 0 6px;padding:0 6px;border-radius:5px;background:#f0efec;color:#737378;font:11px/18px var(--sans);vertical-align:2px;white-space:nowrap}
+.studio .pchip[hidden]{display:none}
+.studio .jmark{display:inline-block;width:0;height:0;margin:0 3px 0 2px;border-left:5px solid transparent;border-right:5px solid transparent;border-top:8px solid #d97706;vertical-align:.5em}.studio .jmark.bad{border-top-color:#dc2626}
+.studio #tl{margin:12px 14px 14px;border:1px solid var(--line);border-radius:12px;background:#fff}.studio #cv{border-radius:11px}
+.studio #zoomrow{color:var(--faint)}.studio #zoom{accent-color:#1a1a1c}
+.studio #lensP{background:#fff;border-color:var(--line);box-shadow:0 16px 40px -12px rgba(20,20,22,.22),0 0 0 1px rgba(20,20,22,.06)}
+.studio #lensP .lh b{color:var(--ink)}.studio #lensD{color:var(--acc)}
+.studio .help{color:var(--dim)}.studio .help kbd,.studio #lensP kbd{background:#f4f4f2;border-color:#e0dfda;color:#33333a;font-family:var(--mono)}
+.studio #toast{background:#1a1a1c;border-color:#1a1a1c;color:#fff;border-radius:9px;font-size:12px}
+.studio #nt{border-color:var(--line2);border-radius:8px;background:#fff;color:var(--ink)}
+.studio #nl li b{color:var(--acc);font-family:var(--mono)}
+.studio #banner{background:#c2410c!important;font-family:var(--sans)!important}
+.studio #autoState.ok,.studio #autoState.ok b{color:#15803d}.studio #autoState.bad{color:#dc2626}
+.studio #vwrap.trim #vc{outline-color:var(--acc)}
+.studio ::-webkit-scrollbar{width:10px;height:10px}.studio ::-webkit-scrollbar-thumb{background:#d6d5d0;border-radius:10px;border:3px solid transparent;background-clip:padding-box}.studio ::-webkit-scrollbar-track{background:transparent}
+.studio ::selection{background:#dbe6fe}
+/* Video Octopus's look (Settings → Appearance): studio.js sets data-look and the colours, radii and fonts these use from the
+   look Video Octopus passes (&look=, #look=, then studio:look messages). With no look, or Edit Bay, none of this applies. */
+.studio[data-look] button,.studio[data-look] details.mn>summary{background:var(--panel);border-radius:var(--lk-ctl)}
+.studio[data-look] button:hover,.studio[data-look] details.mn>summary:hover{background:var(--lk-panel2);border-color:var(--lk-line-hover)}
+.studio[data-look] button.pri{background:var(--lk-pri);border-color:var(--lk-pri);color:var(--lk-pri-ink)}.studio[data-look] button.pri:hover{background:var(--lk-hi);border-color:var(--lk-hi)}
+.studio[data-look] details.mn[open]>summary{background:var(--lk-panel3);border-color:var(--line2)}
+.studio[data-look] .mbody,.studio[data-look] #lensP{background:var(--lk-pop);border-color:var(--line);box-shadow:var(--lk-shadow)}
+.studio[data-look] .mbody label.ck:hover{background:var(--lk-panel2)}
+.studio[data-look] .mbody>button{background:transparent;border-color:transparent}.studio[data-look] .mbody>button:hover{background:var(--lk-panel2);border-color:transparent}
+.studio[data-look] .mbody #src{border-bottom-color:var(--line)}
+.studio[data-look] input[type=checkbox],.studio[data-look] #zoom{accent-color:var(--lk-check)}
+.studio[data-look] #spd,.studio[data-look] #nt{background:var(--panel)}
+.studio[data-look] #left,.studio[data-look] #tx,.studio[data-look] #tl{background:var(--panel);border-radius:var(--lk-card)}.studio[data-look] #cv{border-radius:max(0px,calc(var(--lk-card) - 1px))}
+.studio[data-look] .ptime{color:var(--faint)}
+.studio[data-look] .w.cut{color:var(--dim);text-decoration-color:var(--faint)}
+.studio[data-look] .w.sel,.studio[data-look] .w.ear.sel{background:var(--sel);box-shadow:0 0 0 2px var(--sel)}
+.studio[data-look] .w.now,.studio[data-look] .w.ear.now{background:var(--lk-accent-soft);color:var(--ink)}
+.studio[data-look] .w.ear{background:var(--lk-warn-soft);box-shadow:inset 0 -2px var(--lk-warn)}.studio[data-look] .w.ear.cut{color:var(--lk-text2)}
+.studio[data-look] .w.pt{background:var(--lk-bad-soft);color:var(--lk-bad-ink)}.studio[data-look] .w.pb{background:var(--lk-sel-wash);color:var(--lk-sel-text)}
+.studio[data-look] .pchip{background:var(--lk-panel3);color:var(--dim)}
+.studio[data-look] .jmark{border-top-color:var(--lk-warn)}.studio[data-look] .jmark.bad{border-top-color:var(--lk-bad)}
+.studio[data-look] .help kbd,.studio[data-look] #lensP kbd{background:var(--lk-panel2);border-color:var(--line2);color:var(--lk-text2)}
+.studio[data-look] #toast{background:var(--lk-pri);border-color:var(--lk-pri);color:var(--lk-pri-ink)}
+.studio[data-look] #banner{background:var(--lk-accent)!important;color:var(--lk-accent-ink)!important}
+.studio[data-look] #autoState.ok,.studio[data-look] #autoState.ok b{color:var(--lk-ok)}.studio[data-look] #autoState.bad{color:var(--lk-bad-ink)}
+.studio[data-look] ::-webkit-scrollbar-thumb{background:var(--lk-scroll);border:3px solid transparent;background-clip:padding-box}
+.studio[data-look] ::selection{background:var(--sel)}
+/* Shots (Video Octopus's Cut tab): a "/" where each shot starts, its transition after it, a word you drag a "/" onto */
+.studio .slash{display:inline-block;margin:0 3px 0 1px;padding:0 4px;border-radius:5px;font:700 1.05em/1.3 var(--mono);color:var(--acc);cursor:pointer;user-select:none}
+.studio .slash:hover{background:rgba(194,65,12,.1)}
+.studio .slash.on{background:#dbe6fe;color:#2563eb;box-shadow:0 0 0 1.5px #2563eb}
+.studio .sl-lab{display:inline-block;margin-right:5px;padding:0 7px;border-radius:999px;background:rgba(194,65,12,.08);color:#9a3412;font:600 11px/19px var(--sans);vertical-align:2px;white-space:nowrap;cursor:pointer;user-select:none}
+.studio .w.sl-drop{box-shadow:inset 3px 0 0 var(--acc);background:rgba(194,65,12,.08)}
+.studio[data-look] .slash:hover{background:var(--lk-accent-soft)}
+.studio[data-look] .slash.on{background:var(--sel);color:var(--selb);box-shadow:0 0 0 1.5px var(--selb)}
+.studio[data-look] .sl-lab{background:var(--lk-accent-soft);color:var(--acc)}
+.studio[data-look] .w.sl-drop{background:var(--lk-accent-soft)}

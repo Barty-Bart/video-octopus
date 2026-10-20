@@ -1,0 +1,392 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Cut Editor</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<script>if(new URLSearchParams(location.search).get('theme')==='studio'){document.documentElement.classList.add('studio');document.write('<link rel="stylesheet" href="studio.css"><script src="studio.js"><\/script>')}</script>
+<style>
+:root{--bg:#141413;--panel:#1d1d1b;--line:#2e2e2b;--ink:#ecebe6;--dim:#8d8b84;--acc:#ff5a1f;--sel:rgba(80,150,255,.28);--selb:#5096ff;--cut:rgba(248,81,73,.16)}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 -apple-system,system-ui,Helvetica,Arial,sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+header{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+header h1{font-size:15px;margin:0 8px 0 0;font-weight:650}
+.stat{color:var(--dim);font-variant-numeric:tabular-nums}.stat b{color:var(--ink);font-weight:600}
+button{background:#2a2a27;color:var(--ink);border:1px solid #3a3a36;border-radius:8px;padding:6px 11px;font:inherit;cursor:pointer}
+button:hover{background:#34342f}button.pri{background:var(--acc);border-color:var(--acc);color:#fff;font-weight:600}button:disabled{opacity:.4;cursor:default}
+label.ck{color:var(--dim);display:flex;gap:6px;align-items:center;cursor:pointer}
+.sp{flex:1}
+main{flex:1;display:flex;min-height:0}
+#left{width:40%;min-width:280px;overflow:auto;padding:14px;display:flex;flex-direction:column;gap:10px;border-right:1px solid var(--line)}
+video{width:100%;max-height:62vh;object-fit:contain;background:#000;border-radius:10px;display:block}
+#vwrap{position:relative}#vc{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;border-radius:10px}
+#vwrap.trim #vc{outline:3px solid var(--acc);outline-offset:-3px}
+#trim{position:absolute;right:10px;bottom:10px;width:36%;display:none;border:2px solid #fff;border-radius:8px;overflow:hidden;background:#000;box-shadow:0 6px 22px rgba(0,0,0,.55);pointer-events:none}
+#vwrap.trim #trim:not(.none){display:block}#trimc{display:block;width:100%;aspect-ratio:16/9}
+.tlab{position:absolute;left:8px;top:8px;background:rgba(0,0,0,.74);color:#fff;font:600 11.5px/1.3 system-ui;padding:3px 8px;border-radius:6px;font-variant-numeric:tabular-nums;pointer-events:none;white-space:nowrap}
+#trimM{display:none}#vwrap.trim #trimM{display:block}
+.w.pt{background:rgba(248,81,73,.42);color:#fff;text-decoration:line-through}.w.pb{background:rgba(80,150,255,.38);color:#fff}
+#lensP{position:absolute;left:12px;right:12px;bottom:calc(100% + 8px);background:#1d1d1b;border:1px solid #3a3a36;border-radius:12px;box-shadow:0 18px 40px rgba(0,0,0,.55);padding:10px 12px 12px;z-index:20}
+#lensP[hidden]{display:none}#lensP .lh{display:flex;align-items:center;gap:10px;font-size:12.5px;color:var(--dim);margin-bottom:8px}#lensP .lh b{color:var(--ink)}
+#lensD{font-variant-numeric:tabular-nums;color:#ff8a5c}#lensC{display:block;width:100%;height:190px;cursor:ew-resize}
+.help{color:var(--dim);font-size:12.5px;line-height:1.7}.help kbd{background:#2a2a27;border:1px solid #3a3a36;border-bottom-width:2px;border-radius:5px;padding:0 5px;font:12px ui-monospace,Menlo,monospace;color:var(--ink)}
+#tx{flex:1;overflow:auto;padding:18px 22px;font-size:17px;line-height:1.85;user-select:none}
+#tx p{margin:0 0 14px}
+.w{padding:1px 1px;border-radius:4px;cursor:text}
+.w.cut{color:#6b6963;text-decoration:line-through;text-decoration-color:#f85149}
+body.hidecut .w.cut{display:none}
+.w.sel{background:var(--sel)}.w.now{background:rgba(255,90,31,.35);color:#fff}
+.gap{color:#555;font-size:12px}
+#tl{height:clamp(190px,34vh,300px);border-top:1px solid var(--line);position:relative;background:var(--panel)}
+#cv{width:100%;height:100%;display:block;cursor:crosshair}
+#zoomrow{position:absolute;right:12px;top:8px;display:flex;gap:8px;align-items:center;color:var(--dim);font-size:12px}
+#toast{position:fixed;left:50%;bottom:270px;transform:translateX(-50%);background:#2a2a27;border:1px solid #3a3a36;padding:8px 14px;border-radius:8px;opacity:0;transition:opacity .2s;pointer-events:none}
+#nbox{margin-top:10px}.nrow{display:flex;gap:8px}#nt{flex:1;min-height:44px;font:inherit;padding:6px 8px;border-radius:6px;border:1px solid #444;background:transparent;color:inherit;resize:vertical}
+#nl{margin:8px 0 0;padding-left:20px;max-height:180px;overflow:auto;font-size:13px}#nl li{padding:3px 0;cursor:pointer}#nl li b{font-family:ui-monospace,Menlo,monospace;font-weight:500;color:#ff5a1f;margin-right:6px}#nl li .x{margin-left:8px;opacity:.5;cursor:pointer}
+#spd{font:inherit;background:transparent;color:inherit;border:1px solid #555;border-radius:4px}
+</style></head><body>
+<header>
+ <h1>Cut Editor</h1><span class="stat" id="src"></span>
+ <span class="stat">Edited <b id="len">–</b> of <span id="dur">–</span></span>
+ <span class="stat">Playhead <b id="ph">0:00.00</b></span>
+ <span class="sp"></span>
+ <label class="ck">Speed <select id="spd"><option>1</option><option>1.25</option><option>1.5</option><option selected>2</option><option>3</option></select>×</label>
+ <label class="ck" title="After every edit, play a second either side so you hear the join"><input type="checkbox" id="auto" checked> Auto-preview</label>
+ <label class="ck" title="Hide the cut parts and join the kept audio (C)"><input type="checkbox" id="coll" checked> Collapse cuts</label>
+ <label class="ck"><input type="checkbox" id="snap" checked> Snap cuts to silence</label>
+ <label class="ck" title="While you drag a cut's edge, hear a short blip of sound from the edge"><input type="checkbox" id="scrub" checked> Scrub sound</label>
+ <span id="trimOpts" style="display:contents"><label class="ck" title="Trim B: what you trim turns red, what you bring back blue; the gap closes when you let go"><input type="checkbox" id="hl"> Highlight first</label><label class="ck" title="Trim C: click a cut (without dragging) for a close-up of just that cut"><input type="checkbox" id="lensOn"> Fine-trim pop-up</label></span>
+ <label class="ck"><input type="checkbox" id="hide"> Hide cut words</label>
+ <button id="bUndo" title="⌘Z">Undo</button><button id="bCut" title="Delete">Cut selection</button><button id="bRest" title="R">Restore</button>
+ <button id="bJoin" title="J">Hear join</button><button id="bTidy" title="Remove wordless slivers under 0.3 s and micro-cuts under 0.08 s">Tidy</button><button class="pri" id="bSave" title="⌘S">Save</button>
+</header>
+<main>
+ <div id="left"><div id="vwrap"><video id="v" src="/video" preload="auto" playsinline></video><canvas id="vc"></canvas><span class="tlab" id="trimM"></span><div id="trim"><canvas id="trimc"></canvas><span class="tlab" id="trimL"></span></div><video id="v2" src="/video" muted preload="auto" playsinline style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none"></video></div>
+  <div class="help"><kbd>Space</kbd> play / pause (cuts are skipped) · click a word to jump · drag across words, or drag on the waveform to select, or drag the edge of a kept section on the waveform to trim it<br>
+  <kbd>Delete</kbd> cut · <kbd>R</kbd> restore · <kbd>J</kbd> hear the nearest join · <kbd>N</kbd> next flagged join · <kbd>⌘Z</kbd> undo · <kbd>⌘S</kbd> save<br>
+  <kbd>⇧</kbd>+drag on the waveform extends the selection · scroll to pan, <kbd>⌘</kbd>/<kbd>Ctrl</kbd>+scroll or the slider to zoom · <kbd>←</kbd><kbd>→</kbd> one frame · word bubbles: drag a word ◀ to erase what's before it, ▶ to open hidden audio before it · select by dragging on the waveform or the transcript, <kbd>Delete</kbd> · grab a cut's line (left half = the part before, right half = the part after) and pull ◀ ▶; while you drag the picture follows it, the corner shows the other side of the join and you hear a short blip (Scrub sound) · grab a block's edge at a red join and drag outward to bring audio back · drag the blue selection's edges to fine-tune · <kbd>]</kbd>/<kbd>[</kbd> next / previous comment · <kbd>⌘⇧Z</kbd> redo · <kbd>/</kbd> split at the playhead · <kbd>C</kbd> collapse / show cuts · <kbd>M</kbd> comment at the playhead · <kbd>1</kbd>–<kbd>3</kbd> speed</div>
+  <div id="nbox"><div class="nrow"><textarea id="nt" placeholder="Comment at the playhead (M). Enter saves, Shift+Enter new line"></textarea><button id="bNote">Add comment</button></div><ol id="nl"></ol></div></div>
+ <div id="tx"></div>
+</main>
+<div id="tl"><div id="lensP" hidden><div class="lh"><b>Fine trim</b><span id="lensD"></span><span class="sp"></span><span>Click or drag in a row to move that side · <kbd>←</kbd><kbd>→</kbd> the part before · <kbd>⇧</kbd><kbd>←</kbd><kbd>→</kbd> the part after · <kbd>Esc</kbd> closes</span><button id="lensX">Done</button></div><canvas id="lensC"></canvas></div><canvas id="cv"></canvas><div id="zoomrow">zoom <input type="range" id="zoom" min="2" max="60" value="8"> s</div></div>
+<div id="toast"></div><div id="banner" style="display:none;position:fixed;top:0;left:0;right:0;z-index:50;background:#ff5a1f;color:#fff;padding:8px 14px;font:600 14px system-ui;text-align:center">Claude updated this edit since you opened it. Reload to get it (unsaved changes here will be lost) <button onclick="location.reload()" style="margin-left:10px">Reload</button></div>
+<script>
+const $=id=>document.getElementById(id),v=$('v'),cv=$('cv'),g=cv.getContext('2d');
+let D,kept=[],undo=[],sel=null,view=[0,8],dirty=false,words=[];
+// Colours and type for the waveform and the fine-trim pop-up: the page's own dark look, or Video Octopus's light one
+// (studio.js, loaded with studio.css only for ?theme=studio).
+const STUDIO=document.documentElement.classList.contains('studio')&&typeof studioSetup==='function';
+const PAL=STUDIO?PAL_STUDIO
+:{ruler:'#8d8b84',mono:'ui-monospace,Menlo,monospace',sans:'-apple-system,system-ui,sans-serif',sans2:'-apple-system,system-ui',
+ join:'rgba(248,81,73,.7)',hoverSide:'rgba(255,90,31,.16)',acc:'#ff5a1f',tip:'rgba(20,20,20,.85)',tipInk:'#fff',cutFill:'rgba(248,81,73,.13)',cutHatch:'rgba(248,81,73,.25)',cutEdge:'#f85149',clip:'#f85149',check:'#e0a84a',
+ pkK:'#5a5a55',pkC:'#3a3533',rmK:'#e8e6df',rmC:'#6b5a56',bubSel:'rgba(80,150,255,.45)',bub:'rgba(255,90,31,.20)',bubSelLine:'#5096ff',bubLine:'rgba(255,90,31,.55)',bubInk:'#f2f1ec',
+ barK:'rgba(255,90,31,.55)',barC:'rgba(140,140,135,.35)',wK:'#ecebe6',wC:'#77756e',leadK:'rgba(255,90,31,.35)',leadC:'rgba(140,140,135,.25)',hlTrim:'rgba(248,81,73,.32)',hlBack:'rgba(80,150,255,.30)',hlTrimTag:'#e5484d',hlBackTag:'#3b82f6',
+ selFill:'rgba(80,150,255,.22)',selEdge:'#5096ff',flagMine:'#ff5a1f',flagOther:'rgba(180,180,170,.8)',head:'#ff5a1f',
+ lensRow:'#262623',lpkK:'#5a5a55',lpkC:'#34322e',lrmK:'#e8e6df',lrmC:'#5d5a53',lwK:'rgba(255,90,31,.24)',lwC:'rgba(140,140,135,.10)',lwInkK:'#f2f1ec',lwInkC:'#8d8b84',lOrig:'#8d8b84',lTip:'rgba(20,20,20,.85)'};
+// Trimming at a cut. A, always: grab the cut's line (left half = the part before, right half = the part after) and
+// it closes or opens as you pull. B "highlight first": what you trim turns red and what you bring back blue; a trim
+// only closes when you let go. C "fine-trim pop-up": click a cut without dragging for a close-up of just that cut.
+// Video Octopus's Settings → Editing passes them as ?trim=hl,lens; opened on its own, the header toggles set them.
+const TRIM=new URLSearchParams(location.search).get('trim');
+const LSK=(k,v)=>{try{if(v===undefined)return localStorage.getItem(k);localStorage.setItem(k,v)}catch(e){}return null};
+const optHL=()=>TRIM!==null?TRIM.split(',').includes('hl'):$('hl').checked;
+const optLens=()=>TRIM!==null?TRIM.split(',').includes('lens'):$('lensOn').checked;
+if(TRIM!==null)$('trimOpts').remove();
+else{$('hl').checked=LSK('ce.hl')==='1';$('lensOn').checked=LSK('ce.lens')==='1';
+ $('hl').onchange=e=>{LSK('ce.hl',e.target.checked?'1':'0');e.target.blur()};$('lensOn').onchange=e=>{LSK('ce.lens',e.target.checked?'1':'0');e.target.blur()}}
+const fmt=t=>{t=Math.max(0,t);const m=Math.floor(t/60),s=t-m*60;return `${m}:${s.toFixed(2).padStart(5,'0')}`};
+const toast=s=>{const e=$('toast');e.textContent=s;e.style.opacity=1;clearTimeout(toast.t);toast.t=setTimeout(()=>e.style.opacity=0,1600)};
+const inKept=t=>kept.some(([a,b])=>t>=a&&t<b);
+const nextKept=t=>{for(const [a,b] of kept){if(t<a)return a;if(t<b)return t}return null};
+const edLen=()=>kept.reduce((s,[a,b])=>s+b-a,0);
+const edTime=t=>{let d=0;for(const [a,b] of kept){if(t<a)break;d+=Math.min(t,b)-a}return d};
+// Kept pieces under 20 ms that an edit leaves are dropped; the ones the cut file already has stay (KEEP0).
+let KEEP0=new Set();const pk=(a,b)=>a.toFixed(4)+','+b.toFixed(4);
+function norm(L){L=L.filter(([a,b])=>b-a>0.02||(b>a&&KEEP0.has(pk(a,b)))).sort((x,y)=>x[0]-y[0]);const o=[];for(const s of L){if(o.length&&s[0]<=o[o.length-1][1]+1e-4)o[o.length-1][1]=Math.max(o[o.length-1][1],s[1]);else o.push([...s])}return o}
+function razor(){const t=v.currentTime;const i=kept.findIndex(([a,b])=>t>a+.05&&t<b-.05);if(i<0){toast('Put the playhead inside kept audio to split');return}push();const [a,b]=kept[i];kept.splice(i,1,[a,t-.0005],[t+.0005,b]);refresh();toast('Split at '+fmt(edTime(t))+': drag either handle to open or close')}
+// Tidy (Edit menu): only when asked. The cut always opens exactly as its file has it, however short a cut is.
+function tidy(silent){const before=kept.length;const hasWord=(a,b)=>words.some(w=>{const m=(w[0]+w[1])/2;return m>=a&&m<b});
+ let L=kept.filter(([a,b])=>b-a>=0.3||hasWord(a,b));const o=[];for(const s of L){if(o.length&&s[0]-o[o.length-1][1]<0.08)o[o.length-1][1]=Math.max(o[o.length-1][1],s[1]);else o.push([...s])}
+ const n=before-o.length-(0);if(n>0){push();kept=o;refresh();if(!silent||n)toast(`Tidied ${n} micro-cuts and slivers (Undo to bring back)`)}else if(!silent)toast('Nothing to tidy')}
+let redo=[];function push(){undo.push(JSON.stringify(kept));if(undo.length>200)undo.shift();redo=[];dirty=true}
+// hear the result: play ~1 s either side of an edit point (edited timeline)
+function preview(srcT){if(!$('auto').checked)return;rawStop=null;cum();const e=edTime(srcT);v.currentTime=srcOf(Math.max(0,e-1.1));joinStop=e+1.0;v.playbackRate=1;v.play()}
+function quiet(t,w=.06){if(!$('snap').checked)return t;const p=D.pps,i0=Math.max(0,Math.floor((t-w)*p)),i1=Math.min(D.rms.length-1,Math.ceil((t+w)*p));let bi=Math.round(t*p),bv=1e9;
+ for(let i=i0;i<=i1;i++){const val=D.rms[i]+Math.abs(i/p-t)*.02;if(val<bv){bv=val;bi=i}}return bi/p}
+// The quietest moment between two words (lo..hi): the middle of the quietest stretch of the waveform.
+function quietIn(lo,hi){const p=D.pps,R=D.rms,i0=Math.max(0,Math.ceil((lo+.01)*p)),i1=Math.min(R.length-1,Math.floor((hi-.01)*p));if(i1<i0)return(lo+hi)/2;
+ const v=[];let m=1e9;for(let i=i0;i<=i1;i++){let s=0,n=0;for(let k=i-2;k<=i+2;k++)if(k>=0&&k<R.length){s+=R[k];n++}v.push(s/n);m=Math.min(m,s/n)}
+ let best=[0,0],run=null;for(let k=0;k<v.length;k++){if(v[k]<=m*1.5+.01){run=run?[run[0],k]:[k,k];if(run[1]-run[0]>=best[1]-best[0])best=run}else run=null}return(i0+(best[0]+best[1])/2)/p}
+// Deleting words: each edge goes to the safe point between the deleted word and its neighbour, the quietest moment
+// in the gap (Whisper often ends a word before its sound does, and cutting there leaves its tail in), or, with no
+// gap, the quietest point near the word's edge. Other cuts snap to the quietest point near each edge.
+function safeEdges(a,b){const i=words.findIndex(w=>Math.abs(w[0]-a)<1e-3),j=words.findIndex(w=>Math.abs(w[1]-b)<1e-3);
+ if(i<0||j<i)return[quiet(a),quiet(b)];const pw=words[i-1],nw=words[j+1];
+ return[pw&&words[i][0]-pw[1]>=.04?quietIn(pw[1],words[i][0]):quiet(a),nw&&nw[0]-words[j][1]>=.04?quietIn(words[j][1],nw[0]):quiet(b)]}
+// A cut never leaves a sliver under SLIVER s with no word in it at either edge (a word delete from the take's first
+// word would keep the 77 ms before it): it goes with the cut, as join-check drops slivers under 0.12 s.
+const SLIVER=.12,sliver=(p,q)=>q-p<SLIVER&&!words.some(w=>{const m=(w[0]+w[1])/2;return m>=p&&m<q});
+function cut(a,b){if(b-a<.01)return;push();if($('snap').checked)[a,b]=safeEdges(a,b);setTimeout(()=>preview(b),30);const o=[];for(const [p,q] of kept){if(b<=p||a>=q){o.push([p,q]);continue}if(a>p&&!sliver(p,a))o.push([p,a]);if(b<q&&!sliver(b,q))o.push([b,q])}kept=norm(o);sel=null;refresh();toast(`Cut ${(b-a).toFixed(2)} s`)}
+function restore(a,b){if(b-a<.01)return;push();kept=norm(kept.concat([[a,b]]));sel=null;refresh();toast(`Restored ${(b-a).toFixed(2)} s`)}
+function refresh(){$('len').textContent=fmt(edLen());const pd=joinDrag&&joinDrag.pend&&optHL()?joinDrag.pend:null;document.querySelectorAll('.w').forEach(el=>{const w=words[+el.dataset.i],m=(w[0]+w[1])/2;el.classList.toggle('cut',!inKept(m));
+ el.classList.toggle('pt',!!pd&&pd.kind==='trim'&&m>=pd.a&&m<pd.b);el.classList.toggle('pb',!!pd&&pd.kind==='back'&&m>=pd.a&&m<pd.b);
+ el.classList.toggle('sel',!!sel&&w[1]>sel[0]&&w[0]<sel[1])});draw();if(STUDIO)studioRefresh()}
+function buildTx(){const tx=$('tx');tx.innerHTML='';let p=document.createElement('p');tx.appendChild(p);
+ words.forEach((w,i)=>{if(i&&w[0]-words[i-1][1]>1.4){p=document.createElement('p');tx.appendChild(p)}const s=document.createElement('span');s.className='w';s.dataset.i=i;s.textContent=w[2];p.appendChild(s);p.appendChild(document.createTextNode(' '))});if(STUDIO)studioTx()}
+// transcript selection
+let dragW=null;
+$('tx').addEventListener('mousedown',e=>{const el=e.target.closest('.w');if(!el)return;const i=+el.dataset.i;
+ if(e.shiftKey&&sel){const w=words[i];sel=[Math.min(sel[0],w[0]),Math.max(sel[1],w[1])];refresh();return}
+ dragW=i;sel=[words[i][0],words[i][1]];v.currentTime=words[i][0];centre(words[i][0]);refresh()});
+$('tx').addEventListener('mouseover',e=>{if(dragW===null)return;const el=e.target.closest('.w');if(!el)return;const i=+el.dataset.i,a=Math.min(i,dragW),b=Math.max(i,dragW);sel=[words[a][0],words[b][1]];refresh()});
+addEventListener('mouseup',()=>{dragW=null;dragT=null;selEdge=false;if(bubble){bubble=null}wordDrag=null;if(joinDrag)endJoin(false)});
+// timeline: the axis is source time, or edited time when "Collapse cuts" is on (cut parts hidden, kept parts joined)
+const coll=()=>$('coll').checked;
+let CUM=[];function cum(){CUM=[];let d=0;for(const [a,b] of kept){CUM.push(d);d+=b-a}return d}
+const axisOf=t=>coll()?edTime(t):t;
+function srcOf(e){if(!coll())return e;if(!kept.length)return 0;let lo=0,hi=CUM.length-1;while(lo<hi){const m=(lo+hi+1)>>1;if(CUM[m]<=e)lo=m;else hi=m-1}const [a,b]=kept[lo];return Math.min(b,a+Math.max(0,e-CUM[lo]))}
+const axisMax=()=>coll()?edLen():D.duration;
+const XA=e=>(e-view[0])/(view[1]-view[0])*cv.width;
+const X=t=>XA(axisOf(t)),T=x=>srcOf(view[0]+x/cv.width*(view[1]-view[0]));
+function fit(){const r=cv.getBoundingClientRect(),dp=devicePixelRatio||1;cv.width=r.width*dp;cv.height=r.height*dp;draw()}
+function centre(t){t=axisOf(t);const w=view[1]-view[0];if(t<view[0]+w*.08||t>view[1]-w*.08){view=[Math.max(0,t-w*.3),0];view[1]=view[0]+w;draw()}}
+function draw(){if(!D)return;cum();const W=cv.width,H=cv.height,dp=devicePixelRatio||1;g.clearRect(0,0,W,H);const C=coll();
+ const top=74*dp,mid=top+(H-top-26*dp)/2,amp=(H-top-34*dp)/2;
+ // ruler: pick a step that leaves ~90 px between labels
+ g.fillStyle=PAL.ruler;g.font=`${11*dp}px ${PAL.mono}`;const span=view[1]-view[0],pxs=W/span;
+ const step=[.1,.2,.5,1,2,5,10,30,60].find(s=>s*pxs>=90*dp)||60,minor=step/5;
+ for(let t=Math.ceil(view[0]/minor)*minor;t<view[1];t+=minor){const x=XA(t),major=Math.abs(t/step-Math.round(t/step))<1e-6;g.fillRect(x,H-22*dp,1,(major?8:3)*dp);
+  if(major){const m=Math.floor(t/60),sec=t-m*60;g.fillText(`${m}:${sec.toFixed(step<1?1:0).padStart(step<1?4:2,'0')}`,x+3*dp,H-7*dp)}}
+ // cut regions
+ let last=0;const cuts=[];for(const [a,b] of kept){if(a>last)cuts.push([last,a]);last=b}if(last<D.duration)cuts.push([last,D.duration]);
+ if(C){for(let i=1;i<kept.length;i++){const x=XA(CUM[i]);if(x<-20||x>W+20)continue;g.fillStyle=PAL.join;g.fillRect(x-.75*dp,top-56*dp,1.5*dp,H-top+38*dp);
+   const act=joinDrag&&joinDrag.i===i,on=act||(hover&&hover.i===i)||(lens&&lens.i===i);if(on){const side=act?(joinDrag.shift?'R':'L'):hover&&hover.i===i?hover.side:null;
+    if(side){g.fillStyle=PAL.hoverSide;g.fillRect(side==='L'?x-10*dp:x,top-56*dp,10*dp,H-top+38*dp)}g.fillStyle=PAL.acc;g.fillRect(x-1.5*dp,top-56*dp,3*dp,H-top+38*dp)}}
+  if(bubble&&bubble.moved&&bubble.msg){g.font=`${11*dp}px ${PAL.sans2}`;const tw=g.measureText(bubble.msg).width;g.fillStyle=PAL.tip;g.fillRect(8*dp,top-78*dp,tw+12*dp,18*dp);g.fillStyle=PAL.tipInk;g.fillText(bubble.msg,14*dp,top-65*dp)}
+  if(hover&&!joinDrag&&!lens){const x=XA(CUM[hover.i]);g.font=`${11*dp}px ${PAL.sans2}`;g.fillStyle=PAL.tip;const msg=(hover.side==='L'?'◀ trim · bring back ▶  (end of the part before)':'◀ bring back · trim ▶  (start of the part after)')+(optLens()?'  · click: fine trim':'');const tw=g.measureText(msg).width;
+   const lx=Math.min(W-tw-12*dp,Math.max(4*dp,x-tw/2));g.fillRect(lx-6*dp,top-78*dp,tw+12*dp,18*dp);g.fillStyle=PAL.tipInk;g.fillText(msg,lx,top-65*dp)}}
+ else for(const [a,b] of cuts){if(b<view[0]||a>view[1])continue;const x0=X(a),x1=X(b);g.fillStyle=PAL.cutFill;g.fillRect(x0,top-8*dp,x1-x0,H-top-18*dp);
+  g.save();g.beginPath();g.rect(x0,top-8*dp,x1-x0,H-top-18*dp);g.clip();g.strokeStyle=PAL.cutHatch;g.lineWidth=1*dp;for(let k=x0-H;k<x1;k+=10*dp){g.beginPath();g.moveTo(k,H);g.lineTo(k+H,0);g.stroke()}g.restore();
+  g.fillStyle=PAL.cutEdge;g.fillRect(x0,top-8*dp,1.5*dp,H-top-18*dp);g.fillRect(x1-1.5*dp,top-8*dp,1.5*dp,H-top-18*dp)}
+ // flagged joins from join-check (red = likely clipped, amber = check)
+ for(const j of (D.joins||[])){if(j.status==='ok')continue;const c=j.status==='likely clipped'?PAL.clip:PAL.check;for(const t of [j.src_out,j.src_in]){if(t<view[0]||t>view[1])continue;const x=X(t);g.fillStyle=c;g.globalAlpha=.45;g.fillRect(x-.5*dp,top-8*dp,1*dp,H-top-18*dp);g.globalAlpha=1;g.beginPath();g.moveTo(x,H-36*dp);g.lineTo(x-6*dp,H-25*dp);g.lineTo(x+6*dp,H-25*dp);g.closePath();g.fill()}}
+ // waveform
+ const p=D.pps,per=(view[1]-view[0])*p/W;
+ for(let x=0;x<W;x+=dp){const e=view[0]+x/W*(view[1]-view[0]);if(C&&e>edLen())break;const a=Math.floor(srcOf(e)*p),b=Math.max(a+1,Math.floor(a+per*dp));let pk=0,rm=0;for(let i=a;i<b&&i<D.peaks.length;i++){pk=Math.max(pk,D.peaks[i]);rm=Math.max(rm,D.rms[i])}
+  const k=inKept((a+.5)/p);g.fillStyle=k?PAL.pkK:PAL.pkC;g.fillRect(x,mid-pk*amp,dp,2*pk*amp);g.fillStyle=k?PAL.rmK:PAL.rmC;g.fillRect(x,mid-rm*amp,dp,2*rm*amp)}
+ // words above, greedily stacked in 3 rows so labels never overlap
+ g.font=`${12.5*dp}px ${PAL.sans}`;const ends=[-1e9,-1e9,-1e9];
+ if(C){const by=top-50*dp,bh=36*dp;for(const w of words){if(!inKept((w[0]+w[1])/2))continue;let x0=X(w[0]),x1=X(w[1]);if(x1<0||x0>W)continue;if(x1-x0<4*dp)x1=x0+4*dp;
+   const on=!!sel&&w[1]>sel[0]&&w[0]<sel[1];g.fillStyle=on?PAL.bubSel:PAL.bub;g.beginPath();g.roundRect(x0+1*dp,by,x1-x0-2*dp,bh,5*dp);g.fill();
+   g.strokeStyle=on?PAL.bubSelLine:PAL.bubLine;g.lineWidth=1*dp;g.stroke();g.save();g.beginPath();g.rect(x0+4*dp,by,x1-x0-8*dp,bh);g.clip();g.fillStyle=PAL.bubInk;g.fillText(w[2],x0+5*dp,by+23*dp);g.restore()}}
+ else
+ for(const w of words){const k=inKept((w[0]+w[1])/2);if(C&&!k)continue;const x0=X(w[0]),x1=X(w[1]);if(x1<0||x0>W)continue;const tw=g.measureText(w[2]).width;
+  g.fillStyle=k?PAL.barK:PAL.barC;g.fillRect(x0,top-12*dp,Math.max(2*dp,x1-x0-1*dp),3*dp);
+  let row=ends.findIndex(e=>x0>e+6*dp);if(row<0)row=ends.indexOf(Math.min(...ends));ends[row]=x0+tw;
+  const y=top-18*dp-row*15*dp;g.fillStyle=k?PAL.wK:PAL.wC;g.fillText(w[2],x0,y);if(!k)g.fillRect(x0,y-4*dp,tw,1*dp);
+  if(row){g.fillStyle=k?PAL.leadK:PAL.leadC;g.fillRect(x0,y+3*dp,1*dp,top-12*dp-y-3*dp)}}
+ // B: what the pull trims (red) or brings back (blue), until you let go
+ const pd=joinDrag&&joinDrag.pend;if(pd&&optHL()&&C){const x0=X(pd.a),x1=X(pd.b),tr=pd.kind==='trim';g.fillStyle=tr?PAL.hlTrim:PAL.hlBack;g.fillRect(x0,top-52*dp,x1-x0,H-top+30*dp);
+  const msg=(tr?'trimming ':'bringing back ')+(pd.b-pd.a).toFixed(2)+' s';g.font=`600 ${11*dp}px ${PAL.sans2}`;const tw=g.measureText(msg).width,lx=Math.max(6*dp,Math.min(W-tw-18*dp,(x0+x1)/2-tw/2-6*dp));
+  g.fillStyle=tr?PAL.hlTrimTag:PAL.hlBackTag;g.beginPath();g.roundRect(lx,top-74*dp,tw+12*dp,18*dp,4*dp);g.fill();g.fillStyle=PAL.tipInk;g.fillText(msg,lx+6*dp,top-61*dp)}
+ // selection
+ if(sel){const x0=X(sel[0]),x1=X(sel[1]);g.fillStyle=PAL.selFill;g.fillRect(x0,0,x1-x0,H-18*dp);g.fillStyle=PAL.selEdge;g.fillRect(x0,0,1.5*dp,H-18*dp);g.fillRect(x1-1.5*dp,0,1.5*dp,H-18*dp)}
+ // comment flags
+ for(const n of (NOTES||[])){if(C&&!inKept(n.t)){}const x=X(n.t);if(x<0||x>W)continue;const mine=!n.text.startsWith('Claude:');g.fillStyle=mine?PAL.flagMine:PAL.flagOther;g.beginPath();g.moveTo(x,H-22*dp);g.lineTo(x+7*dp,H-26*dp);g.lineTo(x,H-30*dp);g.closePath();g.fill();g.fillRect(x-.5*dp,H-30*dp,1*dp,10*dp)}
+ // playhead
+ const xp=X(v.currentTime);g.fillStyle=PAL.head;g.fillRect(xp-1*dp,0,2*dp,H-18*dp)}
+function nextFlag(){const L=(D.joins||[]).filter(j=>j.status!=='ok').sort((a,b)=>a.src_out-b.src_out);if(!L.length){toast('No flagged joins');return}
+ const j=L.find(j=>j.src_out>v.currentTime+.3)||L[0];v.currentTime=Math.max(0,j.src_out-1.2);centre(j.src_out);toast(`Join #${j.rank} · ${j.status}`);play()}
+let dragT=null;
+// drag the edge of a kept section on the waveform to trim it (outward restores, inward cuts)
+let edgeDrag=null,edgePushed=false;
+function edgeAt(t){const tol=10*(devicePixelRatio||1)/(cv.width/(view[1]-view[0]));let best=null;
+ kept.forEach(([a,b],i)=>{for(const [x,w] of [[a,0],[b,1]]){const d=Math.abs(t-x);if(d<=tol&&(best===null||d<best.d))best={d,i,w}}});return best}
+let wordDrag=null,joinDrag=null,selEdge=false,hover=null,bubble=null;
+function wordAt(t){let best=null,bd=1e9;for(let i=0;i<words.length;i++){const w=words[i];if(!inKept((w[0]+w[1])/2))continue;const d=t<w[0]?w[0]-t:(t>w[1]?t-w[1]:0);if(d<bd){bd=d;best=i}if(w[0]>t+5)break}return best}
+function joinAt(px){if(!coll())return null;const dp=devicePixelRatio||1;let best=null;for(let i=1;i<kept.length;i++){const x=XA(CUM[i]);const d=Math.abs(x-px);if(d<=12*dp&&(!best||d<best.d))best={i,d,side:px<x?'L':'R'}}return best}
+cv.addEventListener('mousedown',e=>{const dp=devicePixelRatio||1,r=cv.getBoundingClientRect(),px=(e.clientX-r.left)*dp,py=(e.clientY-r.top)*dp;
+ if(coll()){const top=74*dp;const j=joinAt(px);if(j&&py>top-56*dp){push();const i=j.i;joinDrag={i,x:px,end:kept[i-1][1],start:kept[i][0],shift:e.shiftKey?j.side!=='R':j.side==='R',moved:false,pend:null};e.preventDefault();return}
+  if(sel){const a=X(sel[0]),b=X(sel[1]);if(Math.abs(px-a)<=8*dp||Math.abs(px-b)<=8*dp){dragT=Math.abs(px-a)<Math.abs(px-b)?sel[1]:sel[0];selEdge=true;e.preventDefault();return}}
+  if(py>=top-50*dp&&py<=top-14*dp){const i=wordAt(T(px));if(i!==null){push();bubble={i,x:px,snap:JSON.stringify(kept),moved:false};sel=[words[i][0],words[i][1]];v.currentTime=words[i][0];refresh();e.preventDefault();return}}}
+});
+cv.addEventListener('mousedown',e=>{if(wordDrag!==null||joinDrag||selEdge||bubble)return;const r=cv.getBoundingClientRect(),t=T((e.clientX-r.left)*(devicePixelRatio||1));
+ const h=coll()?null:edgeAt(t);if(h&&!e.shiftKey){edgeDrag={...h,t0:kept[h.i][h.w]};edgePushed=false;e.preventDefault();return}
+ if(e.shiftKey&&sel){dragT=Math.abs(t-sel[0])<Math.abs(t-sel[1])?sel[1]:sel[0]}else dragT=t;sel=[Math.min(dragT,t),Math.max(dragT,t)];v.currentTime=t;refresh()});
+cv.addEventListener('mousemove',e=>{const dp=devicePixelRatio||1,r0=cv.getBoundingClientRect(),px=(e.clientX-r0.left)*dp;
+ if(bubble){const ds=(px-bubble.x)/cv.width*(view[1]-view[0]);if(Math.abs(px-bubble.x)>3*dp)bubble.moved=true;if(!bubble.moved)return;
+  kept=JSON.parse(bubble.snap);const w=words[bubble.i],s0=w[0];
+  if(ds<0){ // drag left: erase what comes before the word (on the edited timeline), the word slides left into it
+   const e1=edTime(s0),e0=Math.max(0,e1+ds);cum();const a=srcOf(e0);const o=[];for(const [p,q] of kept){if(s0<=p||a>=q){o.push([p,q]);continue}if(a>p)o.push([p,a]);if(s0<q)o.push([s0,q])}kept=norm(o);bubble.msg=`erase ${(-ds).toFixed(2)} s before “${w[2]}”`;if(a<s0-.01)scrubTo(a,'out',s0,ds)}
+  else{ // drag right: open hidden audio just before the word
+   const k=kept.findIndex(([p,q])=>s0>=p-1e-3&&s0<q);if(k>=0){const lo=k>0?kept[k-1][1]:0;kept[k][0]=Math.max(lo,Math.min(kept[k][0],s0)-ds);const nt=kept[k][0];kept=norm(kept);scrubTo(nt,'in',k>0&&nt>lo+.01?lo:null,ds)}bubble.msg=`open ${ds.toFixed(2)} s before “${w[2]}”`}
+  refresh();return}
+ if(joinDrag){const J=joinDrag,{i,x,end,start,shift}=J,ds=(px-x)/cv.width*(view[1]-view[0]);if(Math.abs(px-x)>3*dp)J.moved=true;if(!J.moved)return;
+  // A: the cut follows the pointer. B: a trim stays in place, red, until you let go (bringing back shows at once, blue).
+  if(!shift){const ne=Math.min(kept[i][0],Math.max(kept[i-1][0]+.02,end+ds)),hold=optHL()&&ne<end;kept[i-1][1]=hold?end:ne;J.pend=ne<end-1e-4?{a:ne,b:end,kind:'trim'}:ne>end+1e-4?{a:end,b:ne,kind:'back'}:null;refresh();scrubTo(ne,'out',kept[i][0],ne-end)}
+  else{const ns=Math.max(kept[i-1][1],Math.min(kept[i][1]-.02,start+ds)),hold=optHL()&&ns>start;kept[i][0]=hold?start:ns;J.pend=ns>start+1e-4?{a:start,b:ns,kind:'trim'}:ns<start-1e-4?{a:ns,b:start,kind:'back'}:null;refresh();scrubTo(ns,'in',kept[i-1][1],start-ns)}
+  return}
+ if(wordDrag!==null){const j=wordAt(T(px));if(j!==null){const a=Math.min(j,wordDrag),b=Math.max(j,wordDrag);sel=[words[a][0],words[b][1]];refresh()}return}
+ if(coll()&&dragT===null&&!edgeDrag){const j=joinAt(px);const nh=j?{i:j.i,side:j.side}:null;if(JSON.stringify(nh)!==JSON.stringify(hover)){hover=nh;draw()}const nearSel=sel&&(Math.abs(px-X(sel[0]))<=8*dp||Math.abs(px-X(sel[1]))<=8*dp);cv.style.cursor=j?(j.side==='L'?'w-resize':'e-resize'):(nearSel?'ew-resize':'')}
+});
+cv.addEventListener('mousemove',e=>{if(wordDrag!==null||joinDrag||bubble)return;const r=cv.getBoundingClientRect(),t=T((e.clientX-r.left)*(devicePixelRatio||1));
+ if(edgeDrag){if(!edgePushed){push();edgePushed=true}const {i,w}=edgeDrag;
+  const lo=w===0?(i>0?kept[i-1][1]:0):kept[i][0]+.02, hi=w===0?kept[i][1]-.02:(i<kept.length-1?kept[i+1][0]:D.duration);
+  kept[i][w]=Math.min(hi,Math.max(lo,quiet(t,.03)));refresh();
+  const d0=edgeDrag.t0;if(w===1)scrubTo(kept[i][1],'out',kept[i+1]?kept[i+1][0]:null,kept[i][1]-d0);else scrubTo(kept[i][0],'in',i>0?kept[i-1][1]:null,d0-kept[i][0]);return}
+ if(dragT===null){if(!coll())cv.style.cursor=edgeAt(t)?'ew-resize':'';return}
+ sel=[Math.min(dragT,t),Math.max(dragT,t)];refresh()});
+cv.addEventListener('mouseup',()=>{selEdge=false;scrubEnd();if(bubble){const m=bubble.moved,msg=bubble.msg,wi=bubble.i;bubble=null;if(!m){undo.pop();dirty=undo.length>0}else{toast(msg[0].toUpperCase()+msg.slice(1));preview(words[wi][0])}return}if(joinDrag){endJoin(true);return}if(wordDrag!==null){wordDrag=null;return}if(edgeDrag){const {i,w}=edgeDrag,et=kept[i]?.[w];edgeDrag=null;kept=norm(kept);refresh();if(edgePushed&&et!==undefined)preview(et);return}
+ if(sel&&sel[1]-sel[0]<.015)sel=null;dragT=null;refresh()});
+cv.addEventListener('mouseleave',()=>{if(hover){hover=null;draw()}});
+cv.addEventListener('wheel',e=>{e.preventDefault();const r=cv.getBoundingClientRect(),at=view[0]+(e.clientX-r.left)*(devicePixelRatio||1)/cv.width*(view[1]-view[0]),w=view[1]-view[0];
+ if(e.ctrlKey||e.metaKey){const nw=Math.min(axisMax(),Math.max(1,w*Math.exp(e.deltaY*.01)));const f=(at-view[0])/w;view=[at-f*nw,at+(1-f)*nw];$('zoom').value=nw}
+ else{const d=(e.deltaX||e.deltaY)*w/900;view=[view[0]+d,view[1]+d]}
+ if(view[0]<0)view=[0,view[1]-view[0]];if(view[1]>axisMax())view=[Math.max(0,axisMax()-(view[1]-view[0])),axisMax()];draw()},{passive:false});
+$('zoom').oninput=e=>{const c=(view[0]+view[1])/2,w=+e.target.value;view=[Math.max(0,c-w/2),0];view[1]=view[0]+w;draw()};
+// Letting go of a cut: a red (B) trim closes now; a click without a drag opens the fine-trim pop-up (C).
+function endJoin(onCanvas){const J=joinDrag;if(!J)return;joinDrag=null;
+ if(!J.moved){undo.pop();dirty=undo.length>0;refresh();if(onCanvas&&optLens())openLens(J.i);return}
+ const pd=J.pend;if(pd&&pd.kind==='trim'){if(J.shift)kept[J.i][0]=pd.b;else kept[J.i-1][1]=pd.a}
+ const jt=J.shift?kept[J.i]?.[0]:kept[J.i-1]?.[1];kept=norm(kept);refresh();
+ toast(pd?(pd.kind==='trim'?'Trimmed ':'Brought back ')+(pd.b-pd.a).toFixed(2)+' s':'Cut unchanged');if(jt!==undefined)preview(jt)}
+// C, the fine-trim pop-up: a 3 s close-up of one cut. Top row: the part before, kept up to its end, then what the
+// cut hides (faded). Bottom row: what the cut hides before the part after (faded), then the part after. Click or drag
+// in a row to put that side's edge there; arrow keys nudge a frame. Changes apply as you go (one undo step).
+const LWIN=3,lc=$('lensC'),lg=lc.getContext('2d');let lens=null;
+function openLens(i){if(lens&&lens.i!==i)closeLens();if(i<1||i>=kept.length)return;scrubEnd();lens={i,E0:kept[i-1][1],S0:kept[i][0],c1:kept[i-1][1],c2:kept[i][0],pushed:false,row:0};$('lensP').hidden=false;drawLens();draw()}
+function closeLens(){if(!lens)return;const L=lens;lens=null;$('lensP').hidden=true;scrubEnd();
+ const E=kept[L.i-1][1],S=kept[L.i][0],dE=E-L.E0,dS=L.S0-S;kept=norm(kept);refresh();
+ if(L.pushed){const part=(d,w)=>Math.abs(d)<.005?'':`${w} ${d>0?'+':'−'}${Math.abs(d).toFixed(2)} s`;toast(['Fine trim',part(dE,'· part before'),part(dS,'· part after')].filter(Boolean).join(' '));preview(S)}}
+function lensSet(row,s){const L=lens,i=L.i;if(!L.pushed){push();L.pushed=true}
+ if(row===1){const E=Math.min(kept[i][0]-.02,Math.max(kept[i-1][0]+.02,s));kept[i-1][1]=E;refresh();scrubTo(E,'out',kept[i][0],E-L.E0)}
+ else{const S=Math.max(kept[i-1][1]+.02,Math.min(kept[i][1]-.02,s));kept[i][0]=S;refresh();scrubTo(S,'in',kept[i-1][1],L.S0-S)}
+ drawLens()}
+function drawLens(){if(!lens||!D)return;const dp=devicePixelRatio||1,W=Math.round(lc.clientWidth*dp),H=Math.round(lc.clientHeight*dp);if(lc.width!==W||lc.height!==H){lc.width=W;lc.height=H}
+ const L=lens,i=L.i,E=kept[i-1][1],S=kept[i][0],g2=lg,p=D.pps,rh=(H-14*dp)/2;g2.clearRect(0,0,W,H);
+ const row=(y,c,edge,before,orig,label)=>{const xs=s=>(s-c+LWIN/2)/LWIN*W,solid=s=>before?s<edge:s>=edge,mid=y+rh*.66,amp=rh*.3;
+  g2.fillStyle=PAL.lensRow;g2.beginPath();g2.roundRect(0,y,W,rh,8*dp);g2.fill();
+  for(let x=0;x<W;x+=dp){const s=c-LWIN/2+x/W*LWIN;if(s<0||s>D.duration)continue;const a=Math.floor(s*p),b=Math.max(a+1,Math.floor((s+dp/W*LWIN)*p));let pk=0,rm=0;for(let k=a;k<b&&k<D.peaks.length;k++){pk=Math.max(pk,D.peaks[k]);rm=Math.max(rm,D.rms[k])}
+   const on=solid(s);g2.fillStyle=on?PAL.lpkK:PAL.lpkC;g2.fillRect(x,mid-pk*amp,dp,2*pk*amp);g2.fillStyle=on?PAL.lrmK:PAL.lrmC;g2.fillRect(x,mid-rm*amp,dp,2*rm*amp)}
+  g2.font=`${12*dp}px ${PAL.sans}`;for(const w of words){if(w[1]<c-LWIN/2||w[0]>c+LWIN/2)continue;const x0=xs(w[0]),x1=xs(w[1]),on=solid((w[0]+w[1])/2);
+   g2.fillStyle=on?PAL.lwK:PAL.lwC;g2.beginPath();g2.roundRect(x0+1*dp,y+6*dp,Math.max(4*dp,x1-x0-2*dp),20*dp,4*dp);g2.fill();
+   g2.save();g2.beginPath();g2.rect(x0+3*dp,y+6*dp,Math.max(0,x1-x0-6*dp),20*dp);g2.clip();g2.fillStyle=on?PAL.lwInkK:PAL.lwInkC;g2.fillText(w[2],x0+4*dp,y+21*dp);g2.restore()}
+  const xo=xs(orig);if(Math.abs(orig-edge)>.004){g2.strokeStyle=PAL.lOrig;g2.setLineDash([4*dp,3*dp]);g2.lineWidth=1.5*dp;g2.beginPath();g2.moveTo(xo,y+2*dp);g2.lineTo(xo,y+rh-2*dp);g2.stroke();g2.setLineDash([])}
+  const xe=xs(edge);g2.fillStyle=PAL.acc;g2.fillRect(xe-1.5*dp,y,3*dp,rh);
+  g2.font=`600 ${11*dp}px ${PAL.sans2}`;const tw=g2.measureText(label).width;g2.fillStyle=PAL.lTip;g2.fillRect(6*dp,y+rh-22*dp,tw+12*dp,17*dp);g2.fillStyle=PAL.tipInk;g2.fillText(label,12*dp,y+rh-9*dp)};
+ row(0,L.c1,E,true,L.E0,`Part before · ends ${fmt(edTime(E-1e-3))}`);row(rh+14*dp,L.c2,S,false,L.S0,'Part after · starts here');
+ const d1=E-L.E0,d2=L.S0-S,f=(d,w)=>Math.abs(d)<.005?'':`${w} ${d>0?'+':'−'}${Math.abs(d).toFixed(2)} s`;$('lensD').textContent=[f(d1,'before'),f(d2,'after')].filter(Boolean).join(' · ')}
+lc.addEventListener('pointerdown',e=>{if(!lens)return;const r=lc.getBoundingClientRect(),y=e.clientY-r.top,rowN=y<r.height/2?1:2;lens.row=rowN;try{lc.setPointerCapture(e.pointerId)}catch(_){}
+ const at=x=>(rowN===1?lens.c1:lens.c2)-LWIN/2+(x-r.left)/r.width*LWIN;lensSet(rowN,quiet(at(e.clientX),.03));
+ const mv=ev=>lensSet(rowN,quiet(at(ev.clientX),.03)),up=()=>{lc.removeEventListener('pointermove',mv);lc.removeEventListener('pointerup',up);if(lens){lens.c1=kept[lens.i-1][1];lens.c2=kept[lens.i][0];scrubEnd();drawLens()}};
+ lc.addEventListener('pointermove',mv);lc.addEventListener('pointerup',up)});
+$('lensX').onclick=closeLens;
+addEventListener('mousedown',e=>{if(!lens||$('lensP').contains(e.target))return;if(e.target===cv){const r=cv.getBoundingClientRect(),j=joinAt((e.clientX-r.left)*(devicePixelRatio||1));if(j&&j.i===lens.i)return}closeLens()},true);
+addEventListener('keydown',e=>{if(!lens||e.target.tagName==='TEXTAREA')return;const k=e.key;
+ if(k==='Escape'||k==='Enter'){e.preventDefault();e.stopImmediatePropagation();closeLens();return}
+ if(k==='ArrowLeft'||k==='ArrowRight'){e.preventDefault();e.stopImmediatePropagation();const d=(k==='ArrowLeft'?-1:1)/D.fps,i=lens.i;
+  if(e.shiftKey)lensSet(2,kept[i][0]+d);else lensSet(1,kept[i-1][1]+d);lens.c1=kept[i-1][1];lens.c2=kept[i][0];drawLens();setTimeout(()=>{if(lens)scrubEnd()},200)}},true);
+addEventListener('resize',()=>{if(lens)drawLens()});
+// Video Octopus's Cut tab listens: each save sends the cut as it was opened and as it is now, so Video Octopus can put "the cut
+// changed" in the change package and Claude re-times everything after the edits. Video Octopus can also point at a cut.
+let BASE=null;
+function tellStudio(){if(parent===window||!BASE)return;try{parent.postMessage({type:'studio:cut-saved',base:BASE,segments:kept.map(([a,b])=>[+a.toFixed(3),+b.toFixed(3)]),length:+edLen().toFixed(3)},'*')}catch(e){}}
+addEventListener('message',e=>{const m=e.data;if(!m||m.type!=='studio:cut-goto'||!D)return;if(!coll()){$('coll').checked=true;$('coll').onchange()}cum();
+ let best=-1,bd=1e9;for(let i=1;i<kept.length;i++){const d=Math.abs(CUM[i]-m.t);if(d<bd){bd=d;best=i}}const hit=best>0&&bd<1.5,e0=hit?CUM[best]:m.t,w=Math.min(view[1]-view[0],6);
+ view=[Math.max(0,e0-w/2),0];view[1]=view[0]+w;v.pause();v.currentTime=srcOf(e0);if(hit){hover={i:best,side:'L'};if(optLens())openLens(best)}draw()});
+// playback that skips cuts
+let joinStop=null,rawStop=null;
+// Scrub: while you drag a cut's edge, the picture follows that edge (the last frame kept before the join, or the
+// first one after it), a corner inset shows the other side of the join, and a short blip of sound plays from the edge.
+const v2=$('v2'),tc=$('trimc'),tg=tc.getContext('2d');let scrub=null,blipT=null;
+function drawInset(){const d=devicePixelRatio||1,w=Math.round(tc.clientWidth*d),h=Math.round(tc.clientHeight*d);if(!w||!h||!v2.videoWidth)return;
+ if(tc.width!==w||tc.height!==h){tc.width=w;tc.height=h}tg.drawImage(v2,0,0,w,h)}
+['seeked','loadeddata'].forEach(e=>v2.addEventListener(e,drawInset));
+function scrubTo(t,side,other,dl){ // side 'out': t ends the part before the join; 'in': t starts the part after it; dl: seconds opened (+) or trimmed (−) so far
+ if(!D)return;
+ if(!scrub){scrub={last:0,want:null};joinStop=null;v.pause();tc.style.aspectRatio=v.videoWidth?`${v.videoWidth}/${v.videoHeight}`:'16/9';$('vwrap').classList.add('trim')}
+ const fr=1/(D.fps||30),show=side==='out'?Math.max(0,t-fr):t;scrub.want=show;
+ $('trimM').textContent=(side==='out'?'Last frame before the join':'First frame after the join')+(Math.abs(dl)<.005?'':dl>0?` · opened ${dl.toFixed(2)} s`:` · trimmed ${(-dl).toFixed(2)} s`);
+ $('trim').classList.toggle('none',other==null);
+ if(other!=null){const o=side==='out'?other:Math.max(0,other-fr);if(Math.abs(v2.currentTime-o)>fr/2)v2.currentTime=o;$('trimL').textContent=side==='out'?'After the join':'Before the join'}
+ const now=performance.now();
+ if($('scrub').checked&&now-scrub.last>120){scrub.last=now;clearTimeout(blipT);v.playbackRate=1;v.currentTime=side==='out'?Math.max(0,t-.16):t;v.play().catch(()=>{});
+  blipT=setTimeout(()=>{v.pause();if(scrub)v.currentTime=scrub.want},160)}
+ else if(v.paused)v.currentTime=show}
+function scrubEnd(){if(!scrub)return;clearTimeout(blipT);if(!v.paused)v.pause();v.currentTime=scrub.want;scrub=null;$('vwrap').classList.remove('trim')}
+addEventListener('mouseup',()=>setTimeout(()=>{if(scrub&&!joinDrag&&!edgeDrag&&!bubble)scrubEnd()},0));
+function loop(){if(D){const t=v.currentTime;if(rawStop!==null&&!v.paused&&t>=rawStop){v.pause();rawStop=null}if(!scrub&&rawStop===null&&!v.paused&&!inKept(t)){const n=nextKept(t);if(n===null){v.pause()}else v.currentTime=n}
+ if(joinStop!==null&&!v.paused&&edTime(v.currentTime)>=joinStop){v.pause();joinStop=null}
+ $('ph').textContent=fmt(edTime(t));if(!v.paused&&!scrub)centre(t);
+ const cur=document.querySelector('.w.now'),i=words.findIndex(w=>t>=w[0]&&t<w[1]);if(cur&&+cur.dataset.i!==i)cur.classList.remove('now');
+ if(i>=0){const el=document.querySelector(`.w[data-i="${i}"]`);if(el&&!el.classList.contains('now')){el.classList.add('now');if(!v.paused&&!scrub)el.scrollIntoView({block:'nearest'})}}
+ draw()}requestAnimationFrame(loop)}
+function play(){rawStop=null;if(!inKept(v.currentTime)){const n=nextKept(v.currentTime);if(n===null)return;v.currentTime=n}v.playbackRate=+$('spd').value;v.play()}
+let NOTES=[];function showNotes(){$('nl').innerHTML=NOTES.map(n=>`<li data-t="${n.t}"><b>${fmt(n.edited_t)}</b>${n.text.replace(/</g,'&lt;')}<span class="x" data-id="${n.id}">×</span></li>`).join('');
+ $('nl').querySelectorAll('li').forEach(li=>li.onclick=e=>{if(e.target.classList.contains('x'))return;v.currentTime=+li.dataset.t;centre(v.currentTime)});
+ $('nl').querySelectorAll('.x').forEach(x=>x.onclick=async()=>{await fetch('/notes/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:+x.dataset.id})});NOTES=NOTES.filter(n=>n.id!==+x.dataset.id);showNotes()})}
+async function addNote(){const text=$('nt').value.trim();if(!text)return;const t=v.currentTime;const n=await (await fetch('/notes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({t,edited_t:edTime(t),text})})).json();NOTES.push(n);NOTES.sort((a,b)=>a.t-b.t);$('nt').value='';$('nt').blur();showNotes();toast('Comment saved at '+fmt(edTime(t)))}
+function hearJoin(){const t=v.currentTime;let best=null;for(let i=1;i<kept.length;i++){const j=kept[i][0];if(best===null||Math.abs(j-t)<Math.abs(best-t))best=j}if(best===null)return;
+ const i=kept.findIndex(s=>s[0]===best),pre=kept[i-1];const et=edTime(best);let start=et-1.6;let d=0,st=pre[1]-1.6;for(const [a,b] of kept){if(d+(b-a)>=start){st=a+(start-d);break}d+=b-a}
+ v.currentTime=Math.max(0,st);joinStop=et+1.6;rawStop=null;centre(best);v.play()}
+async function save(force,auto){const r=await fetch('/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({segments:kept,version:D.version,force:!!force})});const j=await r.json();
+ if(r.status===409&&auto){autoConflict();return}
+ if(r.status===409){if(confirm('Claude changed this edit after you opened the page.\n\nOK = reload and get Claude\'s version (your unsaved changes here are lost)\nCancel = keep working (Save stays blocked)')){dirty=false;location.reload()}else if(confirm('Overwrite Claude\'s version with yours?'))save(true);return}
+ D.version=j.version;dirty=false;tellStudio();if(AUTOSAVE)autoSaved();if(!auto)toast(`Saved · ${fmt(j.length)}. Tell Claude “saved”.`)}
+// warn when the edit changes on disk (e.g. Claude applied fixes)
+setInterval(async()=>{if(!D||autoBusy)return;try{const j=await (await fetch('/version')).json();if(Math.abs(j.version-D.version)>1e-6){if(!dirty){toast('Claude updated the edit, reloading…');setTimeout(()=>location.reload(),900)}else{const b=$('banner');b.style.display='block'}}}catch(e){}},4000);
+// Autosave, only when Video Octopus's Cut tab opens the editor with ?autosave=1 (opened on its own, nothing here runs):
+// about a second after the cut stops changing, the same versioned save as ⌘S, with "Saved · just now" in the header.
+// It watches the cut itself, so every kind of edit counts, ⌘Z / ⌘⇧Z included. Opening the editor saves nothing.
+const AUTOSAVE=new URLSearchParams(location.search).get('autosave')==='1';
+let autoBusy=false,autoSnap=null,autoLast=null,autoAt=0,autoChanged=0,autoStop=false,autoErr=false;
+function autoShow(t,cls){const e=$('autoState');if(e){e.textContent=t;e.className='stat'+(cls?' '+cls:'')}}
+function autoAgo(){if(!autoAt||autoStop||autoBusy||autoErr)return;const s=(Date.now()-autoAt)/1000;autoShow('Saved · '+(s<60?'just now':s<3600?Math.round(s/60)+' min ago':new Date(autoAt).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})),'ok')}
+function autoSaved(){autoLast=JSON.stringify(kept);autoAt=Date.now();autoStop=false;autoErr=false;$('banner').style.display='none';autoAgo()}
+function autoConflict(){autoStop=true;$('banner').style.display='block';autoShow('Not saved: Claude changed this edit','bad')}
+async function autoTick(){if(!D||autoBusy)return;const k=JSON.stringify(kept);
+ if(autoLast===null){autoLast=autoSnap=k;return}               // the cut as opened: not a change
+ if(k!==autoSnap){autoSnap=k;autoChanged=Date.now()}
+ if(k===autoLast){dirty=false;return}
+ dirty=true;if(autoStop||Date.now()-autoChanged<1000)return;
+ autoBusy=true;autoShow('Saving…');let ok=true;try{await save(false,true)}catch(e){ok=false}autoBusy=false;
+ if(ok)autoAgo();else{autoErr=true;autoChanged=Date.now();autoShow('Couldn’t save · retrying','bad')}}
+if(AUTOSAVE){
+ const st=document.createElement('span');st.id='autoState';st.className='stat';st.setAttribute('aria-live','polite');$('bSave').before(st);
+ const css=document.createElement('style');css.textContent='#autoState.ok b,#autoState.ok{color:#7ee2a8}#autoState.bad{color:#f85149}';document.head.append(css);
+ autoShow('Autosave on');setInterval(autoTick,250);setInterval(autoAgo,15000);
+ // Leaving with a change not saved yet (the tab or the project closes): send it on the way out.
+ addEventListener('pagehide',()=>{if(D&&!autoStop&&autoLast!==null&&JSON.stringify(kept)!==autoLast)navigator.sendBeacon('/save',new Blob([JSON.stringify({segments:kept,version:D.version,force:false})],{type:'application/json'}))});
+}
+$('bCut').onclick=()=>sel&&cut(...sel);$('bRest').onclick=()=>sel&&restore(...sel);$('bUndo').onclick=()=>{if(undo.length){redo.push(JSON.stringify(kept));kept=JSON.parse(undo.pop());refresh();toast('Undone')}};
+$('coll').onchange=()=>{const w=view[1]-view[0],c=axisOf(v.currentTime);view=[Math.max(0,c-w*.3),0];view[1]=view[0]+w;$('coll').blur();draw()};
+$('bJoin').onclick=hearJoin;$('bTidy').onclick=()=>tidy(false);$('bNote').onclick=addNote;$('spd').onchange=()=>{v.playbackRate=+$('spd').value;$('spd').blur()};
+$('nt').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();addNote()}else if(e.key==='Escape'){$('nt').blur()}e.stopPropagation()});
+fetch('/notes').then(r=>r.json()).then(n=>{NOTES=n;showNotes()}).catch(()=>{});$('bSave').onclick=save;$('hide').onchange=e=>document.body.classList.toggle('hidecut',e.target.checked);
+addEventListener('keydown',e=>{if(e.target.tagName==='INPUT'&&e.target.type!=='checkbox'&&e.target.type!=='range')return;const k=e.key;
+ if(k===' '){e.preventDefault();v.paused?play():v.pause()}
+ else if(k==='Delete'||k==='Backspace'){e.preventDefault();sel&&cut(...sel)}
+ else if(k==='r'||k==='R'){sel&&restore(...sel)}
+ else if(k==='j'||k==='J'){hearJoin()}
+ else if((e.metaKey||e.ctrlKey)&&e.shiftKey&&(k==='z'||k==='Z')){e.preventDefault();if(redo.length){undo.push(JSON.stringify(kept));kept=JSON.parse(redo.pop());refresh();toast('Redone')}}
+ else if((e.metaKey||e.ctrlKey)&&k==='z'){e.preventDefault();$('bUndo').onclick()}
+ else if(k===']'||k==='['){const L=NOTES.map(n=>n.t).sort((a,b)=>a-b);const t=v.currentTime;const n=k===']'?L.find(x=>x>t+.3):[...L].reverse().find(x=>x<t-.3);if(n!==undefined){v.currentTime=n;centre(n);const nn=NOTES.find(x=>x.t===n);toast(nn.text.slice(0,90))}}
+ else if((e.metaKey||e.ctrlKey)&&k==='s'){e.preventDefault();save()}
+ else if(k==='ArrowLeft'||k==='ArrowRight'){e.preventDefault();v.pause();v.currentTime+=(k==='ArrowLeft'?-1:1)/D.fps;centre(v.currentTime)}
+ else if(k==='n'||k==='N'){nextFlag()}
+ else if(k==='/'){e.preventDefault();razor()}
+ else if(k==='c'||k==='C'){$('coll').checked=!$('coll').checked;$('coll').onchange()}
+ else if(k==='m'||k==='M'){e.preventDefault();$('nt').focus()}
+ else if(k==='1'||k==='2'||k==='3'){$('spd').value=k;v.playbackRate=+k}
+ else if(k==='Escape'){sel=null;refresh()}});
+addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue=''}});
+if(STUDIO)studioSetup(); // studio.js: the header menus and the line to Video Octopus's Cut inspector
+addEventListener('resize',fit);
+fetch('/data.json').then(r=>r.json()).then(d=>{D=d;words=d.words;KEEP0=new Set(d.segments.filter(([a,b])=>b>a).map(([a,b])=>pk(+a,+b)));kept=norm(d.segments.map(([a,b])=>[+a,+b]));$('src').textContent=d.source+(d.saved?' · your saved edit':'');$('dur').textContent=fmt(d.duration);
+ buildTx();fit();setTimeout(()=>{const el=[...document.querySelectorAll('.w')].find(e=>!e.classList.contains('cut'));el&&el.scrollIntoView({block:'start'})},50);const f=kept[0]?kept[0][0]:0;view=coll()?[0,8]:[Math.max(0,f-1),Math.max(0,f-1)+8];v.currentTime=f;refresh();BASE=kept.map(([a,b])=>[+a.toFixed(3),+b.toFixed(3)]);autoLast=autoSnap=JSON.stringify(kept);requestAnimationFrame(loop);if(STUDIO)studioReady()});
+
+// Mirror the video into a canvas: some embedded browsers decode frames but never paint the <video> layer.
+(()=>{const v=document.getElementById('v'),c=document.getElementById('vc'),x=c.getContext('2d');
+function draw(){const w=v.clientWidth,h=v.clientHeight,d=devicePixelRatio||1;if(!w||!h)return;
+ if(c.width!==Math.round(w*d)||c.height!==Math.round(h*d)){c.width=Math.round(w*d);c.height=Math.round(h*d)}
+ x.fillStyle='#000';x.fillRect(0,0,c.width,c.height);const vw=v.videoWidth,vh=v.videoHeight;if(!vw)return;
+ const k=Math.min(c.width/vw,c.height/vh),dw=vw*k,dh=vh*k;x.drawImage(v,(c.width-dw)/2,(c.height-dh)/2,dw,dh)}
+if(v.requestVideoFrameCallback){const f=()=>{draw();v.requestVideoFrameCallback(f)};v.requestVideoFrameCallback(f)}
+else{(function loop(){draw();requestAnimationFrame(loop)})()}
+['loadeddata','seeked','pause','play','timeupdate'].forEach(e=>v.addEventListener(e,draw));addEventListener('resize',draw)})();
+</script></body></html>

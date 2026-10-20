@@ -1,0 +1,24 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Video Octopus background render</title>
+<!-- Opened by the export in a headless Chrome (server/backgrounds.mjs): renders an animated background frame by
+     frame with the canvas's own drawing code (web/look.js) and posts each frame back as a PNG. -->
+<script type="module">
+const token = location.hash.slice(1);
+const post = (path, body) => fetch(`/api/bgjob/${token}/${path}`, { method: 'POST', headers: { 'X-Studio': '1' }, body });
+try {
+  const job = await (await fetch(`/api/bgjob/${token}`)).json();
+  if (!job.W) throw new Error(job.error || 'No such background job.');
+  const n = Math.max(1, Math.min(job.workers || 6, job.frames));
+  await Promise.all(Array.from({ length: n }, (_, k) => new Promise((resolve, reject) => {
+    const w = new Worker('/bg-worker.js', { type: 'module' });
+    w.onmessage = (e) => (e.data.error ? reject(new Error(e.data.error)) : resolve());
+    w.onerror = (e) => reject(new Error(e.message || 'worker failed'));
+    w.postMessage({ token, job, k, n });
+  })));
+  await post('done', '');
+} catch (e) {
+  console.error(e);
+  await post('fail', String(e.message || e));
+}
+</script>

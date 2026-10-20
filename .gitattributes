@@ -1,0 +1,3 @@
+# Windows batch files need CRLF line endings to run reliably; shell scripts need LF, whatever git's autocrlf says.
+*.cmd text eol=crlf
+*.sh text eol=lf

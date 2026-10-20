@@ -1,0 +1,4 @@
+{
+  "_about": "This studio's own formats, merged over Video Octopus's built-in ones (core/pipelines.json in the app). A format is matched by id (tutorial, short, explainer, or a new id with its own label and steps). Its styles are added, or replaced when the id matches; blocks and steps are replaced when given; defaultStyle picks the style new projects start with. Example: {\"formats\": {\"short\": {\"styles\": [{\"id\": \"my-reel\", \"label\": \"My reel\", \"skill\": \"my-reel-skill\", \"hint\": \"what it looks like\"}], \"defaultStyle\": \"my-reel\"}}}",
+  "formats": {}
+}

@@ -1,0 +1,365 @@
+{
+  "_about": "The formats a project can be and the steps each goes through. A format is a template: its blocks (the row on the section band, kept in work/blocks.json), its steps, its frame shape and, for Shorts, its styles. App steps (kind app) open a part of Video Octopus instead of asking Claude: import, open-cut, open-scenes. The app lights the first step that isn't done. A step is done when one of its files exists in the project, its worklog line is in WORKLOG.md, (json) a key is set in a JSON file, or (kept) a zooms or shots file has an item that isn't a proposal. Claude steps send the skill's slash command plus `ask` into the project's chat (`motion`: \"plan\" or \"build\" adds a line on the studio's motion-graphics skills, or what to do without any: server/skills-gh.mjs motionNote); `brief` steps get their text from Video Octopus (server/blocks.mjs). {source} is replaced by the project's source files, {style} by the Short's style. `more` lists single steps that stay reachable from the rail's ⋯ menu. Old format ids stay readable through `aliases` (project.json files are never rewritten). A studio adds its own formats and Short styles in <studio>/.studio/formats.json, merged over these (server/studio.mjs mergeFormats): keep creator-specific styles and skills there, not here. What a creator reads about a step comes from the step itself, one source for the stage chips, the Next and Done cards, the empty states and the first-time help: `stage` (one of the five in `stages`, which never change: Record, Cut, Plan, Build, Polish), `name` (the plain name the creator sees; `label` stays for the chat, old logs and the prompts), `what` (one sentence: what it does and who does it; {blocks} becomes the format's own block names), `where` (where its result shows) and `show` {tab: canvas|scenes|cut|renders|post, target} (what Show me points at). The line a finished step shows is worked out from its files on the server (server/studio.mjs doneLine). A studio's own step without these fields shows its label and a plain line.",
+  "aliases": { "long": "tutorial", "reel": "short" },
+  "stages": [
+    { "name": "Record", "title": "Your take", "what": "Record yourself, or bring a video in." },
+    { "name": "Cut", "title": "Claude tidies it", "what": "Cleans up the ums and pauses and splits the video into sections. You can fix any cut, then lock it." },
+    { "name": "Plan", "title": "Claude plans the scenes", "what": "For each line, what is on screen. They show up in the Scenes tab." },
+    { "name": "Build", "title": "Claude builds it", "what": "Makes each scene and renders the video, in your style." },
+    { "name": "Polish", "title": "You review", "what": "Watch scene by scene and leave notes; Claude fixes them. Then the finishing touches." }
+  ],
+  "blockTypes": {
+    "intro": "Intro",
+    "body": "Main body",
+    "sponsor": "Sponsor read",
+    "outro": "Outro",
+    "broll": "B-roll",
+    "custom": "Custom"
+  },
+  "shared": {
+    "import": {
+      "label": "Record or import",
+      "stage": "Record", "name": "Record",
+      "what": "Record your take, or bring one in.",
+      "where": "the take, on the canvas",
+      "show": { "tab": "canvas", "target": "picture" },
+      "kind": "app",
+      "action": "import",
+      "done": { "files": ["source/*.mov", "source/*.mp4", "source/*.m4v", "source/*_audio.wav"] }
+    },
+    "prepare": {
+      "label": "Prepare",
+      "stage": "Cut", "name": "Clean up",
+      "what": "Claude writes the transcript, cuts the ums, long pauses and retakes, then listens to every cut.",
+      "where": "a first cut, in the Cut tab",
+      "show": { "tab": "cut", "target": "cut" },
+      "ask": "Prepare this recording ({source}) in one go: transcribe, rough cut and join check, using the transcribe, rough-cut and join-check skills in that order, without stopping between them.\n1. Transcribe the camera file (it carries the mic): the plain pass into work/tr/ (words.json + SRT) and the filler pass the rough-cut skill asks for into work/tr_fill/. {transcribe}\n2. Rough cut: find the cuts (work/cuts.json) and apply the default decisions: \"cut\" items on, \"ask\" items off, the last take of every retake kept. That writes work/rough.mp4, work/rough_map.json and work/rough_words.json. Don't open a review page and don't wait for me: I veto or restore cuts in Video Octopus's Cut tab.\n3. Join check on the rough cut (--map work/rough_map.json --words work/tr/words.json) into work/joins.json and work/edl_fixed.json. From then on work/edl_fixed.json is the cut Video Octopus uses: the Cut tab opens it and the export plays it, so the fixes join-check made there are already applied (say so; don't call them pending).\nThen write work/prepare.json: {\"cuts\": number of cuts made, \"saved_s\": seconds removed, \"ask\": [{\"t\": source seconds where it starts, \"end\": source seconds where it ends (for anything longer than a word: false starts, a retake, an unfinished ending; Keep and Cut in the Cut tab act on t–end), \"what\": \"…\"}] (every cut the rough cut marked \"ask\", retakes too, whatever you did with it, and anything else that needs my call: the Cut tab lists these under To check), \"retakes\": number, \"joins\": number, \"clipped\": likely clipped joins the fix did not resolve (a join whose fix is in work/edl_fixed.json is fixed, not one for me), \"needs_you\": asks + clipped, \"summary\": \"Rough cut: 14 cuts, 2 need you\"}, add one line to WORKLOG.md, and tell me in three short lines: how much shorter, what needs me (with times), and that the Cut tab shows them. Only stop early if a step fails or needs a decision only I can make.",
+      "done": { "files": ["work/joins.json"] },
+      "subs": [
+        { "id": "transcribe", "label": "Transcribe", "files": ["work/tr/words.json", "work/words.json"] },
+        { "id": "rough-cut", "label": "Rough cut", "files": ["work/rough_map.json"] },
+        { "id": "join-check", "label": "Join check", "files": ["work/joins.json"] }
+      ]
+    },
+    "transcribe": {
+      "label": "Transcribe",
+      "stage": "Cut", "name": "Transcribe",
+      "what": "Claude writes down every word you say, with its time.",
+      "where": "your words, in the Cut tab",
+      "show": { "tab": "cut", "target": "cut" },
+      "skill": "transcribe",
+      "ask": "Transcribe this project's recording ({source}). Put the word times in work/tr/words.json and the SRT next to it. {transcribe}",
+      "done": { "files": ["work/tr/words.json", "work/words.json"] }
+    },
+    "rough-cut": {
+      "label": "Rough cut",
+      "stage": "Cut", "name": "Rough cut",
+      "what": "Claude cuts the ums, long pauses and retakes.",
+      "where": "a first cut, in the Cut tab",
+      "show": { "tab": "cut", "target": "cut" },
+      "skill": "rough-cut",
+      "ask": "Rough-cut this project's recording ({source}) from work/tr/words.json. Keep the outputs in work/ (rough.mp4, rough_map.json, rough_words.json).",
+      "done": { "files": ["work/rough_map.json"] }
+    },
+    "join-check": {
+      "label": "Join check",
+      "stage": "Cut", "name": "Join check",
+      "what": "Claude listens to every cut and flags the ones that clip a word.",
+      "where": "flags on the cuts, in the Cut tab",
+      "show": { "tab": "cut", "target": "cut" },
+      "skill": "join-check",
+      "ask": "Check every join of the rough cut (work/rough_map.json) and write work/joins.json and work/edl_fixed.json.",
+      "done": { "files": ["work/joins.json"] }
+    },
+    "sections": {
+      "label": "Mark sections",
+      "stage": "Cut", "name": "Split into sections",
+      "what": "Claude finds where {blocks} start and end.",
+      "where": "coloured sections on the band above the timeline",
+      "show": { "tab": "canvas", "target": "sections" },
+      "brief": "sections",
+      "done": { "json": ["work/blocks.json", "marked"] }
+    },
+    "cut-editor": {
+      "label": "Fix in Cut Editor",
+      "stage": "Cut", "name": "Fix the cut",
+      "what": "Delete words or drag cut edges yourself, in the Cut tab.",
+      "where": "your changes, in the Cut tab",
+      "show": { "tab": "cut", "target": "cut" },
+      "kind": "app",
+      "action": "open-cut",
+      "optional": true,
+      "done": { "files": ["work/edl_manual.json"] }
+    },
+    "lock": {
+      "label": "Lock the cut",
+      "stage": "Cut", "name": "Lock the cut",
+      "what": "Claude checks every join one last time and freezes the cut, so scenes can be timed to it.",
+      "where": "a lock on the Cut tab",
+      "show": { "tab": "cut", "target": "lock" },
+      "ask": "Lock the cut. If I saved in the Cut Editor (work/edl_manual.json), render that cut and run join-check on it. When nothing is likely clipped, write \"Cut locked (join-check: N joins, 0 clipped)\" in WORKLOG.md. If a join still sounds clipped, tell me which ones so I can fix them in the Cut tab.",
+      "done": { "worklog": "Cut locked" }
+    },
+    "review": {
+      "label": "Review scenes",
+      "stage": "Polish", "name": "Review scenes",
+      "what": "Watch scene by scene, leave notes, approve. Save changes sends your notes to Claude.",
+      "where": "the Scenes tab",
+      "show": { "tab": "scenes", "target": "scenes" },
+      "kind": "app",
+      "action": "open-scenes",
+      "done": { "worklog": "Scenes approved" }
+    }
+  },
+  "formats": {
+    "tutorial": {
+      "label": "YouTube tutorial",
+      "aspect": "16:9",
+      "hint": "16:9, 5–20 min. A dense intro, a calm main body, an outro.",
+      "blocks": [
+        { "type": "intro", "label": "Intro", "hint": "dense, 30–90 s: the hook and what the video covers; ends where the main content starts" },
+        { "type": "body", "label": "Main body", "hint": "the calm walkthrough" },
+        { "type": "sponsor", "label": "Sponsor read", "optional": true, "rule": "first 30%", "hint": "only if the creator already reads one in the take" },
+        { "type": "outro", "label": "Outro", "hint": "the wrap-up and the call to action" }
+      ],
+      "more": ["transcribe", "rough-cut", "join-check"],
+      "steps": [
+        "import", "prepare", "sections", "cut-editor", "lock",
+        {
+          "id": "plan",
+          "label": "Plan scenes",
+          "stage": "Plan", "name": "Plan the scenes",
+          "what": "Claude writes the scene plan: for each line, what is on screen.",
+          "where": "scenes, in the Scenes tab",
+          "show": { "tab": "scenes", "target": "scenes" },
+          "skill": "production-sheet",
+          "ask": "Write the production sheet for this video from the locked cut, in this studio's own style (BRAND.md, STYLE.md when there is one, memory/style.md). Give every scene the id of the block it belongs to (\"block\", from work/blocks.json).\nThis step plans the scenes only, also after I answer your questions or say go ahead: write the sheet, tell me about it and stop. Don't build or render scenes, place sound cues, cut B-roll or place zooms here: Build the intro and Add zooms do those later. If you see where the look should change (the camera off during a demo, boxed for a list) or where a zoom would help, you may offer them as proposals in work/shots.json and work/zooms.json (\"by\": \"claude\", \"status\": \"proposed\"): they wait for my Keep it / No thanks and don't count as Add zooms.",
+          "motion": "plan",
+          "done": { "files": ["work/production.json"] }
+        },
+        {
+          "id": "intro",
+          "label": "Edit intro",
+          "stage": "Build", "name": "Build the intro",
+          "what": "Claude builds each scene and renders the intro.",
+          "where": "the video in Renders, each scene in Scenes",
+          "show": { "tab": "renders", "target": "newest" },
+          "ask": "Build the intro (the intro block in work/blocks.json) from the production sheet, scene by scene, in this studio's own style: BRAND.md (colours, fonts, the brand files in the library), STYLE.md when there is one, memory/style.md and memory/preferences.md. Build the graphics with the studio's motion-graphics skills where one fits (an explainer or motion-broll skill, if the studio has one). Render short snippets for me to check first, then the intro into renders/ as <project>_intro_v1.mp4 on the production sheet's timeline, so Video Octopus's Scenes tab can show it scene by scene.",
+          "motion": "build",
+          "done": { "files": ["renders/*intro*.mp4"] }
+        },
+        "review",
+        {
+          "id": "zooms",
+          "label": "Zooms",
+          "stage": "Polish", "name": "Add zooms",
+          "what": "Claude punches in on your face at the right words.",
+          "where": "the Zooms lane on the timeline",
+          "show": { "tab": "canvas", "target": "zooms" },
+          "skill": "talking-head-zoom",
+          "ask": "Place the talking-head zooms (punch-ins on my face) for this project on the locked cut, in work/zooms.json v2 ({\"v\": 2, \"items\": […]}, take seconds; each one \"target\": \"camera\", \"by\": \"claude\", \"status\": \"proposed\"). Redo only your own camera punch-ins (target camera, by claude) and keep every other zoom in the file exactly as it is: the plan's screen zooms and mine stay. If there is nothing to zoom on my face (I'm never full frame on camera, say), add \"reason\": \"<why, in a few words to me, e.g. you're never full frame>\" to work/zooms.json (still keeping the other zooms). Either way add a WORKLOG.md line that starts with \"Add zooms:\", so the step counts as done.",
+          "optional": true,
+          "done": { "worklog": "Add zooms:", "json": ["work/zooms.json", "reason"], "kept": "work/zooms.json" }
+        }
+      ]
+    },
+    "faceless": {
+      "label": "Faceless explainer",
+      "aspect": "16:9",
+      "hint": "16:9, 5–20 min. No face on camera: your voice over the screen, real B-roll and graphics.",
+      "blocks": [
+        {
+          "type": "intro",
+          "label": "Hook",
+          "hint": "the first 30–60 s: why this matters and what the video covers"
+        },
+        {
+          "type": "body",
+          "label": "Main body",
+          "hint": "the walkthrough, section by section"
+        },
+        {
+          "type": "sponsor",
+          "label": "Sponsor read",
+          "optional": true,
+          "rule": "first 30%",
+          "hint": "only if the creator already reads one in the take"
+        },
+        {
+          "type": "outro",
+          "label": "Outro",
+          "hint": "the wrap-up and the call to action"
+        }
+      ],
+      "more": [
+        "transcribe",
+        "rough-cut",
+        "join-check"
+      ],
+      "record": {
+        "camera": false
+      },
+      "steps": [
+        "import",
+        "prepare",
+        "sections",
+        "cut-editor",
+        "lock",
+        {
+          "id": "plan",
+          "label": "Plan scenes",
+          "stage": "Plan",
+          "name": "Plan the scenes",
+          "what": "Claude writes the scene plan: for each line, what is on screen. With no face on camera, every line gets something to look at.",
+          "where": "scenes, in the Scenes tab",
+          "show": {
+            "tab": "scenes",
+            "target": "scenes"
+          },
+          "skill": "production-sheet",
+          "ask": "Write the production sheet for this video from the locked cut, in this studio's own style (BRAND.md, STYLE.md when there is one, memory/style.md). Give every scene the id of the block it belongs to (\"block\", from work/blocks.json).\nThis step plans the scenes only, also after I answer your questions or say go ahead: write the sheet, tell me about it and stop. Don't build or render scenes, place sound cues, cut B-roll or place zooms here: Build the visuals does those later. If you see where the look should change (the camera off during a demo, boxed for a list) or where a zoom would help, you may offer them as proposals in work/shots.json and work/zooms.json (\"by\": \"claude\", \"status\": \"proposed\"): they wait for my Keep it / No thanks and don't count as Add zooms.",
+          "motion": "plan",
+          "done": {
+            "files": [
+              "work/production.json"
+            ]
+          }
+        },
+        {
+          "id": "build-visuals",
+          "label": "Build visuals",
+          "stage": "Build",
+          "name": "Build the visuals",
+          "what": "Claude builds what's on screen for the whole video, over your voice: the screen recording where it shows the thing, real B-roll of what you mention, and graphics. Then it renders it.",
+          "where": "the video in Renders, each scene in Scenes",
+          "show": {
+            "tab": "renders",
+            "target": "newest"
+          },
+          "ask": "Build the visuals for this faceless video from the production sheet, section by section, in this studio's own style: BRAND.md (colours, fonts, the logos and images in the library), STYLE.md when there is one, memory/style.md and memory/preferences.md. There's no face on camera, so every stretch needs something to look at: the screen recording where it shows the thing being talked about (cropped and zoomed so it's readable), real B-roll of what's mentioned (the page, the post, the product), and motion graphics from the studio's motion-graphics skills where one fits. The voice is the spine: don't cut or move it. Render short snippets for me to check first, then the video into renders/ as <project>_faceless_v1.mp4 on the production sheet's timeline, so Video Octopus's Scenes tab can show it scene by scene.",
+          "motion": "build",
+          "done": {
+            "files": [
+              "renders/*faceless*.mp4"
+            ]
+          }
+        },
+        "review",
+        {
+          "id": "post-kit",
+          "label": "Post kit",
+          "stage": "Polish",
+          "name": "Write the post",
+          "what": "Claude writes the title, description with chapters, tags and a pinned comment.",
+          "where": "the Post tab",
+          "show": {
+            "tab": "post",
+            "target": "post"
+          },
+          "ask": "Write the post kit for this YouTube video into post.md: a title, the description with chapters from the sections, tags, and a pinned comment.",
+          "done": {
+            "files": [
+              "post.md"
+            ]
+          }
+        }
+      ]
+    },
+    "short": {
+      "label": "Short",
+      "aspect": "9:16",
+      "hint": "9:16, 15–90 s. One vertical video for YouTube Shorts, Instagram Reels and TikTok.",
+      "platforms": ["YouTube Shorts", "Instagram Reels", "TikTok"],
+      "styles": [
+        { "id": "talking-head", "label": "Talking head", "hint": "Face on camera, one idea, fast cuts, captions and a clear ending" },
+        { "id": "teaser", "label": "Long-form teaser", "hint": "A cut-down of a long video that sends people to it" }
+      ],
+      "blocks": [
+        { "type": "intro", "label": "Hook", "hint": "the first 0–3 s that stop the scroll" },
+        { "type": "body", "label": "Body", "hint": "the point, fast" },
+        { "type": "outro", "label": "CTA", "hint": "\"comment WORD\" or the follow ask" }
+      ],
+      "more": ["transcribe", "rough-cut", "join-check"],
+      "steps": [
+        "import", "prepare", "sections", "cut-editor", "lock",
+        {
+          "id": "plan",
+          "label": "Plan scenes",
+          "stage": "Plan", "name": "Plan the scenes",
+          "what": "Claude writes the scene plan: for each line, what is on screen.",
+          "where": "scenes, in the Scenes tab",
+          "show": { "tab": "scenes", "target": "scenes" },
+          "skill": "production-sheet",
+          "ask": "Write the production sheet for this Short (9:16, {style}) from the locked cut, in this studio's own style (BRAND.md, STYLE.md when there is one, memory/style.md). Give every scene the id of the block it belongs to (\"block\", from work/blocks.json).",
+          "motion": "plan",
+          "done": { "files": ["work/production.json"] }
+        },
+        {
+          "id": "edit-short",
+          "label": "Edit short",
+          "stage": "Build", "name": "Edit the Short",
+          "what": "Claude edits the Short (9:16) in the style you picked.",
+          "where": "the Short in Renders",
+          "show": { "tab": "renders", "target": "newest" },
+          "ask": "Edit this Short (9:16) as a {style} from the production sheet, in this studio's own colours and fonts (BRAND.md, STYLE.md when there is one, memory/style.md), with the studio's motion-graphics skills where one fits. Render it into renders/ as <project>_short_v1.mp4 on the production sheet's timeline, so Video Octopus's Scenes tab can show it scene by scene.",
+          "motion": "build",
+          "done": { "files": ["renders/*short*.mp4", "renders/*reel*.mp4"] }
+        },
+        "review",
+        {
+          "id": "post-kit",
+          "label": "Post kit",
+          "stage": "Polish", "name": "Write the post",
+          "what": "Claude writes the title, caption and hashtags for each platform.",
+          "where": "the Post tab",
+          "show": { "tab": "post", "target": "post" },
+          "ask": "Write the post kit for this Short into post.md: a title for YouTube Shorts, a caption for Instagram Reels and TikTok, the description, and the comment-WORD reply.",
+          "done": { "files": ["post.md"] }
+        }
+      ]
+    },
+    "explainer": {
+      "label": "Product explainer",
+      "aspect": "16:9",
+      "hint": "About 2 min, 16:9 or 9:16. Problem, demo, features, call to action.",
+      "blocks": [
+        { "type": "intro", "label": "Problem", "hint": "the pain the product solves" },
+        { "type": "body", "label": "Demo", "hint": "the product doing it" },
+        { "type": "body", "label": "Features", "hint": "the three or four that matter" },
+        { "type": "outro", "label": "CTA", "hint": "where to get it" }
+      ],
+      "more": ["transcribe", "rough-cut", "join-check"],
+      "steps": [
+        "import", "prepare", "sections", "cut-editor", "lock",
+        {
+          "id": "plan",
+          "label": "Plan scenes",
+          "stage": "Plan", "name": "Plan the scenes",
+          "what": "Claude writes the scene plan: for each line, what is on screen.",
+          "where": "scenes, in the Scenes tab",
+          "show": { "tab": "scenes", "target": "scenes" },
+          "skill": "production-sheet",
+          "ask": "Write the production sheet for this product explainer from the locked cut, in this studio's own style (BRAND.md, STYLE.md when there is one, memory/style.md). Give every scene the id of the block it belongs to (\"block\", from work/blocks.json).",
+          "motion": "plan",
+          "done": { "files": ["work/production.json"] }
+        },
+        {
+          "id": "edit-explainer",
+          "label": "Edit explainer",
+          "stage": "Build", "name": "Edit the explainer",
+          "what": "Claude builds the explainer block by block and renders it.",
+          "where": "the video in Renders, each scene in Scenes",
+          "show": { "tab": "renders", "target": "newest" },
+          "ask": "Edit this product explainer from the production sheet, block by block, in this studio's own style: BRAND.md (colours, fonts, the product images and logos in the library), STYLE.md when there is one, memory/style.md and memory/preferences.md. Build the graphics with the studio's motion-graphics skills where one fits (an explainer skill for the demo, motion-broll for graphics over the talking head, if the studio has them). Render short snippets for me to check first, then the video into renders/ as <project>_explainer_v1.mp4 on the production sheet's timeline, so Video Octopus's Scenes tab can show it scene by scene.",
+          "motion": "build",
+          "done": { "files": ["renders/*explainer*.mp4"] }
+        },
+        "review"
+      ]
+    }
+  },
+  "learn": {
+    "label": "Learn from this project",
+    "ask": "Look back over this project. Save reusable pieces (components, sounds, settings) into the studio's library and the lessons into the right notes file, as the studio's CLAUDE.md says. Propose style changes instead of making them."
+  }
+}

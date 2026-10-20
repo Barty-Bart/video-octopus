@@ -1,0 +1,7 @@
+# Python packages the studio's skills and tools use. Install into the studio's own venv:
+#   Mac / Linux:  python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+#   Windows:      py -3 -m venv .venv; .venv\Scripts\pip install -r requirements.txt
+faster-whisper>=1.0   # transcribe (on this computer), join check --recheck, word_gaps.py
+numpy>=1.24           # rough cut, join check, Cut Editor
+opencv-python-headless>=4,<5; sys_platform != "darwin"   # Auto-frame on Windows and Linux (Video Octopus's tools/face.py; a Mac uses Vision). OpenCV 5 moved the face detector out
+# opencv-python       # only for rough-cut --crossfade-frames / --punch (headless above covers it on Windows and Linux)

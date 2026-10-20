@@ -1,0 +1,47 @@
+# Your own data: app settings, chat logs, usage log, keys (Video Octopus keeps them in local/, never in git)
+/local/
+
+# Secrets
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+credentials*.json
+
+# Dependencies and build output
+node_modules/
+dist/
+build/
+out/
+coverage/
+__pycache__/
+*.pyc
+
+# Video, audio and renders: large, and personal
+*.mp4
+*.mov
+*.m4v
+*.mkv
+*.webm
+*.avi
+*.wav
+*.mp3
+*.m4a
+*.aif
+*.aiff
+*.caf
+*.flac
+/renders/
+/recordings/
+/projects/
+
+# Agents' and editors' local folders, OS files, logs
+/.claude/
+/.codex/
+.vscode/
+.idea/
+.DS_Store
+*.log

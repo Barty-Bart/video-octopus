@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Script</title>
+<link rel="icon" href="favicon.svg">
+<link rel="stylesheet" href="style.css">
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  #host { position: fixed; inset: 0; }
+  #state { position: fixed; right: 14px; bottom: 10px; font: 13px/1.4 system-ui, sans-serif; color: #8a8a8a; }
+  #state.live { color: #ff6b5a; }
+</style>
+</head>
+<body>
+<div id="host"></div>
+<div id="state" aria-live="polite"></div>
+<div id="toast" hidden></div>
+<script type="module">
+  // The script in its own window (web/prompter.js): drag it to a teleprompter screen or a second display. It starts
+  // when Video Octopus's recording starts and stops with it; Space starts it any time.
+  import { mountPrompter, loadScript } from './prompter.js';
+  const id = new URLSearchParams(location.search).get('p') || '';
+  const state = document.getElementById('state');
+  const chan = 'BroadcastChannel' in window ? new BroadcastChannel('studio-prompter') : null;
+  const text = await loadScript(id);
+  document.title = `Script · ${id}`;
+  const p = mountPrompter(document.getElementById('host'), text || '(No script yet: put one in the record panel.)',
+    { hint: 'Starts when the recording starts · Space starts it now · F full screen' });
+  let recording = false;
+  const say = (s, live) => { state.textContent = s; state.classList.toggle('live', Boolean(live)); };
+  say('Waiting for the recording');
+  chan?.addEventListener('message', (e) => {
+    const m = e.data || {};
+    if (m.t === 'script' && m.project === id) p.setText(m.text);
+    if (m.t !== 'take' || (m.project && m.project !== id)) return;
+    if (m.phase === 'recording' && !recording) { recording = true; p.restart(); p.play(true); say('● Recording', true); }
+    if (m.phase === 'starting') say('Recording starts…');
+    if (['stopping', 'saving', 'idle'].includes(m.phase) && recording) { recording = false; p.play(false); say('Recording stopped'); }
+  });
+  chan?.postMessage({ t: 'window', project: id, open: true });
+  chan?.postMessage({ t: 'hello' });
+  addEventListener('pagehide', () => chan?.postMessage({ t: 'window', project: id, open: false }));
+</script>
+</body>
+</html>

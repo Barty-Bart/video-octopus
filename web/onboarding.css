@@ -1,0 +1,99 @@
+/* The smarter onboarding (web/brand.js): Setup's three steps, the brand kit, the motion-skills picker and Settings → Brand.
+   Only the app's own tokens (style.css, looks.css), so every Video Octopus look styles it. */
+
+/* Setup: the three steps */
+.ob-steps { padding-top: 10px; }
+.ob-steps > .sub { margin: 2px 0 0; }
+.ob-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 4px; }
+.ob-tab { display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 14px 0 6px; border: 1px solid var(--line-2); border-radius: 999px; background: var(--panel); color: var(--text-2); font-size: 13px; cursor: pointer; }
+.ob-tab i { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--panel-3); color: var(--muted); font-style: normal; font-size: 11px; font-weight: 600; font-family: var(--mono); }
+.ob-tab:hover { border-color: var(--text-2); }
+.ob-tab.on { border-color: var(--text); color: var(--text); font-weight: 500; background: var(--panel-3); }
+.ob-tab.on i { background: var(--text); color: var(--inverse, #fff); }
+.ob-pane { margin-top: 6px; }
+.ob-pane > .sub { margin: 8px 0 12px; }
+.ob-about .fl:first-child { margin-top: 8px; }
+.ob-mine { margin-top: 14px; }
+.ob-mine.done { padding-bottom: 2px; }
+.ob-minei { display: flex; align-items: center; gap: 14px; padding: 12px 14px; border-radius: 12px; background: var(--panel-2); border: 1px solid var(--line-3); }
+.ob-mine.done .ob-minei { border-color: var(--accent-line); background: var(--accent-soft); }
+.ob-mt { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.ob-mt .sub { word-break: break-word; }
+.ob-none { display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; border: 1px dashed var(--line-2); border-radius: 12px; }
+
+/* The brand kit: one card per folder */
+.ob-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+.ob-card { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px 12px; border: 1px solid var(--line-2); border-radius: 12px; background: var(--panel); min-width: 0; transition: border-color var(--t), background var(--t); }
+.ob-card.over { border-color: var(--accent); background: var(--accent-soft); }
+.ob-card > .sub { font-size: 11.5px; }
+.ob-ch { display: flex; align-items: center; gap: 8px; min-height: 28px; }
+.ob-ch b { font-weight: 500; font-size: 13px; }
+.ob-thumbs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; min-height: 64px; align-items: flex-start; }
+.ob-drop { flex: 1; align-self: stretch; display: grid; place-items: center; min-height: 64px; border: 1.5px dashed var(--line-2); border-radius: 10px; font-size: 12px; }
+.ob-th { position: relative; margin: 0; width: 64px; display: flex; flex-direction: column; gap: 3px; }
+.ob-th > img, .ob-th > video, .ob-th > .ob-font, .ob-th.busy > .spin { width: 64px; height: 64px; border-radius: 9px; border: 1px solid var(--line-2); background: repeating-conic-gradient(var(--panel-3) 0 25%, var(--panel) 0 50%) 0 0 / 12px 12px; object-fit: contain; display: block; }
+.ob-th.video > video { object-fit: cover; background: #000; }
+.ob-th > .ob-font { display: grid; place-items: center; font-size: 26px; color: var(--text); background: var(--panel-2); }
+.ob-th.busy { align-items: center; }
+.ob-th.busy > .spin { width: 18px; height: 18px; border-radius: 50%; margin: 23px; background: none; }
+.ob-pc { position: absolute; top: 46px; left: 0; right: 0; text-align: center; font-size: 10px; font-family: var(--mono); color: var(--muted); }
+.ob-th figcaption { font-size: 10.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ob-x { display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border-radius: 50%; border: 1px solid var(--line-2); background: var(--panel); color: var(--text-2); cursor: pointer; }
+.ob-x svg { stroke: currentColor; stroke-width: 1.6; fill: none; }
+.ob-x:hover { color: var(--bad); border-color: var(--bad); }
+.ob-th > .ob-x { position: absolute; top: -6px; right: -6px; opacity: 0; transition: opacity var(--t); }
+.ob-th:hover > .ob-x, .ob-th:focus-within > .ob-x { opacity: 1; }
+@media (hover: none) { .ob-th > .ob-x { opacity: 1; } }
+
+/* Colours and fonts */
+.ob-colors { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line-3); }
+.ob-colors .ob-ch { gap: 10px; flex-wrap: wrap; }
+.ob-sws, .ob-sugg { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; }
+.ob-sw { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 6px 0 4px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--panel); }
+.ob-sw input[type=color] { width: 26px; height: 26px; padding: 0; border: 0; border-radius: 6px; background: none; cursor: pointer; }
+.ob-sw input[type=color]::-webkit-color-swatch-wrapper { padding: 0; }
+.ob-sw input[type=color]::-webkit-color-swatch { border: 1px solid #0002; border-radius: 6px; }
+.ob-sw code, .ob-chip code { font-family: var(--mono); font-size: 11.5px; color: var(--text-2); }
+.ob-sugg { padding: 8px 10px; border-radius: 10px; background: var(--panel-2); border: 1px solid var(--line-3); }
+.ob-chip { display: inline-flex; align-items: center; gap: 5px; }
+.ob-chip i { width: 18px; height: 18px; border-radius: 5px; background: var(--c); border: 1px solid #0002; }
+.ob-fonts { margin-top: 12px; }
+.ob-fonts .fl { margin-top: 0; }
+
+/* Motion-graphics skills */
+.ob-repo { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; }
+.ob-rt { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ob-rt a { color: var(--text); font-weight: 600; font-size: 13px; text-decoration: none; }
+.ob-rt a:hover { text-decoration: underline; text-underline-offset: 2px; }
+.badge.ob-rec { background: var(--accent-soft); color: var(--accent-text); font-weight: 600; }
+.ob-sklist { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; }
+.ob-skills.compact .ob-sklist { grid-template-columns: 1fr; }
+.ob-sk { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 1px solid var(--line-2); border-radius: 12px; background: var(--panel); cursor: pointer; }
+.ob-sk:has(input:checked) { border-color: var(--text); background: var(--panel-2); }
+.ob-sk.have { cursor: default; background: var(--panel-2); border-color: var(--line-3); }
+.ob-sk input { accent-color: var(--text); margin: 2px 0 0; flex: none; }
+.ob-skt { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.ob-skt b { font-family: var(--mono); font-weight: 500; font-size: 12.5px; }
+.ob-skt small { color: var(--muted); font-size: 12px; line-height: 1.4; }
+.ob-skact { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.ob-skact .sub { flex: 1; }
+
+/* The Skills page's dialog */
+.ob-dlg { width: min(680px, calc(100vw - 32px)); }
+.ob-repoq { display: flex; gap: 6px; margin: 14px 0 12px; }
+.ob-repoq .field { height: 34px; }
+
+/* Settings → Brand */
+.ob-set { display: flex; flex-direction: column; gap: 16px; }
+.ob-g { padding: 4px 22px 18px; }
+.ob-g > h2 { margin-left: 0; margin-right: 0; }
+.ob-g > .sub { margin: 2px 0 10px; }
+.ob-notes { display: flex; flex-direction: column; gap: 10px; }
+.ob-note { display: flex; flex-direction: column; gap: 2px; }
+.ob-note .sub { word-break: break-word; }
+.ob-noteact { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+
+@media (max-width: 640px) {
+  .ob-minei { flex-direction: column; align-items: stretch; }
+  .ob-grid, .ob-sklist { grid-template-columns: 1fr; }
+}
