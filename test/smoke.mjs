@@ -1429,6 +1429,19 @@ try {
     writeFileSync(join(CBD, 'work', 'tr', 'words.json'), JSON.stringify(CB_WORDS));
     writeFileSync(join(CBD, 'work', 'edl_fixed.json'), JSON.stringify({ segments_sec: [[0.2, 3.9]] }));
     writeFileSync(join(CBD, 'work', 'edl_manual.json'), pyEdl(join(CBD, 'source', 'cb_webcam.mp4')));
+    // The app now owns two deliberately separate listeners: its editor and the asset-only
+    // rendering sandbox. Identify the latter from the trusted page's actual frame policy,
+    // then require that exact baseline rather than allowing an arbitrary second listener.
+    const host = await fetch(BASE + '/');
+    await host.text();
+    const framePolicy = (host.headers.get('content-security-policy') || '').split(';').map((s) => s.trim()).find((s) => s.startsWith('frame-src '));
+    const frameSources = framePolicy?.split(/\s+/).slice(1) || [];
+    must(host.ok && frameSources.length === 2 && frameSources.includes("'self'"), `unexpected editor frame policy: ${framePolicy || 'none'}`);
+    const sandbox = new URL(frameSources.find((s) => s !== "'self'"));
+    must(sandbox.protocol === 'http:' && sandbox.hostname === '127.0.0.1' && sandbox.port && sandbox.port !== String(PORT)
+      && sandbox.pathname === '/' && !sandbox.search && !sandbox.hash && !sandbox.username && !sandbox.password, `unexpected rendering origin: ${sandbox.origin}`);
+    const baseline = listening(server.pid), expected = [`127.0.0.1:${PORT}`, sandbox.host].sort();
+    if (baseline) must(JSON.stringify([...baseline].sort()) === JSON.stringify(expected), `expected editor + isolated rendering listeners ${expected.join(', ')}; found ${baseline.join(', ')}`);
     return withoutPython(async () => {
       const py = (await api('/api/app/setup/check?id=python')).json;
       must(py?.state === 'fail' && (ON_WIN || ran().some((l) => l.startsWith('python3 '))), `Python should be unavailable now: ${py?.state} ${py?.detail} · ran: ${ran().join(' | ')}`);
@@ -1441,14 +1454,16 @@ try {
       for (const f of ['studio.js', 'studio.css']) must((await fetch(`${BASE}/cut-editor/${f}`)).ok, `no /cut-editor/${f}`);
       const d = await api(`/api/projects/${CB}/cut/data.json`);
       must(d.status === 200 && d.json?.pps === 200, `data: ${d.status} ${d.text.slice(0, 200)}`);
-      // Started: ffmpeg (the waveform) and ffprobe (the frame rate), nothing else; listening: Video Octopus's own port only.
+      // Only waveform/frame-rate tools start; opening the Cut Editor adds no listener to the
+      // already-identified editor + isolated rendering baseline.
       const progs = ran(), ports = listening(server.pid);
       if (!ON_WIN) must(progs.length && progs.every((l) => /^ff(mpeg|probe) /.test(l)) && progs.some((l) => l.startsWith('ffmpeg ')), `programs started: ${progs.join(' | ') || 'none'}`);
-      if (ports) must(ports.length === 1 && ports[0].endsWith(`:${PORT}`), `the server listens on ${ports.join(', ')}`);
+      if (baseline) must(ports && JSON.stringify([...ports].sort()) === JSON.stringify([...baseline].sort()), `Cut Editor changed the listeners: before ${baseline.join(', ')}; after ${ports?.join(', ') || 'unavailable'}`);
+      else must(!ports, 'listener inspection became available only after the Cut Editor opened');
       const { duration, peaks, rms } = d.json;
       must(Math.abs(duration - 4) < 0.15 && Math.abs(peaks.length - Math.floor(duration * 200)) <= 1 && rms.length === peaks.length && Math.max(...peaks) === 1,
         `the waveform: ${duration} s, ${peaks.length} peaks, ${rms.length} rms, top ${Math.max(...peaks)}`);
-      return `${r.url} · ${peaks.length} peaks (${duration.toFixed(2)} s)${ON_WIN ? '' : ` · started: ${progs.map((l) => l.split(' ')[0]).join(', ')}`}${ports ? ` · listening: ${ports.join(', ')}` : ''}`;
+      return `${r.url} · ${peaks.length} peaks (${duration.toFixed(2)} s)${ON_WIN ? '' : ` · started: ${progs.map((l) => l.split(' ')[0]).join(', ')}`}${ports ? ` · unchanged editor + isolated rendering listeners: ${ports.join(', ')}` : ' · listener inspection unavailable (no lsof)'}`;
     });
   });
 

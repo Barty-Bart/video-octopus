@@ -1,6 +1,6 @@
 # Core skills, preferences and custom workflows
 
-This is an unreleased implementation. Seven Node test files passed on macOS: 125 tests with zero failures or skips. Separate browser tests passed 11 managed-skill update/restart scenarios, and fake CLIs exercised all three actual adapters. Real providers and Windows remain unverified; generated-code isolation still fails. See [isolated verification](managed-skills-verification.md).
+This is an unreleased implementation. Eight Node test files passed on macOS: 132 tests with zero failures or skips. Separate browser tests passed 11 managed-skill update/restart scenarios, and fake CLIs exercised all three actual adapters. Generated-code isolation passed 11 app-preview checks, nine headless-rendering groups and 12 independent security checks. Seven software-decoding/export tests now pass on both Mac and native Windows after correcting Windows decoder arguments. The Windows hosted check also passed first launch, app-offered FFmpeg installation and the original failing MP4 fixture. See [isolated verification](managed-skills-verification.md).
 
 ## Ownership
 
@@ -15,6 +15,8 @@ This is an unreleased implementation. Seven Node test files passed on macOS: 125
 | Manager | `<studio>/.studio/skill-manager/` | Choices, hashes, revision tokens, journal and backups. |
 
 Preferences are the default customization path. All harnesses inject current validated options, bounded creative prose and selection availability into their context, including resumed turns. The six core skills document their supported inputs. See [the preference contract](skill-preferences.md). This guides agents; it does not sandbox tools or prove editing results.
+
+Generated visual code has a separate rendering boundary: scoped local assets, no external network or workers, and no privileged editor access. Existing scene kits, seeking and creator overrides remain supported. Agent tools and third-party skills are outside that boundary.
 
 `server/managed-skills.mjs` and `server/skill-preferences.mjs` perform no I/O on import. Callers supply a studio path; manager tests also supply a synthetic application catalog. Preference reads never save, migrate or normalize user files on disk.
 

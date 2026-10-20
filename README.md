@@ -2,7 +2,7 @@
 
 A local video editor with an AI assistant. Record or import footage, edit from the transcript, plan scenes, adjust layouts and zooms, and export from a browser. The app connects to a separately installed **Claude Code, Codex or Pi** agent; it does not include an AI subscription or a bundled language model.
 
-**Early development — macOS first; Windows experimental.** A fresh hosted Mac passed installation and a basic MP4 export. The same Windows test passed startup, FFmpeg installation and WAV export, but **MP4 export failed**. Windows support needs further work and testing. The Mac result covers that basic workflow, not every editing feature; see [tested coverage](#tested-coverage).
+**Early development — macOS first; Windows experimental.** Hosted Mac and Windows checks pass startup, FFmpeg installation and basic exports. The Windows MP4 decoder bug is fixed: the original failing fixture and seven export-regression tests now pass on native Windows. Windows coverage remains narrower than Mac coverage. See [tested coverage](#tested-coverage).
 
 ## What is included
 
@@ -13,10 +13,10 @@ A local video editor with an AI assistant. Record or import footage, edit from t
 | Scenes | Production-sheet scenes, timed comments, generated HTML scene previews, direct element overrides and keyframes for compatible scenes. The scene toolkit is included; the agent supplies the scene code. |
 | Layouts and motion | Screen/camera layouts, PiP framing, backgrounds, per-shot looks, transitions, camera punch-ins and screen-region zooms. Proposed agent zooms can be kept or rejected. |
 | Object separation / rotoscoping | A bundled SAM 2.1 skill and script that track a selected subject and produce frame masks and review outputs for compositing. This needs Python dependencies and a separately downloaded model; it is not a ready-to-run one-click model bundled with the app. |
-| Exports | MP4; WAV, M4A/AAC and MP3; transcript text/Markdown; SRT/VTT and burned captions; layer exports and timeline XML. Windows MP4 and other limitations are listed below. |
+| Exports | MP4; WAV, M4A/AAC and MP3; transcript text/Markdown; SRT/VTT and burned captions; layer exports and timeline XML. Tested platform coverage and limitations are listed below. |
 | Project formats | YouTube tutorial, faceless explainer, Short and product explainer. |
 
-> Unreleased implementation checkpoint: the managed-skills/update behavior below is on `codex/managed-skill-updates`. Local macOS verification now includes unit tests, real browser controls, media exports, local Git updates, supervised restarts and fake-CLI adapter integration. Generated scene/background code still fails isolation checks; this is not cleared for public launch. Real providers and Windows remain unverified on this branch. See [verification and remaining work](docs/managed-skills-verification.md).
+> Unreleased implementation checkpoint: the managed-skills/update behavior below is on `codex/managed-skill-updates`. Local macOS verification includes unit tests, real browser controls, media exports, local Git updates, supervised restarts and fake-CLI adapter integration. Generated scene/background isolation now passes preview, headless rendering and independent security checks. Native Windows installation and export verification also pass; real providers remain unverified. See [verification and remaining work](docs/managed-skills-verification.md).
 
 ### Six bundled starter skills
 
@@ -52,7 +52,7 @@ cd video-octopus
 ./start.sh
 ```
 
-On Windows, in PowerShell (experimental; MP4 export is not yet working in the recorded test):
+On Windows, in PowerShell (experimental):
 
 ```powershell
 git clone https://github.com/Barty-Bart/video-octopus.git
@@ -87,7 +87,7 @@ Each harness validates the same active studio publication before starting a turn
 
 ## Your studio and updates
 
-Keep the application checkout separate from your studio. **This ownership/update system is implemented on the unreleased managed-skills branch. Local browser, update, restart and fake-CLI integration tests pass; real providers and Windows remain unverified.**
+Keep the application checkout separate from your studio. **This ownership/update system is implemented on the unreleased managed-skills branch. Local browser, update, restart and fake-CLI integration tests pass; real providers and the complete Windows update/restart workflow remain unverified.**
 
 ```text
 Application checkout/                 App-owned, updated together
@@ -181,15 +181,17 @@ Keep personal material out of the application repository. Commit only generic te
 
 Media, projects and generated work are stored in your studio. Application settings and chat logs live in the checkout's ignored `local/` directory. Optional API keys saved through the app use macOS Keychain or Windows encryption tied to the signed-in user.
 
-Local storage does **not** mean every operation is offline. The selected agent/provider can receive prompts, context and files it reads; cloud transcription sends audio to the selected service. Update checks and optional skill installation contact GitHub; model downloads contact Hugging Face or the selected model server. Agent tools, third-party skills and scene assets can make other network requests.
+Local storage does **not** mean every operation is offline. The selected agent/provider can receive prompts, context and files it reads; cloud transcription sends audio to the selected service. Update checks and optional skill installation contact GitHub; model downloads contact Hugging Face or the selected model server. Agent tools and third-party skills can make other network requests.
 
-Generated/imported scene HTML and custom background JavaScript are executable code. Their current execution is not isolated from the privileged app origin. Only open trusted projects and skills; this version is not a hardened sandbox.
+Generated/imported scene HTML and custom background JavaScript run separately from the privileged editor, in opaque sandboxes with scoped local rendering assets. Their policy blocks external network access, workers and privileged app access; download required images, fonts and other assets into the project first. Existing scene kits, local assets, seeking and creator overrides remain supported. This visual-rendering boundary does not sandbox the agent or third-party skills.
 
 ## Tested coverage
 
-On 21 October 2026, all seven Node test files passed: **125 tests, zero failures or skips**, including fake-CLI integration across Claude, Codex and pi, turn-lifecycle regressions and eight text-export tests. Separate disposable browser tests passed 11 managed-skill update/restart scenarios. Broader smoke tests exercised setup, recording with fake devices, editing, preview/render agreement, WAV/MP4/layer exports and recovery: **119 distinct checks passed, with one platform-specific skip**. The chat browser suite passed 12/12, and nine targeted video/layer/timeline export checks passed again after the text-export fix. Actual offline transcription used cached tiny.en weights and synthetic speech. This used Node v24.21.0 on macOS ARM64 with the uncommitted implementation atop `b7a733d68272089f24db0727d3f728c64f42b272`; see [commands, results and limits](docs/managed-skills-verification.md).
+On 21 October 2026, all eight Node test files passed: **132 tests, zero failures or skips**, including fake-CLI integration across Claude, Codex and pi, turn-lifecycle regressions, eight text-export tests and seven actual software-decoding/export tests. Generated visuals passed **11 app-preview security checks, nine headless-rendering scenario groups and 12 independent security checks**. Separate browser tests passed 11 managed-skill update/restart scenarios and 12 chat checks. The post-isolation full smoke run plus targeted fixture corrections passed 119 distinct checks, with zero remaining failures and one platform-specific Mac Vision skip. Actual offline transcription used cached tiny.en weights and synthetic speech. These results used Node v24.21.0 on macOS ARM64 with the uncommitted implementation atop `b7a733d68272089f24db0727d3f728c64f42b272`; see [commands, results and limits](docs/managed-skills-verification.md).
 
-Testing found and fixed stale agent skill context, lost Undo/proposal snapshots, and transcript/subtitle previews unexpectedly writing `work/shots.json`. Text previews now use a read-only timeline; the tests cover TXT, Markdown, SRT and VTT exports and preservation of earlier versions. Two browser security checks still fail: generated scene HTML and custom backgrounds can read another project and change app settings. No real creator data, provider credentials, paid inference or physical recording was used. Real vendor CLI compatibility, SAM/MLX inference and Windows behavior are not established by these tests.
+Testing fixed stale agent skill context, lost Undo/proposal snapshots, transcript/subtitle previews unexpectedly writing `work/shots.json`, generated-code access to app privileges, and failed background-export process cleanup. Text previews now use a read-only timeline and preserve earlier export versions. No real creator data, provider credentials, paid inference or physical recording was used. Real vendor CLI compatibility, SAM/MLX inference and native Windows behavior are not established by these Mac tests.
+
+The [21 October native Windows verification](https://github.com/Barty-Bart/video-octopus/actions/runs/39516163887) passed on Windows 2025 x64, Node v22.23.3 and FFmpeg 9.0.2 at `3226c14b0eadf8b7b3921cf641a6395c7fd731d3` (`codex/release-blocker-fixes`). It passed first launch, studio creation, Edge onboarding, app-offered FFmpeg installation, synthetic import, WAV export and the original two-second 1080p H.264/AAC MP4 fixture. Seven regression tests also passed, including reordered blocks, file inserts, shot seeking/transitions and layer/alpha exports. All 160 production files under `server/`, `web/` and `core/` matched the locally verified source. The older failure below is historical.
 
 The [20 October 2026 fresh-runner test](https://github.com/Barty-Bart/video-octopus/actions/runs/39393807261) used branch `codex/clean-install-check`, commit `71c0c1e049d28b7be978e7e22b666883f3dd2b09`. That commit adds only test files to application commit `aa305bc6dcb4703533de4ee63ed51b3480e7a36b`.
 

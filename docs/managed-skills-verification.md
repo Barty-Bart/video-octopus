@@ -4,8 +4,8 @@ This branch is unreleased. Verification on 21 October 2026 used macOS ARM64,
 Node v24.21.0, cached Chromium 156 and disposable app/studio copies. The source
 was the uncommitted implementation atop
 `b7a733d68272089f24db0727d3f728c64f42b272`, with targeted reruns after fixes.
-These are not results for remote main, the base commit alone, Windows or a clean
-consumer-machine installation.
+These are not results for remote main, the base commit alone or a bare consumer
+machine. Native Windows results are recorded separately below.
 
 ## Node and adapter tests
 
@@ -13,8 +13,8 @@ consumer-machine installation.
 node --test test/*.test.mjs
 ```
 
-**125 passed, zero failed/cancelled/skipped/todo**, exit 0, 8.964 seconds.
-Seven test files cover:
+**132 passed, zero failed/cancelled/skipped/todo**, exit 0.
+Eight test files cover:
 
 - Managed-skill migration, preservation, forks/core selection, compatibility,
   collisions, comparison, restore and all eight simulated interruption points.
@@ -27,6 +27,9 @@ Seven test files cover:
   new proposals, startup failure cleanup and silent turns.
 - Text exports: eight tests cover read-only previews, TXT/Markdown/SRT/VTT output
   and successive version creation without replacing earlier files.
+- Platform decoder arguments and seven actual software-decoding/export cases on
+  Mac. Windows/Linux no longer receive macOS-only VideoToolbox decode arguments;
+  these Mac executions do not establish native Windows behavior.
 
 The adapter tests found stale context after compatible skill changes. The active
 inventory and content fingerprint now refresh instructions on selection, editing
@@ -62,12 +65,19 @@ restart. A separate recorder case exercises interrupted-recording recovery.
 Actual offline faster-whisper transcription of synthetic speech passed with
 cached tiny.en: 13 words in both speech and filler passes.
 
-The complete run plus named follow-ups yielded **119 distinct smoke checks
+The earlier complete run plus named follow-ups yielded **119 distinct smoke checks
 passed, zero failed and one platform-specific face-finder check skipped**.
 The unchanged chat browser suite passed **12/12** after the snapshot fix.
 After the text-preview fix, **9/9 targeted actual video, layer and timeline export
 checks passed again**. These are follow-up checks of affected paths, not nine
 additional distinct checks added to the 119 above.
+The post-isolation full run initially recorded 117 passes, two fixture failures and
+one Mac Vision skip. Awaiting a fake-Claude stdout flush corrected truncated JSON
+(4/4 targeted checks passed). Updating the Cut Editor assertion to identify the
+exact app and sandbox listeners corrected its obsolete single-port expectation
+(6/6 targeted checks passed). Production code did not change during these
+follow-ups. Consolidation yields **119 distinct passes, zero remaining failures
+and one Mac Vision skip**; this is a full run plus targeted follow-ups.
 Follow-ups corrected dependency/browser fixture setup and retested changed
 paths; this is not a claim that the initial full run passed without failures.
 
@@ -79,35 +89,83 @@ local settings, disabled schedules, fake agents and an empty test key-store
 namespace. It is not a command to run against a creator's real studio. Its
 default speech test can download tiny.en unless an offline cache is supplied.
 
-## Failed security gate
+## Generated visual isolation
 
 ```sh
 PLAYWRIGHT_PATH=/path/to/playwright CHROMIUM_PATH=/path/to/chromium node test/security-boundaries.e2e.mjs
 ```
 
-**Two isolation checks failed; exit 1.** Generated scene HTML and custom
-background JavaScript each read another synthetic project, accessed the parent
-app DOM and persisted a harmless app-setting change through real server routes.
-The negative control without the app header returned 403. This demonstrates
-that the ordinary API-origin/header check does not isolate executable project
-content. The test adds a constructor export only in its disposable scene module;
-the app server, API checks and background loader are unchanged.
+**11 app-preview checks passed**, including parent/API isolation, legacy scene
+kit compatibility, creator overrides, exact background pixels, forged-reply
+rejection, direct HTML/SVG navigation, module imports and self-navigation. The
+test adds a constructor export only in its disposable scene module; it exercises
+the actual application server and renderer paths.
 
-Public release needs these executable paths isolated and reverified. These
-tests do not clear generated-code export execution or all other API routes.
+```sh
+CHROMIUM_PATH=/path/to/chromium FFMPEG_PATH=/path/to/ffmpeg FFPROBE_PATH=/path/to/ffprobe node test/generated-rendering.e2e.mjs
+```
+
+**Nine headless-rendering scenario groups passed**, exit 0, 4.738 seconds. Real
+scene output preserves image/font loading, transparency, saved keyframes,
+seeking, layers and element isolation. Real asynchronous background output
+preserves requested frame order and exact decoded pixels. Synthetic outside
+file, symlink, API, network and self-navigation probes failed safely. Successful
+and failed exports terminated their child processes; fixtures were removed.
+Background tests use the production renderer and routes behind a minimal trusted
+host with the production frame policy; app-preview tests cover the full server.
+An independent audit also passed **12 security checks**.
+
+Generated HTML and background modules now execute in opaque sandboxes on a
+separate local asset service. Their policy permits scoped local rendering assets
+and blocks external network access, workers and privileged app access. Existing
+scene kits and creator overrides work without rewriting project files. Required
+remote images/fonts must be saved locally. This boundary does not sandbox agent
+tools or third-party skills, and the checks are not an exhaustive browser audit.
+
+The previous scene/background privilege failures were reproduced before the
+fix. Rendering tests also found and fixed an FFmpeg process left waiting on an
+open input pipe after export failure; the final suite verifies cleanup.
+
+## Native Windows verification
+
+The [hosted Windows run](https://github.com/Barty-Bart/video-octopus/actions/runs/39516163887)
+passed on Windows 2025 x64, Node v22.23.3 and FFmpeg/ffprobe 9.0.2. Its commit is
+`3226c14b0eadf8b7b3921cf641a6395c7fd731d3` on the private verification branch
+`codex/release-blocker-fixes`. All 160 production files under `server/`, `web/`
+and `core/` matched the locally verified source. The job completed in 71 seconds.
+
+The README launcher, default studio creation, Edge onboarding, missing-agent
+messages, Continue, app-offered winget FFmpeg installation, synthetic import,
+WAV export and the original failing two-second 1080p H.264/AAC MP4 export passed.
+Provider routing checks used localhost metadata fixtures; no agent was started.
+The harness recorded 22 passing evidence rows and 11 informational rows.
+
+`test/windows-export.test.mjs` also passed **7 tests, zero failures or skips** on
+native Windows (17.664 seconds), including the original MP4, reordered blocks
+and file insertion, shot seeking/crossfade and layer/presenter-matte output.
+Decoded frames, audio, duration, alpha and unchanged synthetic sources were
+checked. The earlier hosted Windows export failure is historical and repaired.
+
+The runner already had Git, Edge, Python and winget; Node 22 was supplied and
+FFmpeg was installed through the application's own action. Playwright was
+installed outside the app as a test driver. No app npm install, real credentials,
+model download, paid inference, artifact upload or cache was used. This is a
+fresh hosted account, not a bare consumer Windows machine or full Windows feature
+coverage. Main and repository visibility were unchanged.
 
 ## Remaining limits
 
 - Real provider sign-in/current vendor CLI compatibility and model obedience.
   Fake wire tests prove supplied context and publication, not those properties.
-- Windows/Linux runtime and filesystem coverage; the earlier Windows MP4
-  failure and unconditional macOS VideoToolbox decoder inputs remain unresolved.
+- Full Windows feature/filesystem coverage and native Linux coverage. Windows
+  installation and the affected exports passed; the complete Windows managed-skill
+  update/restart workflow and Windows generated-rendering security suite were not run.
 - Exact minimum Node version: README, manifest and launcher requirements still
-  differ. This pass used Node 24; older hosted tests used Node 22.
+  differ. Local tests used Node 24; the successful hosted Windows fix test used Node 22.
 - Physical camera/microphone/screen recording, SAM segmentation, MLX inference
   and macOS Vision face detection. Fake transfers do not test model quality.
 - Power-loss durability, external-editor timeline imports and external optional
   skill-pack content. Preview-asset provenance remains a separate release item.
 
-No real studio, provider credential, paid call, package/model download, remote
-CI upload, production Git push or publication was part of this verification.
+No real studio, provider credential, paid call, package/model download,
+production Git push or publication was part of these local checks.
