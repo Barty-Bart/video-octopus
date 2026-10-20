@@ -11,10 +11,11 @@ import { codexInfo } from './codex.mjs';
 import { piInfo } from './pi.mjs';
 import { engineName, ENGINES } from './engines.mjs';
 import { formats } from './studio.mjs';
-import { settingsView, saveSection, section, profile, saveProfile, testKey, KEYS, machineInfo, whisperModels, MODELS, settingsChanged } from './settings.mjs';
+import { settingsView, saveSection, section, profile, saveProfile, testKey, KEYS, PROVIDERS, machineInfo, whisperModels, autoWhisper, MODELS, settingsChanged } from './settings.mjs';
 import { saveKey, removeKey, hasKey } from './keychain.mjs';
 import { createStudio, studioPathInfo, defaultStudioPath } from './starter.mjs';
-import { SAM2_MODELS, sam2Have, sam2Recommend, sam2Machine, sam2Download, startSam2Download, stopSam2Download } from './sam2.mjs';
+import { SAM2_MODELS, sam2Have, sam2Recommend, sam2Machine, sam2Download } from './sam2.mjs';
+import { sources, sourceLine, downloadState, startDownload, stopDownload } from './hfmodels.mjs';
 
 // What the object-separation skill needs from Python: torch (and the device it can use), torchvision (transformers' SAM 2
 // image processor won't load without it), transformers with SAM 2's video model, numpy and Pillow.
@@ -49,6 +50,7 @@ export const CHECKS = [
   ['claude', 'Agent (Claude Code, Codex or pi)'], // id "claude" from when Claude Code was the only one
   ['ffmpeg', 'ffmpeg and ffprobe'],
   ['python', 'Python and transcription'],
+  ['whisper', 'Transcription model (Whisper)'],
   ['objsep', 'Object separation (SAM 2)'],
   ['recorder', 'Recorder'],
   ['folders', 'Your studio and projects folders'],
@@ -131,21 +133,34 @@ const CHECK = {
     if (!j) return { state: 'fail', detail: `Python not found (${tilde(py)}).`,
       fix: `Setup check "Python and transcription" failed: Video Octopus can't run Python (it tried ${py}). Transcription (faster-whisper) and the rough cut and join check skills (numpy) need Python 3.9 or newer. Set it up on this computer (a venv in the studio folder at .venv is what Video Octopus looks for first${IS_WIN ? '; on Windows, winget install Python.Python.3.12' : ''}). Tell me your plan first and ask before installing anything.` };
     const missing = [!j.faster_whisper && 'faster-whisper', !j.numpy && 'numpy'].filter(Boolean);
-    const mac = await machineInfo();
-    const t = section('transcribe');
-    const want = t.model === 'auto' ? mac.whisper.model : t.model;
-    const have = whisperModels();
     const base = `Python ${j.py}${j.faster_whisper ? ` · faster-whisper ${j.faster_whisper}` : ''}`;
     if (missing.length) return { state: 'fail', detail: `${base} · missing ${missing.join(' and ')}.`,
       fix: `Setup check "Python and transcription" failed: Python ${j.py} (${py}) is there but ${missing.join(' and ')} can't be imported. faster-whisper is for transcribing on this computer, numpy is for the rough cut and join check skills. Install ${missing.join(' and ')} for that Python (pip; if it says "externally managed", use the studio's .venv). Ask me before installing.` };
-    const noModel = t.engine === 'local' && !have.includes(want), noCv = !IS_MAC && !j.cv2;
-    if (noModel || noCv) return { state: 'warn',
-      detail: [base, noModel && `the ${want} model isn't downloaded yet (about ${MODELS[want] || 'a few GB'})`, noCv && 'no OpenCV, which Auto-frame needs'].filter(Boolean).join(' · ') + '.',
-      fix: [`Setup check "Python and transcription" (${py}):`,
-        noModel && `the faster-whisper model ${want} (about ${MODELS[want] || 'a few GB'}) isn't downloaded on this computer yet${have.length ? ` (these are: ${have.join(', ')})` : ''}. Download it into the usual Hugging Face cache with that Python, for example by loading faster_whisper.WhisperModel("${want}") once.`,
-        noCv && `OpenCV 4 isn't installed for that Python; Video Octopus's Auto-frame finds the face with it on this computer. Install it with pip: "opencv-python-headless<5" (it's in the studio's requirements.txt).`,
-        'Ask me before downloading or installing anything.'].filter(Boolean).join(' ') };
-    return { state: 'ok', detail: `${base} · models here: ${have.length ? have.join(', ') : 'none (cloud transcription)'}${IS_MAC ? '' : ` · OpenCV ${j.cv2}`}` };
+    // The Whisper model itself has its own row (whisper, below).
+    if (!IS_MAC && !j.cv2) return { state: 'warn', detail: `${base} · no OpenCV, which Auto-frame needs.`,
+      fix: `Setup check "Python and transcription" (${py}): OpenCV 4 isn't installed for that Python; Video Octopus's Auto-frame finds the face with it on this computer. Install it with pip: "opencv-python-headless<5" (it's in the studio's requirements.txt). Ask me before installing anything.` };
+    return { state: 'ok', detail: `${base}${IS_MAC ? '' : ` · OpenCV ${j.cv2}`}` };
+  },
+
+  // The transcription model (faster-whisper): every size Video Octopus knows with where it comes from (Hugging Face's
+  // API, hfmodels.mjs), the one recommended for this computer (machineInfo), the creator's pick (Settings →
+  // Transcription; auto = the transcribe skill's own pick, the best verbatim model already downloaded), whether it's
+  // downloaded, and the row's Download. `whisper` carries what the row draws.
+  async whisper() {
+    const t = section('transcribe'), mac = await machineInfo(), rec = mac.whisper;
+    const have = whisperModels(), src = await sources('whisper'), dl = downloadState('whisper');
+    const auto = autoWhisper(t.language === 'auto' ? null : t.language, have);
+    // What Download offers: the pick, or for Auto the model it uses, else the recommended one.
+    const picked = t.model !== 'auto' ? t.model : have.includes(auto) ? auto : rec.model;
+    const there = have.includes(picked), size = (id) => src[id]?.size ? ` (${src[id].size})` : '';
+    const whisper = { family: 'whisper', choice: t.model, picked, recommended: rec.model, why: `${mac.chip}${mac.ramGB ? ` with ${mac.ramGB} GB` : ''}`, speed: rec.speed, auto, cache: tilde(hfHub()), there,
+      models: MODELS.map((id) => ({ id, have: have.includes(id), source: { ...src[id], line: sourceLine(src[id]) } })),
+      download: dl.state === 'downloading' || dl.size === picked ? dl : { state: 'idle' } };
+    const recLine = `recommended for this computer: ${rec.model} (${rec.speed})`;
+    if (t.engine === 'cloud') return { state: 'ok', whisper, detail: `Transcription goes to ${PROVIDERS[t.provider]?.label || 'a cloud service'} (Settings → Transcription): no model needed here${have.length ? ` · downloaded: ${have.join(', ')}` : ''}` };
+    if (!there) return { state: 'warn', whisper,
+      detail: `${t.model === 'auto' ? `Auto uses the best model already downloaded, and none is yet: ${picked}${size(picked)} is the one recommended for this computer (${rec.speed})` : `${picked}${size(picked)}, your pick, isn't downloaded yet · ${recLine}`}${have.length ? ` · downloaded: ${have.join(', ')}` : ''}.` };
+    return { state: 'ok', whisper, detail: `${t.model === 'auto' ? `Auto: ${picked}, the best downloaded for a verbatim transcript` : `${picked}, your pick`} · ${recLine} · in ${tilde(hfHub())}` };
   },
 
   // Object separation (the object-separation skill, starter/.claude/skills): torch, torchvision, transformers (SAM 2's
@@ -162,11 +177,11 @@ const CHECK = {
     // torch's own view of the device when it's there (the skill decides the same way), else the hardware's.
     const rec = sam2Recommend(j?.torch ? { device: j.device, vramGB: j.vram, gpu: j.gpu } : hw);
     const choice = section('objsep').model, picked = choice === 'auto' ? rec.size : choice;
-    const have = sam2Have(), there = have.includes(picked), dl = sam2Download();
-    const sam2 = { choice, picked, recommended: rec.size, why: rec.why, slow: rec.slow, cache: tilde(hfHub()), there,
-      models: Object.entries(SAM2_MODELS).map(([id, m]) => ({ id, repo: m.repo, mb: m.mb, speed: m.speed, for: m.for, have: have.includes(id) })),
+    const have = sam2Have(), there = have.includes(picked), dl = sam2Download(), src = await sources('sam2');
+    const sam2 = { family: 'sam2', choice, picked, recommended: rec.size, why: rec.why, slow: rec.slow, cache: tilde(hfHub()), there,
+      models: Object.entries(SAM2_MODELS).map(([id, m]) => ({ id, repo: m.repo, speed: m.speed, for: m.for, have: have.includes(id), source: { ...src[id], line: sourceLine(src[id]) } })),
       download: dl.state === 'downloading' || dl.size === picked ? dl : { state: 'idle' } };
-    const model = `SAM 2.1 ${picked} (${SAM2_MODELS[picked].mb}${choice === 'auto' ? `, recommended for ${rec.why}` : ', your pick'})`;
+    const model = `SAM 2.1 ${picked} (${[src[picked]?.size, choice === 'auto' ? `recommended for ${rec.why}` : 'your pick'].filter(Boolean).join(', ')})`;
     const slow = rec.slow ? ' · no GPU it can use: it runs on the CPU, which takes seconds a frame, so separate short parts' : '';
     const ask = 'Leave the model alone: the Download button on this Setup row fetches it into the Hugging Face cache. Tell me your plan first and ask before installing anything.';
     if (!j) return { state: 'fail', sam2, detail: `Python not found (${tilde(py)}).`,
@@ -245,14 +260,19 @@ export async function appRoute(req, res, url, { send, body }) {
     if (p === '/api/app/setup' && !post) return send(res, 200, { needed: setupNeeded(), done: section('setup').done, checks: CHECKS.map(([id, title]) => ({ id, title })), formats: formats() }), true;
     if (p === '/api/app/setup' && post) { saveSection('setup', { done: Boolean(b.done) }); return send(res, 200, { done: section('setup').done }), true; }
     if (p === '/api/app/setup/check') return send(res, 200, await runCheck(url.searchParams.get('id'))), true;
-    // Object separation's model: the download's progress, start it (the picked model unless one is named), stop it.
-    if (p === '/api/app/setup/sam2' && !post) return send(res, 200, { ...sam2Download(), have: sam2Have() }), true;
-    if (p === '/api/app/setup/sam2/download' && post) {
-      const choice = section('objsep').model;
-      const size = b.size ? String(b.size) : choice !== 'auto' ? choice : (lastChecks.get('objsep') || await runCheck('objsep')).sam2.recommended;
-      return send(res, 200, startSam2Download(size)), true;
+    // A model row's download (sam2: object separation, whisper: transcription): its progress, start it (the row's
+    // picked model unless one is named), stop it.
+    const md = /^\/api\/app\/setup\/(sam2|whisper)(\/download|\/stop)?$/.exec(p);
+    if (md) {
+      const fam = md[1], have = fam === 'sam2' ? sam2Have() : whisperModels();
+      if (!md[2] && !post) return send(res, 200, { ...downloadState(fam), have }), true;
+      if (md[2] === '/stop' && post) return send(res, 200, stopDownload(fam)), true;
+      if (md[2] === '/download' && post) {
+        const id = fam === 'sam2' ? 'objsep' : 'whisper';
+        const size = b.size ? String(b.size) : (lastChecks.get(id) || await runCheck(id))[fam].picked;
+        return send(res, 200, startDownload(fam, size)), true;
+      }
     }
-    if (p === '/api/app/setup/sam2/stop' && post) return send(res, 200, stopSam2Download()), true;
     // Create my studio: where it would go (the sync warning, whether the folder is there), then the copy itself.
     if (p === '/api/app/setup/studio-path' && !post) return send(res, 200, studioPathInfo(url.searchParams.get('path'))), true;
     if (p === '/api/app/setup/create-studio' && post) return send(res, 200, createStudio(b.path)), true;

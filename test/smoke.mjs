@@ -494,35 +494,56 @@ try {
     return `installed 2, kept 2 (the core object-separation too), refused ${j.refused}, commit recorded`;
   });
 
-  // ---- object separation: Setup's row (server/setup.mjs, server/sam2.mjs), the model choice and the download. A second
-  // Video Octopus with its own install folder, a throwaway Hugging Face cache (HF_HUB_CACHE) and a fake Hugging Face on
-  // this computer (HF_ENDPOINT); Python is a stand-in that prints what a real probe would (Mac and Linux). ----
-  if (!ONLY || ONLY.test('object separation')) {
+  // ---- the model rows: object separation (SAM 2.1) and the transcription model (Whisper). Setup's rows (server/setup.mjs),
+  // where each model comes from, the choice and the download (server/hfmodels.mjs). A second Video Octopus with its own
+  // install folder, a throwaway Hugging Face cache (HF_HUB_CACHE) and a fake Hugging Face on this computer (HF_ENDPOINT:
+  // the model API, the makers' pages, the files); Python is a stand-in that prints what a real probe would (Mac and
+  // Linux). ----
+  if (!ONLY || /object separation|whisper|hugging face/i.test(ONLY.source)) {
     const SAM_WIN = process.platform === 'win32';
     const HF = join(ROOT, 'hf'), SAMLOCAL = otherInstall('local-sam'), PROBE = join(ROOT, 'sam-probe.json');
     const sha256 = (b) => createHash('sha256').update(b).digest('hex');
     const gitId = (b) => createHash('sha1').update(Buffer.concat([Buffer.from(`blob ${b.length}\0`), b])).digest('hex');
     const bytes = (n, seed) => { const out = Buffer.alloc(n); let x = Buffer.from(seed); for (let o = 0; o < n; o += 32) { x = createHash('sha256').update(x).digest(); x.copy(out, o); } return out; };
+    const kb = (n) => (n >= 1e6 ? `${Math.round(n / 1e6)} MB` : `${Math.max(1, Math.round(n / 1e3))} kB`); // hfmodels.mjs fmtBytes, below 1 GB
     const WEIGHTS = { tiny: bytes(120000, 'tiny'), 'base-plus': bytes(200000, 'base-plus'), large: bytes(300000, 'large') };
     const FIVE = ['config.json', 'preprocessor_config.json', 'processor_config.json', 'video_preprocessor_config.json', 'model.safetensors'];
     const filesOf = (m) => Object.fromEntries(FIVE.map((f) => [f, f === 'model.safetensors' ? WEIGHTS[m] : Buffer.from(`{"file": "${f}", "model": "${m}"}`)]));
     const REV = 'c0ffee'.padEnd(40, '0');
     const repoDir = (m) => join(HF, `models--facebook--sam2.1-hiera-${m}`);
-    let hfMode = 'ok';
+    // Every repo the fake serves: SAM 2.1's three and Whisper's ten (large-v3 and distil-large-v3 with their
+    // preprocessor_config.json and vocabulary.json, the rest vocabulary.txt), each with a README nobody downloads.
+    const WHISPER = Object.fromEntries(['large-v3', 'distil-large-v3', 'medium', 'medium.en', 'small', 'small.en', 'base', 'base.en', 'tiny', 'tiny.en']
+      .map((id) => [id, id.startsWith('distil-') ? `Systran/faster-distil-whisper-${id.slice(7)}` : `Systran/faster-whisper-${id}`]));
+    const whisperFiles = (id) => { const big = /large/.test(id); return { 'config.json': Buffer.from(`{"whisper": "${id}"}`), 'model.bin': bytes(id === 'tiny.en' ? 160000 : 40000, id), 'tokenizer.json': Buffer.from(`{"tok": "${id}"}`),
+      [big ? 'vocabulary.json' : 'vocabulary.txt']: Buffer.from(`vocab ${id}\n`), ...(big ? { 'preprocessor_config.json': Buffer.from('{"feature_size": 128}') } : {}) }; };
+    const REPOS = Object.fromEntries([
+      ...Object.keys(WEIGHTS).map((m) => [`facebook/sam2.1-hiera-${m}`, { author: 'facebook', license: 'test-licence-sam', files: filesOf(m) }]),
+      ...Object.entries(WHISPER).map(([id, repo]) => [repo, { author: 'Systran', license: 'test-licence-whisper', files: whisperFiles(id) }])]);
+    const dlBytes = (repo) => Object.values(REPOS[repo].files).reduce((n, b) => n + b.length, 0); // what Video Octopus downloads
+    const wDir = (id) => join(HF, `models--${WHISPER[id].replace('/', '--')}`);
+    let hfMode = 'ok', apiCalls = 0;
     const hfLog = [];
     const hf = httpServer(async (req, res) => {
       const u = new URL(req.url, 'http://x');
-      let m = /^\/api\/models\/facebook\/sam2\.1-hiera-([\w-]+)\/revision\/main$/.exec(u.pathname);
-      if (m && WEIGHTS[m[1]]) {
-        res.setHeader('Content-Type', 'application/json');
-        return res.end(JSON.stringify({ id: `facebook/sam2.1-hiera-${m[1]}`, sha: REV, siblings: [{ rfilename: 'README.md', size: 9, blobId: gitId(Buffer.from('# readme\n')) },
-          ...Object.entries(filesOf(m[1])).map(([name, b]) => ({ rfilename: name, size: b.length, blobId: gitId(b), ...(name === 'model.safetensors' ? { lfs: { sha256: sha256(b), size: b.length, pointerSize: 134 } } : {}) }))] }));
+      const json = (o, code = 200) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
+      // The makers: facebook is an organisation, Systran (here) a user, so both of Hugging Face's pages are asked.
+      let m = /^\/api\/(organizations|users)\/([\w-]+)\/overview$/.exec(u.pathname);
+      if (m) return m[1] === 'organizations' && m[2] === 'facebook' ? json({ name: 'facebook', fullname: 'Fake Meta Lab' })
+        : m[1] === 'users' && m[2] === 'Systran' ? json({ name: 'Systran', fullname: 'Fake Systran Co' }) : json({ error: 'not found' }, 404);
+      m = /^\/api\/models\/([\w-]+\/[\w.-]+)\/revision\/main$/.exec(u.pathname);
+      if (m && REPOS[m[1]]) {
+        apiCalls++;
+        const R = REPOS[m[1]];
+        return json({ id: m[1], author: R.author, sha: REV, cardData: { license: R.license }, tags: [`license:${R.license}`],
+          siblings: [{ rfilename: 'README.md', size: 9, blobId: gitId(Buffer.from('# readme\n')) },
+            ...Object.entries(R.files).map(([name, b]) => ({ rfilename: name, size: b.length, blobId: gitId(b), ...(/^model\./.test(name) ? { lfs: { sha256: sha256(b), size: b.length, pointerSize: 134 } } : {}) }))] });
       }
-      m = /^\/facebook\/sam2\.1-hiera-([\w-]+)\/resolve\/([0-9a-f]{40})\/(.+)$/.exec(u.pathname);
-      const b = m && WEIGHTS[m[1]] && m[2] === REV ? filesOf(m[1])[m[3]] : null;
+      m = /^\/([\w-]+\/[\w.-]+)\/resolve\/([0-9a-f]{40})\/(.+)$/.exec(u.pathname);
+      const b = m && REPOS[m[1]] && m[2] === REV ? REPOS[m[1]].files[m[3]] : null;
       if (!b) { res.statusCode = 404; return res.end(); }
-      const mode = m[3] === 'model.safetensors' ? hfMode : 'ok';
-      hfLog.push({ model: m[1], file: m[3], range: req.headers.range || null, mode });
+      const mode = /^model\./.test(m[3]) ? hfMode : 'ok';
+      hfLog.push({ model: m[1].replace(/^facebook\/sam2\.1-hiera-/, ''), repo: m[1], file: m[3], range: req.headers.range || null, mode });
       if (mode === 'wrongsize') { res.writeHead(200, { 'Content-Length': b.length + 10 }); return res.end(Buffer.concat([b, Buffer.alloc(10)])); }
       if (mode === 'corrupt') { const c = Buffer.from(b); c[c.length >> 1] ^= 0xff; res.writeHead(200, { 'Content-Length': c.length }); return res.end(c); }
       if (mode === 'cut') { res.writeHead(200, { 'Content-Length': b.length }); res.write(b.subarray(0, 90000)); return setTimeout(() => res.socket.destroy(), 100); }
@@ -544,7 +565,10 @@ try {
     const sam = spawn(process.execPath, [join(APP, 'server', 'index.mjs')], { cwd: APP, stdio: 'ignore',
       env: otherEnv(samPort, SAMLOCAL, { HF_HUB_CACHE: HF, HF_ENDPOINT: `http://127.0.0.1:${hfPort}`, STUDIO_KEYCHAIN_SERVICE: 'StudioSmokeNoKeys' }) });
     const sapi = async (path, body, headers = {}) => {
-      const r = await fetch(SB + path, body === undefined ? { headers } : { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Studio': '1', ...headers }, body: JSON.stringify(body) });
+      // Like api(): a check that holds this process still (execFileSync) lets the server close the idle connection, and
+      // the next request fails on the dead socket. Try that once more.
+      const go = () => fetch(SB + path, body === undefined ? { headers } : { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Studio': '1', ...headers }, body: JSON.stringify(body) });
+      const r = await go().catch((e) => (e?.message === 'fetch failed' ? sleep(100).then(go) : Promise.reject(e)));
       const text = await r.text(); let json = null; try { json = JSON.parse(text); } catch {}
       return { status: r.status, json, text };
     };
@@ -552,19 +576,21 @@ try {
     const choose = (model) => sapi('/api/app/settings', { section: 'objsep', values: { model } });
     const have = () => modRun(`const S = await import(${JSON.stringify(new URL('../server/sam2.mjs', import.meta.url).href)}); console.log(JSON.stringify(S.sam2Have()));`, { HF_HUB_CACHE: HF });
     // A download started over the API, followed to its end; `seen` gets every progress reading in between.
-    const download = async (size, { stopAt = null } = {}) => {
-      const first = (await sapi('/api/app/setup/sam2/download', { size })).json;
+    const download = async (size, { stopAt = null, family = 'sam2' } = {}) => {
+      const first = (await sapi(`/api/app/setup/${family}/download`, { size })).json;
       const seen = [];
       let d = first;
       const end = Date.now() + 30000;
       while (d?.state === 'downloading' && Date.now() < end) {
         await sleep(20);
-        d = (await sapi('/api/app/setup/sam2')).json;
+        d = (await sapi(`/api/app/setup/${family}`)).json;
         seen.push(d);
-        if (stopAt && d.state === 'downloading' && d.total && d.got > stopAt * d.total) { await sapi('/api/app/setup/sam2/stop', {}); stopAt = null; }
+        if (stopAt && d.state === 'downloading' && d.total && d.got > stopAt * d.total) { await sapi(`/api/app/setup/${family}/stop`, {}); stopAt = null; }
       }
       return { first, d, seen };
     };
+    const wrow = async () => (await sapi('/api/app/setup/check?id=whisper')).json;
+    const wHave = () => modRun(`const S = await import(${JSON.stringify(new URL('../server/settings.mjs', import.meta.url).href)}); console.log(JSON.stringify(S.whisperModels()));`, { HF_HUB_CACHE: HF, STUDIO_LOCAL_DIR: SAMLOCAL });
     try {
       await check('object separation: a second Video Octopus on a fake Hugging Face starts', async () => {
         await until(async () => { try { return (await fetch(SB + '/')).ok; } catch { return false; } }, 30000, 'the second server');
@@ -587,7 +613,14 @@ try {
         must(bare.state === 'fail' && /missing torch, torchvision, transformers/.test(bare.detail) && /transformers 4\.56 or newer/.test(bare.fix) && /requirements\.txt/.test(bare.fix) && /Download button/.test(bare.fix) && /ask before installing/i.test(bare.fix),
           `no torch: ${bare.state} · ${bare.detail} · ${bare.fix}`);
         // Without torch the recommendation comes from the hardware; the row still lists the three models.
-        must(bare.sam2.models.map((m) => `${m.id} ${m.mb}`).join(', ') === 'tiny 156 MB, base-plus 323 MB, large 898 MB' && bare.sam2.models.every((m) => m.speed && !m.have), `models: ${JSON.stringify(bare.sam2.models)}`);
+        must(bare.sam2.models.map((m) => m.id).join() === 'tiny,base-plus,large' && bare.sam2.models.every((m) => m.speed && !m.have), `models: ${JSON.stringify(bare.sam2.models).slice(0, 300)}`);
+        // Each model's source, from the (fake) Hugging Face API: the maker's name from its page, the licence, the size of
+        // exactly the five files Video Octopus downloads (not the README), the link to the repo.
+        for (const m of bare.sam2.models) {
+          const repo = `facebook/sam2.1-hiera-${m.id}`, want = `From Hugging Face · ${repo} (Fake Meta Lab) · ${kb(dlBytes(repo))} · licence: test-licence-sam`;
+          must(m.source.line === want && m.source.url === `https://huggingface.co/${repo}` && m.source.license === 'test-licence-sam' && m.source.maker === 'Fake Meta Lab' && m.source.bytes === dlBytes(repo),
+            `${m.id} source: ${JSON.stringify(m.source)} (want "${want}")`);
+        }
         // torchvision alone missing (transformers' SAM 2 image processor won't load without it).
         probe({ ...READY, torchvision: null });
         const tv = await row();
@@ -657,7 +690,7 @@ try {
           probe(READY);
           await choose('tiny');
           const r = await row();
-          must(r.state === 'ok' && r.sam2.there && r.sam2.models.find((m) => m.id === 'tiny').have && /SAM 2\.1 tiny \(156 MB, your pick\)/.test(r.detail), `ready: ${r.state} ${r.detail}`);
+          must(r.state === 'ok' && r.sam2.there && r.sam2.models.find((m) => m.id === 'tiny').have && r.detail.includes(`SAM 2.1 tiny (${kb(dlBytes('facebook/sam2.1-hiera-tiny'))}, your pick)`), `ready: ${r.state} ${r.detail}`);
           await choose('auto');
           const back = await row();
           must(back.state === 'warn' && back.sam2.picked === 'base-plus' && /downloaded: tiny/.test(back.detail), `auto, base-plus missing: ${back.state} ${back.detail}`);
@@ -728,6 +761,103 @@ try {
         const j = JSON.parse(out.stdout.slice(0, out.stdout.indexOf('\n}') + 2));
         must(JSON.stringify(j.downloaded) === '["tiny","base-plus","large"]' && j.model === 'large' && j.ready === true, `the skill's check: ${out.stdout.slice(0, 600)} ${out.stderr.slice(-300)}`);
         return `huggingface_hub: all five files · the skill: ${j.downloaded.join(', ')} downloaded, large ready${j.torch ? ` (torch ${j.torch} on ${j.device})` : ''}`;
+      });
+
+      await check('Hugging Face model sources: maker, licence and size from the API, kept with the date; offline the kept ones "as checked on", with nothing kept only the link and why', async () => {
+        // Kept in the install's local/hf-models.json, with the date: a second look within a day asks Hugging Face nothing.
+        await wrow();
+        const kept = JSON.parse(readFileSync(join(SAMLOCAL, 'hf-models.json'), 'utf8'));
+        const tiny = kept.repos['Systran/faster-whisper-tiny.en'];
+        must(tiny?.maker === 'Fake Systran Co' && tiny.license === 'test-licence-whisper' && tiny.bytes === dlBytes('Systran/faster-whisper-tiny.en') && /^\d{4}-\d\d-\d\dT/.test(tiny.fetched)
+          && JSON.stringify(tiny.files.map((f) => f.name).sort()) === JSON.stringify(['config.json', 'model.bin', 'tokenizer.json', 'vocabulary.txt']), `kept: ${JSON.stringify(tiny).slice(0, 300)}`);
+        const before = apiCalls;
+        const w = await wrow();
+        must(apiCalls === before, `asked Hugging Face again within a day (${apiCalls - before} calls)`);
+        const big = w.whisper.models.find((m) => m.id === 'large-v3').source;
+        must(big.line === `From Hugging Face · Systran/faster-whisper-large-v3 (Fake Systran Co) · ${kb(dlBytes('Systran/faster-whisper-large-v3'))} · licence: test-licence-whisper` && big.files.includes('preprocessor_config.json') && big.files.includes('vocabulary.json'),
+          `large-v3: ${JSON.stringify(big)}`);
+        // No Hugging Face (a closed port): with nothing kept, the link and why; with what's kept (a stale copy), that, dated.
+        const dead = await freePort(), NOLOCAL = otherInstall('local-offline'), port = await freePort();
+        const off = spawn(process.execPath, [join(APP, 'server', 'index.mjs')], { cwd: APP, stdio: 'ignore',
+          env: otherEnv(port, NOLOCAL, { HF_HUB_CACHE: join(ROOT, 'hf-offline'), HF_ENDPOINT: `http://127.0.0.1:${dead}`, STUDIO_KEYCHAIN_SERVICE: 'StudioSmokeNoKeys' }) });
+        try {
+          const ob = `http://127.0.0.1:${port}`;
+          await until(async () => { try { return (await fetch(ob + '/')).ok; } catch { return false; } }, 30000, 'the offline server');
+          const r1 = await fetch(`${ob}/api/app/setup/check?id=whisper`).then((x) => x.json());
+          const s1 = r1.whisper.models.find((m) => m.id === 'tiny.en').source;
+          must(s1.url === 'https://huggingface.co/Systran/faster-whisper-tiny.en' && !s1.size && !s1.license && !s1.maker
+            && /^From Hugging Face · Systran\/faster-whisper-tiny\.en · size and licence couldn't be checked \(couldn't reach Hugging Face/.test(s1.line), `offline, nothing kept: ${JSON.stringify(s1)}`);
+          const old = { ...kept, repos: Object.fromEntries(Object.entries(kept.repos).map(([k, v]) => [k, { ...v, fetched: '2026-01-02T03:04:05.000Z' }])) };
+          writeFileSync(join(NOLOCAL, 'hf-models.json'), JSON.stringify(old));
+          const r2 = await fetch(`${ob}/api/app/setup/check?id=whisper`).then((x) => x.json());
+          const s2 = r2.whisper.models.find((m) => m.id === 'tiny.en').source;
+          must(s2.line === `From Hugging Face · Systran/faster-whisper-tiny.en (Fake Systran Co) · ${kb(dlBytes('Systran/faster-whisper-tiny.en'))} · licence: test-licence-whisper · as checked on 2026-01-02`,
+            `offline, kept: ${s2.line}`);
+          const set = await fetch(`${ob}/api/app/settings`).then((x) => x.json());
+          must(set.whisperSources?.['tiny.en']?.line === s2.line && set.sam2?.sources?.tiny?.line?.includes('Fake Meta Lab'), `Settings' view: ${JSON.stringify(set.whisperSources?.['tiny.en'])}`);
+          return `${big.line} | offline: ${s1.line} | kept: ${s2.line}`;
+        } finally { off.kill(); }
+      });
+
+      await check('Whisper row: every model with its source, the recommended one per machine type, Auto and the pick saved and read back', async () => {
+        const pick = (m) => modRun(`const S = await import(${JSON.stringify(new URL('../server/settings.mjs', import.meta.url).href)}); console.log(JSON.stringify(S.whisperPick(${JSON.stringify(m)}).model));`, { STUDIO_LOCAL_DIR: SAMLOCAL });
+        const table = [[{ apple: true, ramGB: 48 }, 'large-v3'], [{ apple: true, ramGB: 16 }, 'medium.en'], [{ apple: true, ramGB: 8 }, 'small.en'],
+          [{ gpu: 'NVIDIA RTX 4090', vramMB: 24564 }, 'large-v3'], [{ gpu: 'NVIDIA RTX 3050', vramMB: 6144 }, 'medium.en'], [{ ramGB: 32, cores: 12 }, 'small.en'], [{ ramGB: 8, cores: 4 }, 'base.en']];
+        for (const [m, want] of table) must(pick(m) === want, `${JSON.stringify(m)} → ${pick(m)}, not ${want}`);
+        const view = (await sapi('/api/app/settings')).json, rec = view.machine.whisper.model;
+        must((await sapi('/api/app/settings', { section: 'transcribe', values: { engine: 'local', model: 'auto' } })).status === 200, 'auto');
+        const w = await wrow();
+        must(w.whisper.models.map((m) => m.id).join() === 'large-v3,distil-large-v3,medium,medium.en,small,small.en,base,base.en,tiny,tiny.en' && w.whisper.recommended === rec
+          && w.whisper.choice === 'auto' && w.whisper.picked === rec && w.state === 'warn' && /Auto uses the best model already downloaded, and none is yet/.test(w.detail)
+          && w.whisper.models.every((m) => m.source.repo === WHISPER[m.id] && m.source.line.startsWith(`From Hugging Face · ${WHISPER[m.id]} (Fake Systran Co) · `)), `the row: ${w.state} ${w.detail} ${JSON.stringify(w.whisper).slice(0, 300)}`);
+        const saved = await sapi('/api/app/settings', { section: 'transcribe', values: { model: 'tiny.en' } });
+        must(saved.json?.values?.transcribe?.model === 'tiny.en' && (await sapi('/api/app/settings')).json.values.transcribe.model === 'tiny.en', 'the pick did not save or read back');
+        must((await sapi('/api/app/settings', { section: 'transcribe', values: { model: 'huge' } })).status === 400, 'a bad pick was accepted');
+        const p = await wrow();
+        must(p.whisper.choice === 'tiny.en' && p.whisper.picked === 'tiny.en' && p.state === 'warn' && /tiny\.en \(\d+ kB\), your pick, isn't downloaded yet/.test(p.detail), `the pick: ${p.state} ${p.detail}`);
+        await sapi('/api/app/settings', { section: 'transcribe', values: { engine: 'cloud' } });
+        const cloud = await wrow();
+        must(cloud.state === 'ok' && /no model needed here/.test(cloud.detail), `cloud: ${cloud.state} ${cloud.detail}`);
+        await sapi('/api/app/settings', { section: 'transcribe', values: { engine: 'local' } });
+        return `recommended here: ${rec} · ${table.map(([m, x]) => `${m.gpu || (m.apple ? `Apple ${m.ramGB} GB` : `CPU ${m.ramGB} GB`)} → ${x}`).join(', ')} · pick tiny.en saved`;
+      });
+
+      await check('Whisper Download (fake Hugging Face): progress, a cut download never counted, Range carry-on, checksum refusal, the snapshot faster-whisper reads', async () => {
+        const W = REPOS[WHISPER['tiny.en']].files['model.bin'], blob = join(wDir('tiny.en'), 'blobs', sha256(W)), part = `${blob}.incomplete`;
+        hfMode = 'cut';
+        let r = await download('tiny.en', { family: 'whisper' });
+        const cut = existsSync(part) ? statSync(part).size : 0;
+        must(r.d.state === 'error' && /carries on/.test(r.d.error) && cut > 0 && cut < W.length && !wHave().includes('tiny.en'), `cut: ${JSON.stringify(r.d)} part ${cut}`);
+        must(!existsSync(join(wDir('tiny.en'), 'snapshots', REV, 'model.bin')), 'the weights are in the snapshot before they are whole');
+        const mid = await wrow();
+        must(mid.state === 'warn' && !mid.whisper.there, `a partial counted: ${mid.state} ${mid.detail}`);
+        hfMode = 'slow'; hfLog.length = 0;
+        r = await download('tiny.en', { family: 'whisper' });
+        const ranged = hfLog.find((x) => x.file === 'model.bin'), readings = r.seen.filter((x) => x.state === 'downloading' && x.got > cut + 1 && x.got < x.total);
+        must(r.d.state === 'done' && ranged?.range === `bytes=${cut}-` && readings.length >= 2 && r.d.got === r.d.total && r.d.total === dlBytes(WHISPER['tiny.en']), `carry on: ${JSON.stringify(r.d)} ${ranged?.range} readings ${readings.length}`);
+        const snap = readdirSync(join(wDir('tiny.en'), 'snapshots', REV)).sort();
+        must(JSON.stringify(snap) === JSON.stringify(['config.json', 'model.bin', 'tokenizer.json', 'vocabulary.txt']) && readFileSync(join(wDir('tiny.en'), 'refs', 'main'), 'utf8') === REV
+          && readFileSync(join(wDir('tiny.en'), 'snapshots', REV, 'model.bin')).equals(W) && !hfLog.some((x) => x.file === 'README.md'), `snapshot: ${snap}`);
+        must(wHave().includes('tiny.en'), `not counted: ${wHave()}`);
+        const ok = await wrow();
+        must(ok.state === 'ok' && ok.whisper.there && /tiny\.en, your pick/.test(ok.detail), `the row after: ${ok.state} ${ok.detail}`);
+        // A bad checksum is refused (and nothing counted); large-v3's snapshot needs its preprocessor_config.json.
+        hfMode = 'corrupt';
+        r = await download('base.en', { family: 'whisper' });
+        must(r.d.state === 'error' && /checksum/.test(r.d.error) && !wHave().includes('base.en'), `checksum: ${JSON.stringify(r.d)}`);
+        hfMode = 'ok';
+        r = await download('large-v3', { family: 'whisper' });
+        must(r.d.state === 'done' && wHave().includes('large-v3'), `large-v3: ${JSON.stringify(r.d)}`);
+        const pre = join(wDir('large-v3'), 'snapshots', REV, 'preprocessor_config.json');
+        renameSync(pre, `${pre}.away`);
+        must(!wHave().includes('large-v3'), 'large-v3 counted without its preprocessor_config.json');
+        renameSync(`${pre}.away`, pre);
+        // faster-whisper's own lookup (the one transcription uses, offline) finds the model there.
+        const env = { ...process.env, HF_HUB_CACHE: HF, HF_HUB_OFFLINE: '1', PYTHONDONTWRITEBYTECODE: '1' };
+        const found = execFileSync(PY, ['-c', 'from faster_whisper.utils import download_model\nprint(download_model("tiny.en", local_files_only=True))'], { env, encoding: 'utf8' }).trim().split('\n').pop();
+        must(realpathSync(found) === realpathSync(join(HF, 'models--Systran--faster-whisper-tiny.en', 'snapshots', REV)), `faster-whisper looked in ${found}`);
+        await sapi('/api/app/settings', { section: 'transcribe', values: { model: 'auto' } });
+        return `cut at ${cut} not counted · carried on with Range (${readings.length} readings) · checksum refused · large-v3 needs preprocessor_config.json · faster-whisper finds ${found.split(sep).slice(-3).join('/')}`;
       });
     } finally {
       sam.kill();

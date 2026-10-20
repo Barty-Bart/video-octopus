@@ -422,12 +422,16 @@ const DRAW = {
     const engine = seg([['local', 'On this computer'], ['cloud', 'Cloud']], t.engine, (e) => save('transcribe', { engine: e }).then(redraw));
     const parts = [group('', row('Engine', t.engine === 'local' ? 'faster-whisper runs on this computer. Nothing is uploaded.' : 'Your audio is uploaded to the provider when you transcribe.', engine))];
     if (t.engine === 'local') {
-      const have = new Set(V.downloaded);
-      const opts = [['auto', `Picked for this computer: ${m.whisper.model} (${m.whisper.speed})`],
-        ...Object.entries(V.models).map(([k, size]) => [k, `${k} · ${have.has(k) ? 'downloaded ✓' : `${size} download`}`])];
+      const have = new Set(V.downloaded), S = V.whisperSources;
+      const opts = [['auto', `Auto: the best one downloaded (${V.autoWhisper}); recommended here: ${m.whisper.model}`],
+        ...V.models.map((k) => [k, `${k}${S[k]?.size ? ` · ${S[k].size}` : ''}${have.has(k) ? ' · downloaded ✓' : ''}${k === m.whisper.model ? ' · recommended' : ''}`])];
+      const src = h(`<div class="sub"></div>`);
+      const showSrc = (k) => src.replaceChildren(h(`<span>${srcLink(S[k === 'auto' ? V.autoWhisper : k])}</span>`));
+      showSrc(t.model);
       parts.push(group('On this computer',
-        row('Model', `${esc(m.chip)}${m.ramGB ? `, ${m.ramGB} GB` : ''}. The transcribe skill's pick for this computer is ${esc(m.whisper.model)}; .en models are English-only and more accurate for English.`, select(opts, t.model, (x) => save('transcribe', { model: x }))),
-        row('Downloaded models', '', h(`<div class="sub mono">${V.downloaded.length ? esc(V.downloaded.join(' · ')) : 'None yet: the first transcription downloads the model (it asks first).'}</div>`))));
+        row('Model', `${esc(m.chip)}${m.ramGB ? `, ${m.ramGB} GB` : ''}. Recommended for this computer: ${esc(m.whisper.model)} (${esc(m.whisper.speed)}); .en models are English-only and more accurate for English. Setup → Transcription model downloads the one you pick.`, select(opts, t.model, (x) => { showSrc(x); return save('transcribe', { model: x }); })),
+        row('Source', '', src),
+        row('Downloaded models', '', h(`<div class="sub mono">${V.downloaded.length ? esc(V.downloaded.join(' · ')) : 'None yet: Setup → Transcription model downloads the one you pick.'}</div>`))));
     } else {
       const P = V.providers[t.provider];
       const list = h(`<div class="prov-list" role="radiogroup" aria-label="Provider"></div>`);
@@ -738,8 +742,16 @@ function closeDrawer({ remember = true } = {}) {
 function samGroup(V, save) {
   const S = V.sam2, have = new Set(S.have), rec = S.recommended;
   const opts = [['auto', `Auto: ${rec.size}, recommended for ${rec.why}`],
-    ...Object.entries(S.models).map(([k, m]) => [k, `${k} · ${m.mb} · ${m.speed}${have.has(k) ? ' · downloaded ✓' : ''}`])];
+    ...Object.entries(S.models).map(([k, m]) => [k, `${k}${S.sources[k]?.size ? ` · ${S.sources[k].size}` : ''} · ${m.speed}${have.has(k) ? ' · downloaded ✓' : ''}`])];
+  const src = h(`<div class="sub"></div>`);
+  const showSrc = (k) => src.replaceChildren(h(`<span>${srcLink(S.sources[k === 'auto' ? rec.size : k])}</span>`));
+  showSrc(V.values.objsep.model);
   return group('Object separation',
-    row('Model', `SAM 2.1 for the object-separation skill (cutting a person or an object out of the background, on this computer). ${rec.slow ? 'No GPU here: it runs on the CPU, which takes seconds a frame.' : ''}`.trim(), select(opts, V.values.objsep.model, (x) => save('objsep', { model: x }))),
+    row('Model', `SAM 2.1 for the object-separation skill (cutting a person or an object out of the background, on this computer). ${rec.slow ? 'No GPU here: it runs on the CPU, which takes seconds a frame.' : ''}`.trim(), select(opts, V.values.objsep.model, (x) => { showSrc(x); return save('objsep', { model: x }); })),
+    row('Source', '', src),
     row('Downloaded models', '', h(`<div class="sub mono">${S.have.length ? esc(S.have.join(' · ')) : 'None yet: Setup → Object separation downloads the picked one.'}</div>`)));
 }
+
+// A model's source line ("From Hugging Face · <repo> (<maker>) · <size> · licence: …", the server's words) with the repo
+// as a link to its page.
+const srcLink = (s) => (s?.repo ? esc(s.line || '').replace(esc(s.repo), `<a href="${esc(s.url)}" target="_blank" rel="noopener" class="mono">${esc(s.repo)}</a>`) : '');

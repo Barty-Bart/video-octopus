@@ -1221,6 +1221,9 @@ select.field { appearance: none; padding-right: 30px; cursor: pointer;
 .su-model input { margin: 0; align-self: center; }
 .su-model b { font-weight: 500; min-width: 72px; }
 .su-model .badge { font-size: 11px; }
+.su-mi { display: flex; flex-direction: column; }
+.su-src { margin-left: 21px; font-size: 11.5px; color: var(--muted); overflow-wrap: anywhere; }
+.su-src a { color: var(--text-2); }
 .su-dl { display: flex; align-items: center; gap: 10px; margin-top: 6px; max-width: 420px; }
 .su-bar { flex: 1; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
 .su-bar i { display: block; height: 100%; background: var(--accent); border-radius: 3px; transition: width .4s; }

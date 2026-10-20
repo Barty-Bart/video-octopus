@@ -137,77 +137,93 @@ export async function setupPage(ctx, { back = '#/', assistantPanel }) {
       b.onclick = () => fix(id);
       a.append(b);
     }
-    // Object separation: the model is picked and downloaded right here (Download, progress, Stop); Fix is for the packages.
-    if (id === 'objsep' && c.sam2 && s !== 'checking' && s !== 'fixing') drawSam2(r.li, c.sam2);
+    // The model rows (Whisper, object separation): the model is picked and downloaded right here (Download, progress,
+    // Stop); Fix is for the packages.
+    const mx = MODEL_ROWS[id] && c[MODEL_ROWS[id].key];
+    if (mx && s !== 'checking' && s !== 'fixing') drawModels(id, r.li, mx);
   };
 
-  // ---- Object separation's row: the three SAM 2.1 models (the recommended one marked), the creator's pick, and the
-  // picked model's download into the Hugging Face cache (progress, Stop, carry on) ----
-  let samPoll = null, live = true;
-  const samMb = (x, id) => x.models.find((m) => m.id === id)?.mb || '';
-  const samBar = (d, x) => {
-    const pct = d.total ? Math.min(100, (d.got / d.total) * 100) : 0;
-    return { pct, text: `${(d.got / 1e6).toFixed(d.total && d.total < 20e6 ? 1 : 0)} of ${d.total ? `${Math.round(d.total / 1e6)} MB` : samMb(x, d.size)}` };
+  // ---- the model rows: every model with where it comes from (Hugging Face: the repo, its maker, the size of what's
+  // downloaded, the licence), the recommended one marked, the creator's pick, and the picked model's download into the
+  // Hugging Face cache (progress, Stop, carry on) ----
+  const MODEL_ROWS = {
+    whisper: { key: 'whisper', family: 'whisper', section: 'transcribe', name: 'Whisper', note: 'Transcription never downloads a model by itself.' },
+    objsep: { key: 'sam2', family: 'sam2', section: 'objsep', name: 'SAM 2.1', note: 'The skill never downloads by itself.' },
   };
-  function drawSam2(li, x) {
-    const d = x.download || { state: 'idle' }, b = $('.su-b', li), a = $('.su-a', li);
+  const polls = {};
+  let live = true;
+  const sizeOf = (x, id) => x.models.find((m) => m.id === id)?.source?.size || '';
+  const bar = (d, x) => {
+    const pct = d.total ? Math.min(100, (d.got / d.total) * 100) : 0;
+    return { pct, text: `${(d.got / 1e6).toFixed(d.total && d.total < 20e6 ? 1 : 0)} of ${d.total ? `${Math.round(d.total / 1e6)} MB` : sizeOf(x, d.size)}` };
+  };
+  // "From Hugging Face · <repo> (<maker>) · <size> · licence: <licence>", the server's words, with the repo as a link.
+  const srcLine = (src) => src?.repo ? esc(src.line || '').replace(esc(src.repo), `<a href="${esc(src.url)}" target="_blank" rel="noopener" class="mono">${esc(src.repo)}</a>`) : '';
+  function drawModels(id, li, x) {
+    const R = MODEL_ROWS[id], d = x.download || { state: 'idle' }, b = $('.su-b', li), a = $('.su-a', li);
     const busy = d.state === 'downloading';
-    const pick = h(`<div class="su-models" role="radiogroup" aria-label="SAM 2.1 model for object separation">
-      <label class="su-model"><input type="radio" name="sam2m" value="auto"${x.choice === 'auto' ? ' checked' : ''}${busy ? ' disabled' : ''}><b>Auto</b><span class="sub">${esc(x.recommended)}, recommended for ${esc(x.why)}</span></label>
-      ${x.models.map((m) => `<label class="su-model"><input type="radio" name="sam2m" value="${esc(m.id)}"${x.choice === m.id ? ' checked' : ''}${busy ? ' disabled' : ''}><b>${esc(m.id)}</b>
-        <span class="sub">${esc(m.mb)} · ${esc(m.speed)}</span>${m.id === x.recommended ? '<span class="badge ob-rec">Recommended</span>' : ''}${m.have ? '<span class="badge">Downloaded</span>' : ''}</label>`).join('')}
+    const autoText = x.family === 'whisper'
+      ? `the best model already downloaded${x.models.find((m) => m.id === x.auto)?.have ? ` (now ${esc(x.auto)})` : ''}; recommended for ${esc(x.why)}: ${esc(x.recommended)}`
+      : `${esc(x.recommended)}, recommended for ${esc(x.why)}`;
+    const pick = h(`<div class="su-models" role="radiogroup" aria-label="${esc(R.name)} model">
+      <label class="su-model"><input type="radio" name="m-${esc(id)}" value="auto"${x.choice === 'auto' ? ' checked' : ''}${busy ? ' disabled' : ''}><b>Auto</b><span class="sub">${autoText}</span></label>
+      ${x.models.map((m) => `<div class="su-mi"><label class="su-model"><input type="radio" name="m-${esc(id)}" value="${esc(m.id)}"${x.choice === m.id ? ' checked' : ''}${busy ? ' disabled' : ''}><b>${esc(m.id)}</b>
+        ${m.speed ? `<span class="sub">${esc(m.speed)}</span>` : ''}${m.id === x.recommended ? '<span class="badge ob-rec">Recommended</span>' : ''}${m.have ? '<span class="badge">Downloaded</span>' : ''}</label>
+        <span class="su-src">${srcLine(m.source)}</span></div>`).join('')}
     </div>`);
     pick.querySelectorAll('input').forEach((i) => (i.onchange = async () => {
-      try { await api('/api/app/settings', { section: 'objsep', values: { model: i.value } }); await check('objsep'); }
+      try { await api('/api/app/settings', { section: R.section, values: { model: i.value } }); await check(id); }
       catch (e) { toast(e.message); }
     }));
     b.append(pick);
     if (x.slow) b.append(h(`<span class="su-how">No GPU it can use here: object separation runs on the CPU and takes seconds a frame, so tiny is the one to have.</span>`));
     if (busy) {
-      const { pct, text } = samBar(d, x);
+      const { pct, text } = bar(d, x);
       $('.su-s', a).textContent = 'Downloading';
-      b.append(h(`<span class="su-dl"><span class="su-bar" role="progressbar" aria-label="Downloading SAM 2.1 ${esc(d.size)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(pct)}"><i style="width:${pct.toFixed(1)}%"></i></span><span class="sub mono">${esc(text)}</span></span>`));
+      b.append(h(`<span class="su-dl"><span class="su-bar" role="progressbar" aria-label="Downloading ${esc(R.name)} ${esc(d.size)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(pct)}"><i style="width:${pct.toFixed(1)}%"></i></span><span class="sub mono">${esc(text)}</span></span>`));
       const stop = h(`<button type="button" class="btn small ghost">Stop</button>`);
-      stop.onclick = async () => { stop.disabled = true; try { await api('/api/app/setup/sam2/stop', {}); } catch (e) { toast(e.message); } };
+      stop.onclick = async () => { stop.disabled = true; try { await api(`/api/app/setup/${R.family}/stop`, {}); } catch (e) { toast(e.message); } };
       a.prepend(stop);
-      watchSam2();
+      watch(id);
       return;
     }
     if (x.there) return;
+    const sz = sizeOf(x, x.picked);
     if (d.state === 'error' || d.state === 'stopped') b.append(h(`<span class="su-how">${esc(d.error || 'Stopped.')}</span>`));
-    else b.append(h(`<span class="sub">Download gets SAM 2.1 ${esc(x.picked)} (${esc(samMb(x, x.picked))}) from Hugging Face into <span class="mono">${esc(x.cache)}</span>, once for every studio. The skill never downloads by itself.</span>`));
+    else b.append(h(`<span class="sub">Download gets ${esc(R.name)} ${esc(x.picked)}${sz ? ` (${esc(sz)})` : ''} from Hugging Face into <span class="mono">${esc(x.cache)}</span>, once for every studio. ${esc(R.note)}</span>`));
     const go = h(`<button type="button" class="btn small dark">${d.got > 0 && d.state !== 'done' && d.size === x.picked ? 'Carry on' : 'Download'}</button>`);
-    go.title = `Download SAM 2.1 ${x.picked} (${samMb(x, x.picked)}) into the Hugging Face cache`;
+    go.title = `Download ${R.name} ${x.picked}${sz ? ` (${sz})` : ''} into the Hugging Face cache`;
     go.onclick = async () => {
       go.disabled = true;
       try {
-        const r = rows.get('objsep'), dl = await api('/api/app/setup/sam2/download', { size: x.picked });
-        r.check.sam2 = { ...r.check.sam2, download: dl };
-        if (dl.state === 'done') check('objsep'); else drawRow('objsep');
+        const r = rows.get(id), dl = await api(`/api/app/setup/${R.family}/download`, { size: x.picked });
+        r.check[R.key] = { ...r.check[R.key], download: dl };
+        if (dl.state === 'done') check(id); else drawRow(id);
       } catch (e) { toast(e.message); go.disabled = false; }
     };
     a.prepend(go);
   }
   // While it downloads: the bar follows the server every half second; done → the row is checked again.
-  function watchSam2() {
-    if (samPoll) return;
+  function watch(id) {
+    if (polls[id]) return;
+    const R = MODEL_ROWS[id];
     const tick = async () => {
       let d = null;
-      try { d = await api('/api/app/setup/sam2'); } catch {}
-      const r = rows.get('objsep');
-      if (!live || !r?.check?.sam2 || !d) { samPoll = null; return; }
-      r.check.sam2 = { ...r.check.sam2, download: d };
-      const bar = $('.su-dl', r.li);
+      try { d = await api(`/api/app/setup/${R.family}`); } catch {}
+      const r = rows.get(id);
+      if (!live || !r?.check?.[R.key] || !d) { polls[id] = null; return; }
+      r.check[R.key] = { ...r.check[R.key], download: d };
+      const el = $('.su-dl', r.li);
       if (d.state === 'downloading') {
-        if (bar) { const { pct, text } = samBar(d, r.check.sam2); $('i', bar).style.width = `${pct.toFixed(1)}%`; $('.su-bar', bar).setAttribute('aria-valuenow', String(Math.round(pct))); $('.sub', bar).textContent = text; }
-        else drawRow('objsep');
-        samPoll = setTimeout(tick, 500);
+        if (el) { const { pct, text } = bar(d, r.check[R.key]); $('i', el).style.width = `${pct.toFixed(1)}%`; $('.su-bar', el).setAttribute('aria-valuenow', String(Math.round(pct))); $('.sub', el).textContent = text; }
+        else drawRow(id);
+        polls[id] = setTimeout(tick, 500);
         return;
       }
-      samPoll = null;
-      if (d.state === 'done') { toast(`SAM 2.1 ${d.size} is downloaded.`); check('objsep'); } else drawRow('objsep');
+      polls[id] = null;
+      if (d.state === 'done') { toast(`${R.name} ${d.size} is downloaded.`); check(id); } else drawRow(id);
     };
-    samPoll = setTimeout(tick, 500);
+    polls[id] = setTimeout(tick, 500);
   }
   async function check(id) {
     const r = rows.get(id);
@@ -318,5 +334,5 @@ export async function setupPage(ctx, { back = '#/', assistantPanel }) {
   for (const id of rows.keys()) drawRow(id);
   count();
   checkAll();
-  return { teardown: () => { live = false; clearTimeout(samPoll); panel.destroy(); document.body.classList.remove('in-home', 'in-app-page'); } };
+  return { teardown: () => { live = false; Object.values(polls).forEach(clearTimeout); panel.destroy(); document.body.classList.remove('in-home', 'in-app-page'); } };
 }

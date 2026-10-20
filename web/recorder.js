@@ -416,7 +416,14 @@ export async function recordPanel({ id, P, choices, opts = {}, settingsLink }) {
     if (!sug.hidden) { $('#micSugName', page).textContent = ext.label.replace(/\s*\([0-9a-f]{4}:[0-9a-f]{4}\)$/i, ''); sug.dataset.id = ext.deviceId; }
   }
   const asked = { cam: 0, mic: 0 }; // only the newest pick of each device counts (quick changes)
-  async function openDevs(which = 'both') {
+  // Opens still on their way (a camera or mic just picked): Start waits for them rather than calling them missing.
+  const devOpens = new Set();
+  function openDevs(which = 'both') {
+    const job = openDevsNow(which);
+    devOpens.add(job); job.finally(() => devOpens.delete(job)).catch(() => {});
+    return job;
+  }
+  async function openDevsNow(which) {
     perm('');
     const tok = { cam: which !== 'mic' ? ++asked.cam : 0, mic: which !== 'cam' ? ++asked.mic : 0 };
     try {
@@ -490,10 +497,22 @@ export async function recordPanel({ id, P, choices, opts = {}, settingsLink }) {
   document.addEventListener('keydown', onKey);
   $('#rBack', page).onclick = () => close();
   $('.rp-switch', page).onclick = () => close(); // then the link opens Settings → Recording
+  let pressed = false; // one Start at a time (a second press while the first waits does nothing)
   const start = async () => {
+    if (pressed) return;
+    pressed = true;
+    try { await startNow(); } finally { pressed = false; }
+  };
+  const startNow = async () => {
     const k = recordWhat(sel);
     if (!k || !sup.ok) return;
     if (k === 'screen' && !d.screen && !(await screen())) return; // the picker comes up on Start
+    if (devOpens.size) {
+      $('#rStartL', page).textContent = 'Opening the camera and mic…';
+      await Promise.race([Promise.allSettled([...devOpens]), new Promise((r) => setTimeout(r, 8000))]);
+      if (!open) return;
+      $('#rStartL', page).textContent = recordLabel(sel);
+    }
     // A camera or mic that's picked but didn't open: say so (the permission note, if any, stays).
     const note = $('#rPerm', page);
     if (!note.hidden && permFor === 'screen' && k !== 'screen') perm(''); // a screen note doesn't hold up a take without it

@@ -244,6 +244,25 @@ try {
   await p4.keyboard.press('Escape');
   await ctx4.close();
   await api('/api/app/settings', { section: 'recorder', values: { target: 'replace' } });
+
+  // ---- a mic picked and Start pressed at once: Start waits for the mic instead of calling it missing ----
+  const ctx5 = await browser.newContext({ permissions: ['camera', 'microphone'], viewport: { width: 1440, height: 900 } });
+  const p5 = await ctx5.newPage();
+  p5.on('pageerror', (e) => { failures.push(`page error: ${e.message}`); console.error('[page error]', e.message); });
+  await p5.goto(`${BASE}/?fakeScreen=1#/p/${encodeURIComponent(id4)}`);
+  await p5.waitForSelector('#recBtn:not([disabled])');
+  await p5.click('#recBtn');
+  await p5.waitForSelector('.rec-page #rStart');
+  await p5.waitForFunction(() => document.querySelector('#rMic')?.options.length > 2 && document.querySelector('#pvCam')?.srcObject, null, { timeout: 20000 });
+  if (await p5.isVisible('#scrNone')) await p5.click('#scrNone');
+  await p5.click('#rCount [data-c="0"]');
+  await p5.selectOption('#rMic', { index: 2 });
+  await p5.click('#rStart'); // no wait: the mic is still reopening
+  const went = await p5.waitForFunction(() => /^Stop/.test(document.querySelector('#recText')?.textContent || ''), null, { timeout: 15000 }).then(() => true, () => false);
+  const why = went ? '' : await p5.$eval('#rPerm', (el) => (el.hidden ? '(no note)' : el.textContent)).catch(() => '');
+  check(went, `a mic picked and Start pressed at once: the take starts${why ? ` (it said: ${why.trim().slice(0, 80)})` : ''}`);
+  if (went) { await sleep(1000); await p5.click('#recBtn'); await p5.waitForFunction(() => document.querySelector('#recText')?.textContent === 'Record', null, { timeout: 120000 }); }
+  await ctx5.close();
 } catch (e) {
   failures.push(e.message);
   console.error('[script e2e] FAIL', e.message);
