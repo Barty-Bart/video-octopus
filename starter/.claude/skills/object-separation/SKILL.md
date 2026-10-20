@@ -7,6 +7,10 @@ description: Separate a person, a product or a hand from the background of a vid
 
 Separate one subject from the background of a video. Everything runs on this computer and nothing is uploaded. The result is a mask for every frame (white = the subject), which a scene then uses: text or a graphic behind the speaker, a new background, a highlight or outline round a product.
 
+## Creator preferences
+
+Read the supplied creator-preference context. `skills["octopus.object-separation"].previewOutlineColor` is `brand` (default: the explicit project/app accent, then brand/style notes, otherwise white) or a six-digit hex colour. Pass the resolved colour as one safely quoted `--color` argument to the existing `sheet`/`overlay` commands; it changes only their check-image appearance, not the masks or model. `presentation.tone` guides your report; `visualDensity` and brand/style prose guide a requested composite, never whether to skip the check sheet/video. Follow studio precedence and resolve invalid preferences before dependent editing. No preference can change model/download permissions, subject selection, frame/time alignment, output paths or required checks. Lasting creative choices belong in preferences/memory, not this skill.
+
 The script is in this skill's folder. Commands below run from the project folder (`projects/<name>/`), where the studio is `../..`. Run it with the studio's Python (`../../.venv/bin/python` on Mac and Linux, `..\..\.venv\Scripts\python.exe` on Windows), else `python3`:
 
 ```bash
@@ -70,7 +74,7 @@ writes `work/objsep/<name>/sheet.jpg`: six frames across the range, background d
 - part of the subject is missing → add a point there;
 - "the subject is (nearly) gone" on some frames while it's still in the picture → separate again from there (`--start` at that frame) with points on it.
 
-For the creator, `overlay` makes `work/objsep/<name>/check.mp4` (the same look, moving, with the sound). Pass `--color` with the brand's accent from `BRAND.md` (else the outline is white).
+For the creator, `overlay` makes `work/objsep/<name>/check.mp4` (the same look, moving, with the sound). Pass `--color` from the supported preview preference above (brand accent or white when unset).
 
 Masks are very clean on people, objects and hands; fine hair and motion blur are softer. Anything attached to the subject counts as part of it (a cable, packaging, peel-off film): exclude it with a label-0 point.
 

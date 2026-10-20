@@ -21,7 +21,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync, chmodSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { cpus } from 'node:os';
-import { studioTool, writeJSON, settings, h264, inside } from './util.mjs';
+import { studioTool, writeJSON, settings, h264, inside, videoDecodeArgs } from './util.mjs';
 import { backgroundPlan, logTrialUse } from './backgrounds.mjs';
 import { appendWorklog, probeFile } from './studio.mjs';
 import { readShots, readZooms } from './shots.mjs';
@@ -207,10 +207,10 @@ export function exportShots(id, dir, body, emit, { jobs, pngFrom, nextName, quot
       if (x.seek && x.src) {
         const a = x.src[0][0] / FPS, b = x.src[x.src.length - 1][1] / FPS;
         const X = Math.max(0, Math.floor((a - 1) * 1000) / 1000);
-        const k = input([...(X > 0 ? ['-ss', X.toFixed(3)] : []), '-t', (b - X + 1).toFixed(3), '-hwaccel', 'videotoolbox', '-i', file]);
+        const k = input([...(X > 0 ? ['-ss', X.toFixed(3)] : []), '-t', (b - X + 1).toFixed(3), ...videoDecodeArgs(), '-i', file]);
         chain = `[${k}:v]${X > 0 ? `setpts=round(PTS+${(X + startShift(dir, file)).toFixed(6)}/TB)` : 'setpts=PTS-STARTPTS'},fps=${FPS},select='${sel}',setpts=N/${FPS}/TB`;
       } else {
-        const k = input(['-hwaccel', 'videotoolbox', '-i', file]);
+        const k = input([...videoDecodeArgs(), '-i', file]);
         chain = `[${k}:v]setpts=PTS-STARTPTS,fps=${FPS}`;
       }
       f.push(labels.length > 1 ? `${chain},split=${labels.length}${labels.map((l) => `[${l}]`).join('')}` : `${chain}[${labels[0]}]`);

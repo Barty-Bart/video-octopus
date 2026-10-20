@@ -1,9 +1,9 @@
 // Skills from GitHub: Setup's "Which motion graphics skills do you want?" and the Skills page's "Add skills from
 // GitHub". Video Octopus downloads a public repo as a tarball (codeload.github.com; `git clone --depth 1` when the download
 // fails and git is there), finds its skills (folders with a SKILL.md: skills/<name>/, .claude/skills/<name>/ or
-// <name>/ at the top) and copies the chosen ones into the studio's .claude/skills/. It never overwrites a skill that
-// is already there (it says so instead), writes only plain files and folders (no links, nothing outside the skill's
-// folder), and records each install in <studio>/.studio/skills.json (repo, branch, commit, date) for later updates.
+// <name>/ at the top) and saves the chosen ones in skills/custom/ for managed publication into .claude/skills/.
+// It never overwrites an existing skill, writes only plain files and folders (no links or paths outside the skill),
+// and records each install in <studio>/.studio/skills.json (repo, branch, commit, date) for later updates.
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync, renameSync, rmSync, chmodSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, relative } from 'node:path';
@@ -11,6 +11,8 @@ import { gunzipSync } from 'node:zlib';
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { settings, readJSON, writeJSON, inside } from './util.mjs';
+import { syncSkills, skillsView, loadSkillCatalog } from './managed-skills.mjs';
+import { settingsChanged } from './settings.mjs';
 
 // The recommended set, shown without a download (the one-liners follow the repo's README). The repo's
 // object-separation skill isn't offered: object separation is a core skill now, in every studio from the starter.
@@ -169,9 +171,9 @@ export function findSkills(entries) {
     const folder = parts.slice(0, -1).join('/');
     if (skills.some((s) => folder.startsWith(`${s.folder}/`))) continue;
     const name = parts.at(-2);
-    if (!NAME.test(name) || skills.some((s) => s.name === name)) continue;
+    if (!NAME.test(name) || skills.some((s) => s.name.toLowerCase() === name.toLowerCase())) continue;
     const fm = frontMatter(e.data.toString('utf8'));
-    skills.push({ name, folder, description: fm.description.split(/(?<=\.)\s/)[0].slice(0, 200), stage: fm.stage });
+    skills.push({ name, skillName: fm.name || name, folder, description: fm.description.split(/(?<=\.)\s/)[0].slice(0, 200), stage: fm.stage });
   }
   return { list, skills: skills.sort((a, b) => a.name.localeCompare(b.name)) };
 }
@@ -236,7 +238,38 @@ export function installedSkills(studio = settings().studio) {
     return [{ name: n, description: fm.description, stage: fm.stage }];
   });
 }
-const has = (studio, name) => { try { lstatSync(join(skillsDir(studio), name)); return true; } catch { return false; } };
+const customDir = (studio) => join(studio, 'skills', 'custom');
+
+// Names remain owned when a skill is disabled, deleted from the active publication, or a saved custom version
+// is not selected. Check both directory names and SKILL.md names, case-insensitively on every platform.
+function ownedSkillNames(studio) {
+  const owned = new Map();
+  const add = (name, kind) => { if (typeof name === 'string' && name && !owned.has(name.toLowerCase())) owned.set(name.toLowerCase(), kind); };
+  for (const skill of loadSkillCatalog().items) {
+    add(skill.name, 'core');
+    for (const name of skill.legacyNames) add(name, 'core');
+  }
+  if (!studio || !existsSync(studio)) return owned;
+  const view = skillsView({ studio });
+  for (const skill of view.items) {
+    const kind = skill.mode === 'custom' ? 'custom' : 'core';
+    add(skill.name, kind); add(skill.forkName, kind); add(skill.published?.folder, kind);
+  }
+  for (const [root, kind] of [[skillsDir(studio), 'existing'], [customDir(studio), 'custom'], [join(studio, 'skills', 'overrides'), 'saved-custom']]) {
+    if (!existsSync(root)) continue;
+    for (const name of readdirSync(root).filter((n) => !n.startsWith('.'))) {
+      add(name, kind); // even an unrelated file/folder must not be replaced by an install
+      const dir = join(root, name);
+      try {
+        if (!lstatSync(dir).isDirectory()) continue;
+        const file = join(dir, 'SKILL.md');
+        if (lstatSync(file).isFile()) add(frontMatter(readFileSync(file, 'utf8')).name, kind);
+      } catch (e) { if (e.code !== 'ENOENT') throw e; }
+    }
+  }
+  return owned;
+}
+const ownedBy = (owned, skill) => owned.get(skill.name.toLowerCase()) || owned.get((skill.skillName || skill.name).toLowerCase());
 
 // For the Setup step and the Skills page: the repo's skills with "already in your studio" flags.
 export async function repoView(input) {
@@ -246,18 +279,20 @@ export async function repoView(input) {
   const ref = r.ref || (rec ? RECOMMENDED.ref : null);
   const got = await fetchRepo({ ...r, ref });
   const about = rec ? Object.fromEntries(RECOMMENDED.skills.map((s) => [s.name, s.about])) : {};
+  const owned = ownedSkillNames(studio);
   return { repo: r.id, ref, recommended: rec, commit: got.commit, url: `https://github.com/${r.id}`, ...(rec ? { license: RECOMMENDED.license, about: RECOMMENDED.about } : {}),
-    skills: got.skills.map((s) => ({ name: s.name, description: about[s.name] || s.description, installed: Boolean(studio) && has(studio, s.name) })) };
+    skills: got.skills.map((s) => ({ name: s.name, description: about[s.name] || s.description, installed: Boolean(ownedBy(owned, s)), ownership: ownedBy(owned, s) || null })) };
 }
 
 // The recommended set without downloading anything (Setup draws it straight away).
 export function recommendedView() {
   const studio = settings().studio;
   const ok = Boolean(studio) && existsSync(studio);
-  return { ...RECOMMENDED, recommended: true, studio: ok, skills: RECOMMENDED.skills.map((s) => ({ ...s, description: s.about, installed: ok && has(studio, s.name) })) };
+  const owned = ownedSkillNames(studio);
+  return { ...RECOMMENDED, recommended: true, studio: ok, skills: RECOMMENDED.skills.map((s) => ({ ...s, description: s.about, installed: Boolean(ownedBy(owned, s)), ownership: ownedBy(owned, s) || null })) };
 }
 
-// Copy the chosen skills of a repo into <studio>/.claude/skills. Returns { installed, skipped, missing, refused }.
+// Independent skills live in creator-owned storage; the manager publishes exactly one active copy.
 export async function installSkills(input, names, { studio = settings().studio } = {}) {
   if (!studio || !existsSync(studio)) throw new Error('Create your studio first: skills go into its .claude/skills folder.');
   const r = parseRepo(input || RECOMMENDED.repo);
@@ -266,7 +301,10 @@ export async function installSkills(input, names, { studio = settings().studio }
   const want = [...new Set((Array.isArray(names) ? names : []).map(String))];
   if (!want.length) throw new Error('Pick at least one skill.');
   const got = await fetchRepo({ ...r, ref });
-  const dest = skillsDir(studio);
+  const managed = syncSkills({ studio }); // validate managed paths before writing; adopt legacy installs conservatively
+  if (!managed.ok) throw new Error(managed.error || 'Resolve the skill manager error before installing skills.');
+  if (managed.held) throw new Error('Resume skill updates in Settings → Updates before installing another skill. Your restored snapshot was kept.');
+  const dest = customDir(studio);
   mkdirSync(dest, { recursive: true });
   const out = { repo: r.id, ref, commit: got.commit, via: got.via, installed: [], skipped: [], missing: [], refused: 0 };
   const record = readJSON(join(studio, '.studio', 'skills.json'), {}) || {};
@@ -274,7 +312,8 @@ export async function installSkills(input, names, { studio = settings().studio }
   for (const name of want) {
     const sk = got.skills.find((s) => s.name === name);
     if (!sk || !NAME.test(name)) { out.missing.push(name); continue; }
-    if (has(studio, name)) { out.skipped.push({ name, why: 'already in your studio: kept as it is' }); continue; }
+    if (!NAME.test(sk.skillName)) { out.skipped.push({ name, why: 'SKILL.md has an unsupported skill name; nothing was installed' }); continue; }
+    if (ownedBy(ownedSkillNames(studio), sk)) { out.skipped.push({ name, why: 'name already belongs to a core or personal skill, including disabled skills and saved custom versions' }); continue; }
     const tmp = join(dest, `.${name}.installing-${randomBytes(4).toString('hex')}`);
     const prefix = `${sk.folder}/`;
     let files = 0, bytes = 0;
@@ -285,6 +324,7 @@ export async function installSkills(input, names, { studio = settings().studio }
         const parts = safeParts(String(e.path).slice(prefix.length));
         if (e.kind !== 'file' && e.kind !== 'dir') { out.refused++; continue; } // links, devices: never written
         if (!parts) { if (String(e.path).slice(prefix.length).replace(/\/$/, '')) out.refused++; continue; }
+        if (parts.at(-1) === '.octopus-skill.json') continue; // imported repositories cannot assign managed identities
         const target = join(tmp, ...parts);
         if (!inside(tmp, target)) { out.refused++; continue; }
         if (e.kind === 'dir') { mkdirSync(target, { recursive: true }); continue; }
@@ -294,13 +334,17 @@ export async function installSkills(input, names, { studio = settings().studio }
         if (e.mode & 0o111) { try { chmodSync(target, 0o755); } catch {} }
       }
       if (!existsSync(join(tmp, 'SKILL.md'))) throw new Error(`${name} has no SKILL.md.`);
-      if (has(studio, name)) { rmSync(tmp, { recursive: true, force: true }); out.skipped.push({ name, why: 'already in your studio: kept as it is' }); continue; }
+      if (ownedBy(ownedSkillNames(studio), sk)) { rmSync(tmp, { recursive: true, force: true }); out.skipped.push({ name, why: 'name already belongs to a core or personal skill: kept as it is' }); continue; }
       renameSync(tmp, join(dest, name));
     } catch (e) { rmSync(tmp, { recursive: true, force: true }); throw e; }
     record.skills[name] = { repo: r.id, ref: ref || 'default branch', commit: got.commit, files, at: new Date().toISOString() };
     out.installed.push({ name, files });
   }
-  if (out.installed.length) writeJSON(join(studio, '.studio', 'skills.json'), record);
+  if (out.installed.length) {
+    writeJSON(join(studio, '.studio', 'skills.json'), record);
+    out.skills = syncSkills({ studio });
+    settingsChanged('skills');
+  }
   return out;
 }
 

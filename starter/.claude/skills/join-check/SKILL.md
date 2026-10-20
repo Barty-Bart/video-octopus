@@ -7,6 +7,10 @@ description: Listen to every join of a cut and catch clipped words (half-word cu
 
 **Why:** cut points come from word timings, which can be a few hundredths of a second off. A cut that lands inside a word chops its start or end ("tes" for "test"). Once motion is timed to a cut, fixing it means retiming everything, so joins get checked and the cut gets locked **before** any graphics.
 
+## Creator preferences
+
+Read the supplied creator-preference context. `skills["octopus.join-check"].reportDetail` is `summary` (default: counts and worst two or three joins) or `detailed` (also list every flagged join, its time, reason and action). `presentation.tone` affects the explanation. Both modes run every check below and report unresolved problems; neither changes thresholds, suppresses listening, skips approval or changes `joins.json`/EDL schemas. Read memory prose for the creator's listening concerns within that scope. Follow the studio's precedence rules and resolve invalid preferences before dependent editing. Lasting report-style changes go in `preferences/skills.json`, not this skill.
+
 ## Where it sits in the edit
 
 `transcribe` → `rough-cut` (its apply step already snaps each edge to the quietest 20 ms) → **join-check** → fix in the Cut tab → **lock the cut** → production-sheet, zooms, motion, B-roll.

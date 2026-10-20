@@ -4,16 +4,33 @@
 <!-- Opened by the export in a headless Chrome (server/backgrounds.mjs): renders an animated background frame by
      frame with the canvas's own drawing code (web/look.js) and posts each frame back as a PNG. -->
 <script type="module">
+import { painterFor } from './look.js';
 const token = location.hash.slice(1);
 const post = (path, body) => fetch(`/api/bgjob/${token}/${path}`, { method: 'POST', headers: { 'X-Studio': '1' }, body });
 try {
   const job = await (await fetch(`/api/bgjob/${token}`)).json();
   if (!job.W) throw new Error(job.error || 'No such background job.');
   const n = Math.max(1, Math.min(job.workers || 6, job.frames));
-  await Promise.all(Array.from({ length: n }, (_, k) => new Promise((resolve, reject) => {
+  await Promise.all(Array.from({ length: n }, (_, k) => job.bg.kind === 'code' ? (async () => {
+    // Generated code needs an opaque iframe, not an app-origin Worker. Only this trusted host
+    // knows the export upload token; each worker-sized lane awaits its exact requested frame.
+    const p = await painterFor(job.bg, { url: () => job.src });
+    const canvas = document.createElement('canvas'); canvas.width = job.W; canvas.height = job.H;
+    const g = canvas.getContext('2d');
+    try {
+      for (let f = k; f < job.frames; f += n) {
+        await p.prepare(f / job.fps, job.W, job.H);
+        p.paint(g, job.W, job.H, f / job.fps);
+        const png = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+        if (!png) throw new Error('The background frame could not be encoded.');
+        const r = await post(`frame?n=${f}`, png);
+        if (!r.ok) throw new Error(`Frame ${f}: HTTP ${r.status}`);
+      }
+    } finally { p.dispose(); }
+  })() : new Promise((resolve, reject) => {
     const w = new Worker('/bg-worker.js', { type: 'module' });
-    w.onmessage = (e) => (e.data.error ? reject(new Error(e.data.error)) : resolve());
-    w.onerror = (e) => reject(new Error(e.message || 'worker failed'));
+    w.onmessage = (e) => { w.terminate(); e.data.error ? reject(new Error(e.data.error)) : resolve(); };
+    w.onerror = (e) => { w.terminate(); reject(new Error(e.message || 'worker failed')); };
     w.postMessage({ token, job, k, n });
   })));
   await post('done', '');

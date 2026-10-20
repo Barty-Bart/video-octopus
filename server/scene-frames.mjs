@@ -1,5 +1,5 @@
 // The scene's graphics, frame by frame, for the layers export: a headless Chrome (the same one the background
-// renderer finds) opens the scene HTML from file:// like the house r.cjs renderers do, and is driven over the
+// renderer finds) opens the scene HTML in a scoped, opaque rendering sandbox, and is driven over the
 // DevTools protocol with Node's own WebSocket (no packages). For each frame it calls seek(t, layer) and takes a
 // screenshot with a transparent page background, so each layer comes out with alpha. The Video Octopus kit's element
 // boxes (Octopus.hits) come back with every seek, which is where the motion data comes from.
@@ -10,10 +10,10 @@
 import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { join, dirname } from 'node:path';
 import { deflateSync, crc32 } from 'node:zlib';
 import { findChrome } from './backgrounds.mjs';
+import { createSceneSandbox } from './generated-sandbox.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -107,14 +107,18 @@ function connect(url) {
   });
 }
 
-const withTimeout = (p, ms, what) => Promise.race([p, sleep(ms).then(() => { throw new Error(`${what} took longer than ${Math.round(ms / 1000)} s.`); })]);
+const withTimeout = (p, ms, what) => {
+  let timer;
+  return Promise.race([p, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${what} took longer than ${Math.round(ms / 1000)} s.`)), ms); })]).finally(() => clearTimeout(timer));
+};
 
 // One headless Chrome with the scene open at W×H. Returns { info, frame(t, layer, {only, hits, shot}), close() }.
-export async function openScene({ file, W, H }) {
+export async function openScene({ file, W, H, root = dirname(file) }) {
   const chrome = findChrome();
   if (!chrome) throw new Error('Scene graphics need Chrome (or Playwright\'s headless shell) to render. Install Google Chrome, or untick the graphics.');
+  const sandbox = await createSceneSandbox({ root, file, direct: true });
   const profile = mkdtempSync(join(tmpdir(), 'octopus-scene-'));
-  const args = ['--remote-debugging-port=0', `--user-data-dir=${profile}`, '--allow-file-access-from-files', '--hide-scrollbars', '--mute-audio',
+  const args = ['--remote-debugging-port=0', `--user-data-dir=${profile}`, '--hide-scrollbars', '--mute-audio',
     '--no-first-run', '--no-default-browser-check', '--disable-extensions', '--disable-background-networking', '--disable-background-timer-throttling',
     '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', '--force-device-scale-factor=1', `--window-size=${W},${H}`,
     ...(chrome.shell ? [] : ['--headless=new']), 'about:blank'];
@@ -124,6 +128,7 @@ export async function openScene({ file, W, H }) {
   proc.on('exit', () => { dead = true; });
   let c = null;
   const close = () => {
+    sandbox.dispose();
     c?.close();
     try { proc.kill('SIGTERM'); } catch {}
     setTimeout(() => { try { proc.kill('SIGKILL'); } catch {} rmSync(profile, { recursive: true, force: true }); }, 1500);
@@ -142,10 +147,19 @@ export async function openScene({ file, W, H }) {
     c.on('Runtime.exceptionThrown', (e) => errors.push(e.exceptionDetails?.exception?.description || e.exceptionDetails?.text || 'error'));
     await c.send('Page.enable');
     await c.send('Runtime.enable');
+    // Defence in depth for export: before any generated code executes, deny every network or
+    // file request outside this capability, including self-navigation to another local service.
+    c.on('Fetch.requestPaused', ({ requestId, request }) => {
+      let permitted = false;
+      try { const u = new URL(request.url); permitted = u.href.startsWith(sandbox.prefix) && u.username === '' && u.password === ''; } catch {}
+      c.send(permitted ? 'Fetch.continueRequest' : 'Fetch.failRequest', permitted ? { requestId } : { requestId, errorReason: 'BlockedByClient' }).catch(() => {});
+    });
+    await c.send('Fetch.enable', { patterns: [{ urlPattern: '*', requestStage: 'Request' }] });
+    await c.send('Page.setDownloadBehavior', { behavior: 'deny' });
     await c.send('Emulation.setDeviceMetricsOverride', { width: W, height: H, deviceScaleFactor: 1, mobile: false });
     await c.send('Emulation.setDefaultBackgroundColorOverride', { color: { r: 0, g: 0, b: 0, a: 0 } });
     const loaded = new Promise((res) => { const off = c.on('Page.loadEventFired', () => { off(); res(); }); });
-    await c.send('Page.navigate', { url: pathToFileURL(file).href });
+    await c.send('Page.navigate', { url: sandbox.url });
     await withTimeout(loaded, 60000, 'Opening the scene');
     const ev = async (expression, what, ms = 60000) => {
       const r = await withTimeout(c.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }), ms, what);

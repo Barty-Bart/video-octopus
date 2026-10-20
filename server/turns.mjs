@@ -40,7 +40,12 @@ const turns = new Map();  // project id -> the turn running now
 
 export function trackTurns(id, chat, { broadcast }) {
   chat.listeners.add((ev) => {
-    if (ev.t === 'user') turns.set(id, { step: ev.brief?.step || null, human: !ev.brief && !String(ev.text || '').startsWith('/'), text: '', textTs: 0, error: '', ok: true, before: null });
+    if (ev.t === 'user') {
+      // Adapters mark startup/auth discovery busy before echoing the user's message.
+      // Attach its metadata without discarding that turn's already-captured files.
+      const before = turns.get(id)?.before ?? null;
+      turns.set(id, { step: ev.brief?.step || null, human: !ev.brief && !String(ev.text || '').startsWith('/'), text: '', textTs: 0, error: '', ok: true, before });
+    }
     else if (ev.t === 'busy' && ev.busy) {
       const dir = projectDir(id);
       const t = turns.get(id) || { step: null, human: false, text: '', textTs: 0, error: '', ok: true };

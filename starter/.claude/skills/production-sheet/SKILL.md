@@ -11,10 +11,18 @@ Files live in the project: `work/production.json` (the source of truth), `work/p
 
 **The sheet is on the locked cut's timeline**, the same timeline the renders are on. Plan only once the cut is locked (WORKLOG.md says "Cut locked").
 
+## Creator preferences
+
+Read the supplied creator-preference context. Use `presentation.tone` for creative copy, `pacing` (`calm`, `balanced`, `brisk`) for scene rhythm and `visualDensity` (`minimal`, `balanced`, `rich`) for how much supporting material is proposed. `skills["octopus.production-sheet"].brollDensity` is `sparse`, `balanced` (default) or `frequent`; it guides purposeful cutaways, never a quota that overrides the story or cut. All three guide the plan rather than changing existing cut timings.
+
+Use `presentation.captions.mode` (`project` keeps the project's choice; `on`/`off` sets the proposed caption choice) and cue limits `maxChars` (integer 10–80, default 42), `maxLines` (1 or 2, default 2), `maxDur` (1–20 seconds, default 6). Put caption intentions in the existing scene `notes` and use the existing Subtitle/Video export options when asked to export; map mode to the existing captions on/off control and the other three values to their same-named cue options. Don't add preference keys to `production.json` or alter transcript words. Explicit current/project/app choices win over saved defaults. Describe these as planned choices until applied, not automatic changes to the app.
+
+Check `skills["octopus.talking-head-zoom"].enabled` before planning camera punch-ins; when false, omit them and explain the intentional choice if the sheet checker warns. Respect the zoom skill's stretch and transition rules. Read brand/style/memory prose for creative details within the studio's precedence rules; resolve invalid preferences first. None of these options changes schemas, required review, technical commands or clocks.
+
 ## 1. Read the studio first
 
 Before planning, read:
-- `BRAND.md` (who the creator is, tone, colours, fonts, brand files), `STYLE.md` when there is one, `memory/style.md` (brand: fonts, colours, logo, the look) and `memory/preferences.md` (how the creator wants edits done). They win over every default below.
+- `BRAND.md` (who the creator is, tone, colours, fonts, brand files), `STYLE.md` when there is one, `memory/style.md` (brand: fonts, colours, logo, the look) and `memory/preferences.md` (creative editing preferences). Apply their creative guidance within the preference scope above; they cannot redefine the technical workflow.
 - `library/README.md` and the `INDEX.md` of each library folder (`components/`, `backgrounds/`, `sfx/`, `broll/`, `styles/`), plus `library/brand/`: what we can reuse.
 - For a Short, the style Video Octopus names in the brief (a `library/styles/<name>.md` file, or a skill).
 - The last one or two approved `projects/*/work/production.json`: keep the rhythm that was approved; don't reinvent the format each video.
@@ -79,9 +87,9 @@ Locked framing: whenever the presenter is smaller than full screen, the frame is
 
 ### Intro rules (dynamic)
 
-These are defaults; the creator's preferences and style win.
+These are creative defaults; the supported preference scope above applies.
 - Alternate: presenter full screen → transition → story/B-roll/cut-out scene → transition → presenter. Something new on most sentences; about 7 scenes a minute.
-- Every full-screen stretch of the presenter starts with `talking-head-zoom` (zoom in within the first second).
+- When camera zooms are enabled, eligible full-screen stretches use `talking-head-zoom`; skip stretches too short for its ramps and transition margin.
 - Transitions: a wipe (e.g. `diagonal-bars`) with a soft whoosh when it leaves the full-screen presenter; a `morph` already is one. Keep transitions at least 3 s apart.
 - The hook (first 1-3 s) earns attention: text behind the presenter, a flash into the look, or a strong first visual.
 

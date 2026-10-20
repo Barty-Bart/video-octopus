@@ -15,6 +15,7 @@ import { lookOnly } from './readonly.mjs';
 export const ASSISTANT_ID = '_studio';
 const streams = new Set();
 let chat = null;
+export const assistantBusy = () => Boolean(chat?.busy);
 
 // The assistant for a POST (a message, an answer, the sessions list): made on first use, and after an agent switch in
 // Settings a fresh one on the new agent (the old conversation stays listed).

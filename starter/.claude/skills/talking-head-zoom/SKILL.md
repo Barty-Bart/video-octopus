@@ -7,7 +7,13 @@ description: When and how to punch in and out on a full-screen talking head. Use
 
 A full-screen talking head feels alive with a slow punch-in now and then, but zooms must never fight the graphics.
 
-Work on the locked cut (WORKLOG.md says "Cut locked") and its timeline: the production sheet's scene times (`work/production.json`) and the words on the cut. Read `memory/preferences.md` first; the creator's own zoom notes win over the numbers below.
+Work on the locked cut (WORKLOG.md says "Cut locked") and its timeline: the production sheet's scene times (`work/production.json`) and the words on the cut. Read the supplied creator-preference context and relevant creative notes in `memory/preferences.md` within the studio's precedence rules.
+
+## Creator preferences
+
+Use `skills["octopus.talking-head-zoom"]`: `enabled` (default true), `landscapeAmount` (1.01–1.35, default 1.10), `portraitAmount` (1.01–1.20, default 1.04), `inSeconds` (0.1–2, default 0.7), `outSeconds` (0.1–2, default 0.9) and `minimumStretchSeconds` (2–10, default 2.5). The minimum must leave at least 0.1 s of hold after both ramps. Current explicit task/project choices outrank saved options, then clear creative prose, then defaults; resolve invalid preferences before dependent work. These values replace only the creative numeric defaults below. `presentation.pacing` describes the feel; it does not silently replace explicit zoom numbers.
+
+With `enabled: false`, make no new camera punch-ins. Follow the existing “Nothing to zoom” result path with reason “camera zooms disabled by creator preference”, replacing only your own proposed camera items and preserving all other zooms. With zooms enabled, skip any actual stretch where both ramps, hold and transition margin cannot fit. Preferences cannot remove those checks, change the v2 schema, move from take seconds to cut seconds, change ownership/status rules or auto-accept a proposal. Lasting supported changes go in `preferences/skills.json`; broader composition notes stay in memory, not this skill.
 
 ## The rule
 1. **Find each full-screen talking-head stretch.** It runs from where the presenter is full frame and talking (video start, or the end of a picture-in-picture/box/B-roll grow-back) to where the next effect or transition starts. Effects include outline traces, colour effects, annotations, 3D turns, picture-in-picture shrinks and cards. In the production sheet these are the `talking-head` scenes in a row.

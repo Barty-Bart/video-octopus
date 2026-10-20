@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { spawn, execFile } from 'node:child_process';
 import { brandView, brandUpload, brandRemove, serveBrandFile, writeBrand } from './brand.mjs';
 import { recommendedView, repoView, installSkills } from './skills-gh.mjs';
+import { beginMaintenance, endMaintenance } from './maintenance.mjs';
 import { settings, studioTool, childPathEnv, IS_WIN, IS_MAC } from './util.mjs';
 import { section, saveSection } from './settings.mjs';
 import { claudeInfo } from './claude.mjs';
@@ -121,6 +122,7 @@ export function connect({ agent, via, model, confirmed } = {}) {
 
 // ---- the installs and downloads Setup runs itself, each after an OK on the page: one at a time per kind ----
 const jobs = new Map(); // id -> { state, cmd, tail, code }
+export const setupBusy = () => [...jobs.values()].some((j) => j.state === 'running');
 export const actionState = (id) => { const j = jobs.get(id); return j ? { id, state: j.state, cmd: j.cmd, tail: j.tail, code: j.code } : { id, state: 'idle' }; };
 const MODEL = /^[\w][\w.:/@-]{0,199}$/;
 export async function startAction({ action, model, confirmed } = {}) {
@@ -172,7 +174,12 @@ export async function onboardingRoute(req, res, url, { send, body }) {
     if (p === '/api/app/brand/write' && post) { await body(req); return send(res, 200, { ...writeBrand(), view: brandView() }), true; }
     if (p === '/api/app/skills/recommended' && !post) return send(res, 200, recommendedView()), true;
     if (p === '/api/app/skills/repo' && !post) return send(res, 200, await repoView(q('repo'))), true;
-    if (p === '/api/app/skills/install' && post) { const b = await body(req); return send(res, 200, await installSkills(String(b.repo || ''), b.skills)), true; }
+    if (p === '/api/app/skills/install' && post) {
+      const b = await body(req);
+      beginMaintenance('Installing selected skills.');
+      try { return send(res, 200, await installSkills(String(b.repo || ''), b.skills)), true; }
+      finally { endMaintenance(); }
+    }
     // The computer scan: agents, Connect, the installs and downloads after an OK, the local server under the chats.
     if (p === '/api/app/scan/agents' && !post) return send(res, 200, await scanAgents()), true;
     if (p === '/api/app/scan/connect' && post) { const b = await body(req); return send(res, 200, { connected: connect(b) }), true; }

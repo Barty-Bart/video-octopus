@@ -11,6 +11,7 @@
 //   code    a module in assets/ (made by Claude or kept in the library): export default { name, draw(g, W, H, t) }
 // Nothing here touches the DOM at import time, so a worker can import it.
 import { NIGHT, BORDERS, borderValue, animatedBg } from './layout.js';
+import { codePainter } from './sandbox-painter.js';
 
 const canvas = (w, h) => {
   if (typeof document === 'undefined') return new OffscreenCanvas(w, h);
@@ -67,16 +68,7 @@ export async function painterFor(bg, { url, version = '' } = {}) {
     };
   }
   if (kind === 'code') {
-    const mod = await import(`${url(bg.file)}${version ? `${url(bg.file).includes('?') ? '&' : '?'}v=${version}` : ''}`);
-    const def = mod.default || mod;
-    if (typeof def?.draw !== 'function') throw new Error(`${bg.file} has no draw(g, W, H, t).`);
-    return {
-      kind, animated: true, name: def.name,
-      paint(g, W, H, t) {
-        g.save(); g.fillStyle = NIGHT.bg; g.fillRect(0, 0, W, H);
-        try { def.draw(g, W, H, t); } finally { g.restore(); }
-      },
-    };
+    return codePainter(`${url(bg.file)}${version ? `${url(bg.file).includes('?') ? '&' : '?'}v=${encodeURIComponent(version)}` : ''}`);
   }
   if (kind === 'image') {
     const src = url(bg.file);
@@ -284,15 +276,18 @@ export function makeBackgroundSection(sec, { id, get, set, api, toast, esc, h })
       const zoomed = item.bg.kind === 'stars' || item.bg.kind === 'led';
       const big = zoomed ? canvas(1920, 1080) : null;
       painterFor(item.bg, { url: () => item.url, version: item.v }).then((p) => {
-        let raf = 0;
-        const draw = (t) => {
+        let raf = 0, hovering = false;
+        const draw = async (t) => {
+          await p.prepare?.(t, 384, 216);
           if (!big) return p.paint(g, 384, 216, t);
           p.paint(big.getContext('2d'), 1920, 1080, t);
           g.drawImage(big, 0, 0, 640, 360, 0, 0, 384, 216);
         };
-        draw(0.5);
-        b.onmouseenter = () => { const s = performance.now(); const loop = (now) => { draw(0.5 + (now - s) / 1000); raf = requestAnimationFrame(loop); }; raf = requestAnimationFrame(loop); };
-        b.onmouseleave = () => { cancelAnimationFrame(raf); draw(0.5); };
+        draw(0.5).catch(() => {});
+        b.onmouseenter = () => { hovering = true; const s = performance.now(); const loop = async (now) => { await draw(0.5 + (now - s) / 1000).catch(() => {}); if (hovering && b.isConnected) raf = requestAnimationFrame(loop); }; raf = requestAnimationFrame(loop); };
+        b.onmouseleave = () => { hovering = false; cancelAnimationFrame(raf); draw(0.5).catch(() => {}); };
+        const observer = new MutationObserver(() => { if (!b.isConnected) { hovering = false; cancelAnimationFrame(raf); p.dispose?.(); observer.disconnect(); } });
+        observer.observe(document.body, { childList: true, subtree: true });
       }).catch(() => { g.fillStyle = NIGHT.bg; g.fillRect(0, 0, 384, 216); });
     }
     b.onclick = () => item.pick();

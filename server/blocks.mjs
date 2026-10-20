@@ -71,7 +71,7 @@ const save = (dir, doc) => writeJSON(join(dir, BLOCKS), { ...doc, by: 'studio', 
 
 // Blocks with a rule (and not moved by hand) go where it says, and stay there while the cut and the take blocks
 // stay the same. When they change, the block moves to the nearest pause that still fits, with a note saying so.
-function settle(dir, doc, ctx) {
+function settle(dir, doc, ctx, { persist = true } = {}) {
   let changed = false;
   for (const b of doc.blocks.slice()) {
     const cur = doc.blocks.find((x) => x.id === b.id);
@@ -84,7 +84,7 @@ function settle(dir, doc, ctx) {
     doc = r.doc;
     changed = true;
   }
-  if (changed) save(dir, doc);
+  if (changed && persist) save(dir, doc);
   return doc;
 }
 
@@ -479,12 +479,14 @@ export async function blocksRoute(req, res, { dir, action, url, send, body, chat
 // useCut false: the whole take inside each block ("Whole take" in the export dialog). Take blocks carry no look here:
 // the look of every stretch of the take is its shot's (work/shots.json), and the export renders it shot by shot
 // (server/export-shots.mjs), so consecutive take blocks are one part and only file blocks and a new order split it.
-export function sequenceForExport(dir, { useCut = true } = {}) {
-  try { settleShots(dir); } catch (e) { console.error('shots:', e.message); } // a take block's layout moves into a shot first
+export function sequenceForExport(dir, { useCut = true, readOnly = false } = {}) {
+  // Text planning needs the same sequence, but must not migrate visual layouts or
+  // persist automatic rule placement just to preview a transcript/subtitle file.
+  if (!readOnly) { try { settleShots(dir); } catch (e) { console.error('shots:', e.message); } }
   const ctx = blocksCtx(dir);
   let doc = readBlocks(dir, ctx);
   if (!doc) return null;
-  doc = settle(dir, doc, ctx);
+  doc = settle(dir, doc, ctx, { persist: !readOnly });
   doc = { ...doc, blocks: doc.blocks.map((x) => { if (kindOf(x) !== 'take' || !x.layout) return x; const { layout, ...y } = x; return y; }) };
   const parts = exportParts(doc, useCut ? ctx.cut : null, ctx.take.duration);
   if (!parts) return null;

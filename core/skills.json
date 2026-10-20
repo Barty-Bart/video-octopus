@@ -1,0 +1,82 @@
+{
+  "schema": 1,
+  "apiVersion": 1,
+  "skills": [
+    {
+      "id": "octopus.transcribe",
+      "name": "transcribe",
+      "version": "1.1.0",
+      "path": "starter/.claude/skills/transcribe",
+      "legacyNames": [
+        "transcribe"
+      ],
+      "dependencies": [
+        "Python, FFmpeg",
+        "faster-whisper or MLX Whisper and separately downloaded model weights"
+      ]
+    },
+    {
+      "id": "octopus.rough-cut",
+      "name": "rough-cut",
+      "version": "1.1.0",
+      "path": "starter/.claude/skills/rough-cut",
+      "legacyNames": [
+        "rough-cut"
+      ],
+      "dependencies": [
+        "Python, NumPy, FFmpeg",
+        "A word-timed transcript"
+      ]
+    },
+    {
+      "id": "octopus.join-check",
+      "name": "join-check",
+      "version": "1.1.0",
+      "path": "starter/.claude/skills/join-check",
+      "legacyNames": [
+        "join-check"
+      ],
+      "dependencies": [
+        "Python, NumPy, FFmpeg",
+        "Optional faster-whisper for rechecking"
+      ]
+    },
+    {
+      "id": "octopus.production-sheet",
+      "name": "production-sheet",
+      "version": "1.1.0",
+      "path": "starter/.claude/skills/production-sheet",
+      "legacyNames": [
+        "production-sheet"
+      ],
+      "dependencies": [
+        "An installed agent and a locked cut"
+      ]
+    },
+    {
+      "id": "octopus.talking-head-zoom",
+      "name": "talking-head-zoom",
+      "version": "1.1.0",
+      "path": "starter/.claude/skills/talking-head-zoom",
+      "legacyNames": [
+        "talking-head-zoom"
+      ],
+      "dependencies": [
+        "An installed agent and timed transcript words"
+      ]
+    },
+    {
+      "id": "octopus.object-separation",
+      "name": "object-separation",
+      "version": "1.1.0",
+      "path": "starter/.claude/skills/object-separation",
+      "legacyNames": [
+        "object-separation"
+      ],
+      "dependencies": [
+        "Python 3.10+, PyTorch, torchvision, Transformers, NumPy, Pillow, FFmpeg",
+        "Separately downloaded SAM 2.1 weights"
+      ]
+    }
+  ]
+}

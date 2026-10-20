@@ -11,6 +11,8 @@ import { ChatSession, userEvent } from './claude.mjs';
 import { settings, state, setProjectState, shellPath, childPathEnv, expandHome, npmProgram, startError, IS_WIN } from './util.mjs';
 import { childEnv, settingsBrief, section } from './settings.mjs';
 import { logUse, setPlanUsage } from './usage.mjs';
+import { activeSkillRoot } from './managed-skills.mjs';
+import { assertNotUpdating } from './maintenance.mjs';
 
 // ---- find Codex and its sign-in ----
 const run = (bin, args, env, ms = 10000) => new Promise((done) => {
@@ -85,6 +87,8 @@ export class CodexSession extends ChatSession {
   notify(method, params) { this.write(params === undefined ? { method } : { method, params }); }
 
   async start() {
+    assertNotUpdating();
+    const skillRoot = activeSkillRoot({ studio: settings().studio });
     const info = await codexInfo();
     if (!info.installed) throw new Error(info.error || 'Codex is not installed on this computer (npm install -g @openai/codex), or pick another agent in Settings → Agent & model.');
     const s = settings(), c = section('claude', s), provider = PROVIDERS[c.codexProvider] ?? null;
@@ -119,7 +123,10 @@ export class CodexSession extends ChatSession {
     await this.call('initialize', { clientInfo: { name: 'studio', title: 'Video Octopus', version: '1' }, capabilities: null });
     this.notify('initialized');
     // The studio's skills (its .claude/skills) next to Codex's own.
-    if (s.studio) await this.call('skills/extraRoots/set', { extraRoots: [join(s.studio, '.claude', 'skills')] }).catch(() => {});
+    if (skillRoot) {
+      try { await this.call('skills/extraRoots/set', { extraRoots: [skillRoot] }); }
+      catch { this.kill(); throw new Error('This Codex install could not load the studio’s active skills. Update Codex before starting this chat.'); }
+    }
     const params = await this.threadParams(cwd, extra);
     const st = state().projects[this.id] || {};
     const saved = st.engine === 'codex' ? st.sessionId : null;
@@ -139,7 +146,7 @@ export class CodexSession extends ChatSession {
     const [approvalPolicy, sandbox] = POLICY[this.mode?.() || s.permissionMode] || POLICY.auto;
     return {
       cwd, approvalPolicy, sandbox,
-      developerInstructions: [this.context(), settingsBrief(extra)].filter(Boolean).join('\n'),
+      developerInstructions: [this.currentContext(), settingsBrief(extra)].filter(Boolean).join('\n'),
       ...(c.codexModel ? { model: c.codexModel } : {}),
       ...(provider ? { modelProvider: provider } : {}),
       ...(this.isRun() ? { config: await this.runConfig(cwd) } : {}),
@@ -296,7 +303,10 @@ export class CodexSession extends ChatSession {
   }
 
   async send(text, { echo = true, brief = null } = {}) {
+    assertNotUpdating();
+    activeSkillRoot({ studio: settings().studio });
     this.lastSend = text;
+    this.setBusy(true);
     if (!this.proc) {
       try { await this.start(); } catch (e) { this.emit({ t: 'error', text: e.message }); this.kill(); return; }
     }

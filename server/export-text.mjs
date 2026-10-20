@@ -24,7 +24,7 @@ const esc = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // The export's parts as the video export builds them (the same plan the Layers export uses).
 export function timelineParts(id, dir, body = {}) {
-  const plan = planParts(id, dir, { layout: body.layout, useCut: body.useCut !== false });
+  const plan = planParts(id, dir, { layout: body.layout, useCut: body.useCut !== false, timelineOnly: true });
   return {
     parts: plan.parts.map((p) => ({ kind: p.kind, name: p.name, segs: p.segs, total: p.frames / FPS, start: p.start / FPS, blocks: p.blocks })),
     doc: plan.seq?.doc, total: plan.frames / FPS, cut: plan.useCut && plan.cut ? plan.cut.file : null,
