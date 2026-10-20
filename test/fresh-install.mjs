@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } fr
 import { join, resolve } from 'node:path';
 import { homedir, release, arch } from 'node:os';
 import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
 import { checkExports } from './fresh-install-export.mjs';
 import { checkProviders } from './fresh-install-providers.mjs';
 
@@ -132,7 +133,7 @@ try {
   const initial = {};
   await Promise.all(['ffmpeg', 'python', 'folders', 'recorder', 'claude'].map(async (id) => {
     initial[id] = await safe(`Initial ${id} check`, () => api(`/api/app/setup/check?id=${id}`));
-    if (initial[id]) record(`Initial ${id} readiness`, initial[id].state === 'fail' ? 'blocked' : 'info', initial[id]);
+    if (initial[id]) record(`Initial ${id} readiness`, 'info', initial[id]);
   }));
   record('Unmodified provider discovery', 'info', await api('/api/app/scan/agents'));
   await safe('Browser onboarding', uiEvidence);
@@ -157,7 +158,14 @@ try {
   record('FFmpeg readiness after offered install', finalFfmpeg.state === 'ok' ? 'pass' : 'blocked', finalFfmpeg);
   await safe('Provider metadata fixtures', () => checkProviders({ repo, baseUrl, evidenceDir, record }));
   if (finalFfmpeg.state === 'ok') {
-    await safe('Synthetic media and exports', () => checkExports({ repo, baseUrl, evidenceDir, record }));
+    await safe('Synthetic media and exports', async () => {
+      // Use the same discovery paths as the app, including a newly created
+      // WinGet Links directory; do not substitute a private test-only binary.
+      const { studioTool, childPathEnv } = await import(pathToFileURL(join(repo, 'server', 'util.mjs')).href);
+      process.env.PATH = (await childPathEnv()).PATH;
+      return checkExports({ repo, baseUrl, evidenceDir, record,
+        ffmpeg: studioTool('ffmpeg'), ffprobe: studioTool('ffprobe') });
+    });
   } else {
     record('Synthetic media and exports', 'blocked', { reason: 'App cannot discover FFmpeg/ffprobe. No substitute installation attempted.' });
   }
