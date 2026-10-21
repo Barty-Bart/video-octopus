@@ -28,6 +28,7 @@ const HELP = `octopus: act on the running Video Octopus (${BASE})
   octopus schedules edit <id> [same options as add]
   octopus schedules run|stop|on|off|delete <id>
   octopus schedules runs <id>              the latest runs and their summaries
+  octopus memory search "<query>" --chat <id>   search this chat scope; read-only recall
   octopus library [section]                what's in the library (or one section)
   octopus library sounds                   SQLite sound catalog, status and exact audio paths
   octopus library inbox                    pieces waiting in the Library inbox
@@ -72,6 +73,11 @@ const schedFields = () => Object.fromEntries([['name', opt.name], ['cron', opt.c
 
 const [area = 'help', verb, ...rest] = pos;
 const cmds = {
+  async memory() {
+    if (verb !== 'search' || !rest[0] || typeof opt.chat !== 'string') throw Error('octopus memory search "<query>" --chat <id>');
+    const r = await api(`/api/memory/recall?chat=${encodeURIComponent(opt.chat)}&q=${encodeURIComponent(rest.join(' '))}`);
+    return out(r, () => JSON.stringify(r, null, 2));
+  },
   async projects() {
     if (!verb || verb === 'list') {
       const list = await api('/api/projects');

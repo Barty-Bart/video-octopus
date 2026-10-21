@@ -4,6 +4,10 @@ A local video editor with an AI assistant. Record or import footage, edit from t
 
 **Early development — macOS first; Windows experimental.** Hosted Mac and Windows checks pass startup, FFmpeg installation and basic exports. The Windows MP4 decoder bug is fixed: the original failing fixture and seven export-regression tests now pass on native Windows. Windows coverage remains narrower than Mac coverage. See [tested coverage](#tested-coverage).
 
+## Reviewed memories
+
+Save useful preferences with **Remember this**, review proposed lessons, and reuse approved memories across the right profile, format or project. Chat history stays searchable locally. See [Memories](docs/memories.md) for scope, storage, forgetting and backup behavior.
+
 ## What is included
 
 | Area | What ships |
@@ -16,7 +20,7 @@ A local video editor with an AI assistant. Record or import footage, edit from t
 | Exports | MP4; WAV, M4A/AAC and MP3; transcript text/Markdown; SRT/VTT and burned captions; layer exports and timeline XML. Tested platform coverage and limitations are listed below. |
 | Project formats | YouTube tutorial, faceless explainer, Short and product explainer. |
 
-> **v0.1.0-beta.6 — source update.** Format research and example studies, a SQLite sound catalog, skills and instructions, brand profiles, and automatic New video context are included. Read the [release notes](docs/release-notes.md) and [verification limits](docs/managed-skills-verification.md) before relying on an untested workflow.
+> **v0.1.0-beta.7 — source update.** Reviewed scoped memories, searchable chat history, format research and example studies, a SQLite sound catalog, skills and instructions, brand profiles, and automatic New video context are included. Read the [release notes](docs/release-notes.md) and [verification limits](docs/managed-skills-verification.md) before relying on an untested workflow.
 
 ### Six bundled starter skills
 

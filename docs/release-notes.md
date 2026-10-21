@@ -1,3 +1,13 @@
+# v0.1.0-beta.7
+
+- Scoped SQLite memories, review inbox, source quotes, revisions, explicit replacement, expiry and forgetting.
+- Remember this and Review lessons in chats; local correction checkpoints before compaction and after export.
+- Bounded shared agent context and generated MEMORY.md, plus scoped FTS history search and a read-only recall command.
+- Explicit previewed app-history import, migration backups and restore exclusions that preserve forgotten sources.
+- Memory failures leave ordinary chat and compaction usable. No background model jobs or automatic skill changes.
+
+See [workflow and limits](memories.md). This is a source update on main; the downloadable tagged prerelease remains separate.
+
 # v0.1.0-beta.6
 
 - Video formats separates Research a format, Study examples and viewing an

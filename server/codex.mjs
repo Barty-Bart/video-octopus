@@ -326,6 +326,7 @@ export class CodexSession extends ChatSession {
   async compact() {
     if (this.busy) throw new Error('Codex is working: wait for it to finish, then compact.');
     if (!this.history().some((e) => e.t === 'user')) throw new Error('Nothing to compact yet.');
+    this.memoryCheckpoint('before-compaction');
     if (!this.proc) await this.start();
     this.emit({ t: 'note', text: 'Compacting this chat: Codex keeps a summary and frees room.' });
     this.compacting = true;

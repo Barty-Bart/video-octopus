@@ -245,6 +245,7 @@ export class PiSession extends ChatSession {
   async compact() {
     if (this.busy) throw new Error('pi is working: wait for it to finish, then compact.');
     if (!this.history().some((e) => e.t === 'user')) throw new Error('Nothing to compact yet.');
+    this.memoryCheckpoint('before-compaction');
     if (!this.proc) await this.start();
     this.emit({ t: 'note', text: 'Compacting this chat: pi keeps a summary and frees room.' });
     this.setBusy(true);

@@ -1,4 +1,5 @@
 // Recovery only uses backups created inside this studio. No arbitrary uploaded SQL is executed.
+import { applyMemoryTombstones, MemoryStore } from './memory-store.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { existsSync, readdirSync, readFileSync, copyFileSync, renameSync, mkdirSync, lstatSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -15,7 +16,10 @@ export function previewDatabaseRestore(studio,id,projects=[]){
   const soundSchema=db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='sound_catalog_schema'").get();
   if(existsSync(safeFile(studio,'.studio/sound-storage.json'))&&!soundSchema)throw Error('This backup predates the sound catalog. Choose a backup containing sound metadata.');
   if(soundSchema&&db.prepare('SELECT version FROM sound_catalog_schema WHERE singleton=1').get()?.version!==1)throw Error('Unsupported sound catalog backup version.');
-  const counts={};for(const table of ['profiles','formats','sessions','versions','skill_snapshots','brand_versions','instruction_versions','project_context','sound_assets','sound_history'])counts[table]=db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table)?db.prepare(`SELECT count(*) n FROM ${table}`).get().n:0;
+  const memorySchema=db.prepare("SELECT name FROM sqlite_master WHERE name='memory_schema'").get();
+  if(existsSync(safeFile(studio,'.studio/memory-storage.json'))&&!memorySchema)throw Error('This backup predates memories. Choose a complete studio backup.');
+  if(memorySchema&&db.prepare('SELECT version FROM memory_schema').get()?.version!==1)throw Error('Unsupported memory backup version.');
+  const counts={};for(const table of ['profiles','formats','sessions','versions','skill_snapshots','brand_versions','instruction_versions','project_context','sound_assets','sound_history','memory_entries','memory_events','memory_revisions','memory_checkpoints'])counts[table]=db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table)?db.prepare(`SELECT count(*) n FROM ${table}`).get().n:0;
   const has=(table,id)=>!id||(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table)&&db.prepare(`SELECT id FROM ${table} WHERE id=?`).get(id));
   const missingPins=projects.filter(p=>{
     if(!has('versions',p.versionId)||!has('brand_versions',p.brandVersion)||!has('instruction_versions',p.instructionVersion)||!has('skill_snapshots',p.skillSnapshot))return true;
@@ -33,6 +37,11 @@ export function restoreDatabase(studio,id,token,projects=[]){
  if(p.missingPins.length)throw Error(`This backup lacks versions pinned by current projects: ${p.missingPins.join(', ')}. Restore individual skill/format versions instead.`);
  const current=safeFile(studio,'.studio/studio.sqlite'),backup=safeFile(studio,`.studio/learning-backups/${id}/studio.sqlite`),tmp=safeFile(studio,`.studio/restore-${randomUUID()}.sqlite`),saved=safeFile(studio,`.studio/database-before-restore-${randomUUID()}.sqlite`);
  mkdirSync(dirname(current),{recursive:true});copyFileSync(backup,tmp);
+ if(existsSync(safeFile(studio,'.studio/memory-storage.json'))){
+   const db=new DatabaseSync(current,{readOnly:true});let tombstones;try{tombstones=db.prepare('SELECT kind,id FROM memory_tombstones').all();}finally{db.close();}
+   const staged=new DatabaseSync(tmp);try{applyMemoryTombstones(staged,tombstones);}finally{staged.close();}
+   const memory=new MemoryStore(studio);try{memory.invalidate();}finally{memory.close();}
+ }
  const moved=[];
  // Preserve SQLite sidecars with the displaced database; never pair an old journal with a restored DB.
  const sidecars=['-wal','-shm','-journal'].map(suffix=>({from:safeFile(studio,`.studio/studio.sqlite${suffix}`),to:saved+suffix}));

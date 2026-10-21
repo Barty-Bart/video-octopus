@@ -14,6 +14,7 @@ Users can choose another location. Existing studios stay in place.
 
 `<studio>/.studio/studio.sqlite` is authoritative for:
 
+- Reviewed scoped memories, revisions, app-owned searchable history and forget exclusions. See [Memories](memories.md).
 - Skill content, content hashes, ownership/selection and retained skill versions.
 - Creator profiles, their versioned brands, uploaded image/font bytes and format definitions.
 - Shared instruction documents and supported preferences, including retained versions.

@@ -35,6 +35,7 @@ import * as rec from './recorder.js';
 import { HOTKEY } from './recorder.js';
 import { applyLook, lookProject, onLook, cutLookParams } from './appearance.js';
 import { addSkillsDialog } from './brand.js';
+import { renderMemories, rememberMessage, reviewLessons } from './memory.js';
 import { renderLearning, renderSkillDatabase, renderDatabaseRecovery, projectLearningPanel } from './learning.js';
 import { stageExtras } from './stagefx.js';
 import { exportLooks, sceneKey, shotsSummary } from './exportshots.js';
@@ -107,12 +108,13 @@ const router = makeRouter(async (nav) => {
   if (page) return page;
   const m = /^#\/p\/(.+)$/.exec(location.hash);
   if (m) return openProject(decodeURIComponent(m[1]));
-  return home(location.hash === '#/storage' ? 'storage' : location.hash.startsWith('#/learning') ? 'learning' : location.hash === '#/dashboard' ? 'dashboard' : location.hash === '#/scheduled' ? 'scheduled' : location.hash === '#/recordings' ? 'recordings' : location.hash === '#/skills' ? 'skills' : location.hash.startsWith('#/library') ? 'library' : 'projects', nav);
+  return home(location.hash.startsWith('#/memories') ? 'memories' : location.hash === '#/storage' ? 'storage' : location.hash.startsWith('#/learning') ? 'learning' : location.hash === '#/dashboard' ? 'dashboard' : location.hash === '#/scheduled' ? 'scheduled' : location.hash === '#/recordings' ? 'recordings' : location.hash === '#/skills' ? 'skills' : location.hash.startsWith('#/library') ? 'library' : 'projects', nav);
 });
 window.addEventListener('hashchange', router);
 
 // ---------- home: a sidebar (projects, recordings, skills, Claude Code), the project you were on, all projects ----------
 const HOME_ICON = {
+  memories: '<span aria-hidden="true">◇</span>',
   learning: '<span aria-hidden="true">◎</span>',
   storage: '<span aria-hidden="true">▤</span>',
   projects: '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2" width="5" height="5" rx="1.2"/><rect x="9" y="2" width="5" height="5" rx="1.2"/><rect x="2" y="9" width="5" height="5" rx="1.2"/><rect x="9" y="9" width="5" height="5" rx="1.2"/></svg>',
@@ -140,7 +142,7 @@ async function home(view = 'projects', route = null) { // route: { signal, alive
   $('#crumbs').innerHTML = '';
   clearBar();
   document.body.classList.add('in-home');
-  document.title = view === 'projects' ? 'Video Octopus' : `${{ dashboard: 'Dashboard', scheduled: 'Scheduled', recordings: 'Recordings', skills: 'Skills', library: 'Library', learning: TERMS.formats, storage: 'Storage' }[view]} · Video Octopus`;
+  document.title = view === 'projects' ? 'Video Octopus' : `${{ dashboard: 'Dashboard', scheduled: 'Scheduled', recordings: 'Recordings', skills: 'Skills', library: 'Library', learning: TERMS.formats, storage: 'Storage', memories: 'Memories' }[view]} · Video Octopus`;
   await loadStatus();
   if (!STATUS.studioOk) return setupScreen();
   const [projects, takes, skills, counts] = await Promise.all([api('/api/projects'), api('/api/takes'), view === 'skills' ? api('/api/skills') : null, api('/api/app/counts').catch(() => ({}))]);
@@ -158,7 +160,7 @@ async function home(view = 'projects', route = null) { // route: { signal, alive
   const el = h(`<div class="home">
     <nav class="side-nav" aria-label="Video Octopus">
       <a class="brand" href="#/"><span class="logo" aria-hidden="true"><i></i></span>Video Octopus</a>
-      ${nav('projects', 'Projects', projects.length)}${nav('dashboard', 'Dashboard')}${nav('scheduled', 'Scheduled', counts.schedules || null)}${nav('recordings', 'Recordings', takes.length)}${nav('library', 'Library', counts.inbox || null, counts.inbox ? `${counts.inbox} waiting in the inbox` : '')}${nav('learning', TERMS.formats)}${nav('skills', 'Skills')}${nav('storage', 'Storage')}${homeNav(counts)}
+      ${nav('projects', 'Projects', projects.length)}${nav('dashboard', 'Dashboard')}${nav('scheduled', 'Scheduled', counts.schedules || null)}${nav('recordings', 'Recordings', takes.length)}${nav('library', 'Library', counts.inbox || null, counts.inbox ? `${counts.inbox} waiting in the inbox` : '')}${nav('learning', TERMS.formats)}${nav('skills', 'Skills')}${nav('memories', 'Memories')}${nav('storage', 'Storage')}${homeNav(counts)}
       <span class="gap"></span>${claudeCard}
     </nav>
     <div class="home-main" id="homeMain"></div>
@@ -172,9 +174,10 @@ async function home(view = 'projects', route = null) { // route: { signal, alive
   if (view === 'recordings') renderRecordings(main, takes);
   if (view === 'skills') await renderSkillDatabase(main);
   if (view === 'storage') await renderDatabaseRecovery(main);
+  const memories = view === 'memories' ? await renderMemories(main) : null;
   const learning = view === 'learning' ? await renderLearning(main, {makeChat}) : null;
   const lib = view === 'library' ? renderLibrary(main, $('#libSide', el)) : null;
-  return { teardown: () => { lib?.teardown(); sched?.teardown(); learning?.teardown(); document.body.classList.remove('in-home'); } };
+  return { teardown: () => { lib?.teardown(); sched?.teardown(); learning?.teardown(); memories?.teardown(); document.body.classList.remove('in-home'); } };
 }
 
 // Projects (layout H1, 17 Oct 2026): the page uses the whole width. One band to carry on (the last project, its
@@ -1264,6 +1267,7 @@ function makeChat(root, id, ext = {}, opts = {}) {
   const add = (node, ev) => {
     $('#emptyChat', root)?.remove();
     msgs.append(node);
+    if (ev && ['user', 'text'].includes(ev.t) && ev.eventId && !ev.brief) { const b = h('<button type="button" class="btn ghost small remember-message">Remember this</button>'); b.onclick = () => rememberMessage(id, ev); node.append(b); }
     if (ev?.t === 'user' && !ev.replay) { pinned = true; caughtUp(); } // you just sent it (or ran a step): go to it
     if (!pinned && ev && !ev.replay && COUNTS.has(ev.t)) { unseen++; if (ev.t === 'permission' || ev.t === 'question') unseenAsk = true; paintPill(); }
     return node;
@@ -1287,6 +1291,7 @@ function makeChat(root, id, ext = {}, opts = {}) {
     <div class="chat-sess">
       <button type="button" class="btn ghost small sess-pick" aria-haspopup="menu" aria-expanded="false" title="This session, and earlier ones you can continue"><span class="sp-t">This session</span><span aria-hidden="true">▾</span></button>
       <button type="button" class="btn ghost small" data-a="new" title="Start a fresh session; this one stays in the list">+ New session</button>
+      <button type="button" class="btn ghost small" data-a="lessons">Review lessons</button>
       <span class="gap"></span>
       <span class="ctx" title="How full this chat's context is"><i><b></b></i><span class="ctx-n">–</span></span>
       <button type="button" class="btn ghost small" data-a="compact" title="Claude keeps a summary of the chat so far and frees room">Compact</button>
@@ -1306,6 +1311,7 @@ function makeChat(root, id, ext = {}, opts = {}) {
   const sessApi = (op, extra = {}) => api(sessUrl, { op, ...extra });
   sessApi('list').then((r) => { if (r.current?.messages) setTitle(r.current.title); if (r.current?.context) showContext(r.current.context); }).catch(() => {});
   $('[data-a=new]', sess).onclick = async () => { try { await sessApi('new'); } catch (e) { toast(e.message); } };
+  $('[data-a=lessons]', sess).onclick = () => reviewLessons(id, async text => { if (busy || sending || preparing) throw Error('Wait for this turn to finish.'); if (ext.beforeSend) await ext.beforeSend(text); const ok = await send(text, text, { memoryReview: true }); if (!ok) throw Error('The lesson request was not sent. Your text is in the composer.'); }).catch(e => toast(e.message));
   $('[data-a=compact]', sess).onclick = async () => { try { await api(`${base}/chat-compact`, {}); } catch (e) { toast(e.message); } };
   let menu = null;
   const closeMenu = () => { menu?.remove(); menu = null; $('.sess-pick', sess).setAttribute('aria-expanded', 'false'); document.removeEventListener('pointerdown', outside, true); };
@@ -1394,12 +1400,13 @@ function makeChat(root, id, ext = {}, opts = {}) {
   const sendError = h('<p class="notice chat-send-error" role="alert" hidden></p>');
   input.closest('.composer')?.before(sendError);
   let sending = false, preparing = false;
-  async function send(text, raw = text) {
+  async function send(text, raw = text, options = {}) {
     if (!text.trim()) return;
     sending = true; sendError.hidden = true;
-    try { await api(`${base}/chat`, { text }); } catch (e) {
+    try { await api(`${base}/chat`, { text, ...options }); return true; } catch (e) {
       input.value = input.value ? raw + '\n\n' + input.value : raw; autosize();
       sendError.textContent = `Message not sent: ${e.message} Your text is back in the message box.`; sendError.hidden = false;
+      return false;
     } finally { sending = false; }
   }
   sendBtn.onclick = async () => {
@@ -1483,7 +1490,7 @@ function makeChat(root, id, ext = {}, opts = {}) {
         if ($('.sp-t', sess).textContent === 'This session' && !ev.text.startsWith('/')) setTitle(ev.text.replace(/\s+/g, ' ').slice(0, 60));
         break;
       }
-      case 'text': { lastText = ev.text; const n = add(h(`<div class="msg-ai">${md(ev.text)}</div>`), ev); n.dataset.ts = ev.ts || ''; break; }
+      case 'text': { lastText = ev.text; const display = ev.text.replace(/```octopus-memory[\s\S]*?```/g, `\n[Proposed lessons → Review in Memories](#/memories?chat=${encodeURIComponent(id)})\n`); const n = add(h(`<div class="msg-ai">${md(display)}</div>`), ev); n.dataset.ts = ev.ts || ''; break; }
       case 'undo-offer': undoOffer = ev; if (turnOver && !busy) showChips(); break;
       case 'proposals': {
         // Claude's turn left proposed shots or zooms: "Claude proposed 3 shots and 6 zooms · Show me · Keep all · No

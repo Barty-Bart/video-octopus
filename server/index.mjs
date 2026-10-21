@@ -28,6 +28,7 @@ import { appRoute } from './setup.mjs';
 import { onboardingRoute, ffmpegReady, setupBusy } from './onboarding.mjs';
 import { createStudio, defaultStudioPath } from './starter.mjs';
 import { profileRoute, profileBusy, killProfileResearch, createConfiguredProject, pinnedContext, profilePalette } from './profiles.mjs';
+import { memoryRoute } from './memory.mjs';
 import { learningRoute, learningProjectContext, projectLearning, guardLearnedStep, learningBusy, killLearning } from './learning.mjs';
 import { assistantRoute, killAssistant, assistantBusy } from './assistant.mjs';
 import { onSettingsChange, restartWhenIdle, section, transcribeHow } from './settings.mjs';
@@ -86,6 +87,7 @@ function chatFor(id) {
     const chat = makeChat(id, () => projectContext(id));
     // pi runs inside the project's folder: weaker models write paths like "work/x.json" relative to where they run.
     // (Claude Code and Codex run in the studio folder, where they find its skills and notes; pi gets those passed in.)
+    chat.memoryBinding = { project: id };
     chat.projectScope = () => pinnedContext(id, projectDir(id));
     chat.cwd = () => (chat.projectScope() || chat.engine === 'pi') ? projectDir(id) || settings().studio : settings().studio;
     // Auto mode: a change outside this project's folder asks first (server/outside-hook.mjs; Claude Code only).
@@ -232,7 +234,11 @@ async function frameCamera(id, dir, which) {
 const exportEmit = (id) => (ev) => {
   if (ev.t === 'job') { if (ev.done) exportJobs.delete(id); else exportJobs.set(id, ev); }
   // A finished export (a stopped one also ends "ok", but leaves no file or folder) goes into the usage log.
-  if (ev.t === 'job' && ev.done && ev.ok && (ev.file || ev.out || ev.folder)) logUse('export.done', { project: id, kind: ev.kind || 'video' });
+  if (ev.t === 'job' && ev.done && ev.ok && (ev.file || ev.out || ev.folder)) {
+    logUse('export.done', { project: id, kind: ev.kind || 'video' });
+    // A completed export is a useful local checkpoint; never starts a paid agent turn.
+    try { const c = chats.get(id) || makeChat(id, () => projectContext(id)); c.memoryBinding = { project: id }; c.memoryCheckpoint('export-complete'); } catch {}
+  }
   broadcast(id, ev);
 };
 
@@ -396,6 +402,7 @@ async function route(req, res) {
   if (!['GET', 'HEAD'].includes(req.method) && !['/api/app/updates', '/api/app/updates/check', '/api/app/updates/restart'].includes(p)) {
     try { assertNotUpdating(); } catch (e) { return send(res, 409, { error: e.message }); }
   }
+  if (await memoryRoute(req, res, url, { studio: settings().studio, body, send, logRoot: join(LOCAL_DIR, 'chats') })) return;
   // Settings, Setup and the Video Octopus assistant (server/setup.mjs, server/assistant.mjs).
   // The Dashboard: totals from the folders, features and activity from the local usage log (server/usage.mjs).
   if (p === '/api/app/dashboard/catch-up' && req.method === 'POST') return send(res, 200, catchUpUsage());
@@ -607,7 +614,7 @@ async function route(req, res) {
 
   if (action === '/chat') {
     if (!b.text?.trim()) return send(res, 400, { error: 'Empty message' });
-    try { await chatFor(id).send(b.text.trim()); return send(res, 200, { ok: true }); }
+    try { await chatFor(id).send(b.text.trim(), { brief: b.memoryReview === true ? { name: 'Review lessons' } : null }); return send(res, 200, { ok: true }); }
     catch (e) { return send(res, 500, { error: e.message }); }
   }
   if (action === '/step') {

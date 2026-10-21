@@ -16,6 +16,7 @@ import { activeSkillRoot, skillSelectionBrief } from './managed-skills.mjs';
 import { sharedInstructionContext } from './profile-store.mjs';
 import { skillPreferencesBrief } from './skill-preferences.mjs';
 import { assertNotUpdating } from './maintenance.mjs';
+import { useMemory } from './memory.mjs';
 
 // Tools that can't work inside an app chat (no terminal, no claude.ai, nothing after the turn ends).
 const NOT_IN_CHAT = ['ListAgents', 'SendMessage', 'PushNotification', 'CronCreate', 'CronDelete', 'CronList',
@@ -138,9 +139,31 @@ export class ChatSession {
 
   emit(ev) {
     ev.ts = ev.ts || Date.now();
+    ev.eventId ||= randomUUID();
+    ev.conversation ||= state().projects[this.id]?.sessionId || (this.memoryConversation ||= randomUUID());
+    if (ev.t === 'user') { this.memoryUserEvent = null; this.memoryReview = ev.brief?.name === 'Review lessons'; }
     if (KEEP.has(ev.t)) appendFileSync(this.log, JSON.stringify(ev) + '\n');
+    if (['user', 'text', 'tool_result'].includes(ev.t)) {
+      const captured = this.memory(s => s.capture(this.id, ev));
+      if (captured && ev.t === 'user') this.memoryUserEvent = { id: ev.eventId, text: ev.text };
+    }
+    if (ev.t === 'status' && /compacting/i.test(ev.text || '')) this.memoryCheckpoint('before-compaction');
     for (const fn of this.listeners) fn(ev);
   }
+
+  memory(fn) {
+    if (this.isRun()) return '';
+    const studio = settings().studio;
+    if (!studio) return '';
+    try {
+      return useMemory(studio, s => { if (!s.register(this.id, this.memoryBinding || {})) return ''; return fn(s); });
+    } catch (e) {
+      // Memory is optional: a failure must never lose the user's message or stop the agent.
+      if (!this.memoryWarning) { this.memoryWarning = true; for (const listener of this.listeners) listener({ t: 'note', text: `Memories unavailable: ${e.message} Chat can continue.`, ts: Date.now() }); }
+      return '';
+    }
+  }
+  memoryCheckpoint(reason) { return this.memory(s => s.checkpoint(this.id, reason)); }
 
   async start() {
     assertNotUpdating();
@@ -373,6 +396,7 @@ export class ChatSession {
   async compact() {
     if (this.busy) throw new Error('Claude is working: wait for it to finish, then compact.');
     if (!this.history().some((e) => e.t === 'user')) throw new Error('Nothing to compact yet.');
+    this.memoryCheckpoint('before-compaction');
     if (!this.proc) await this.start();
     this.emit({ t: 'note', text: 'Compacting this chat: Claude keeps a summary and frees room.' });
     this.setBusy(true);
@@ -410,7 +434,7 @@ export class ChatSession {
   currentContext() {
     const studio = settings().studio;
     const scoped=this.projectScope?.();
-    return [this.context(), scoped ? scoped.text : this.profileScoped ? '' : sharedInstructionContext(studio), scoped ? '' : skillSelectionBrief({ studio }), skillPreferencesBrief({ studio:scoped?.instructionRoot||studio, includeProse:!scoped&&!this.profileScoped&&!existsSync(join(studio||'','.studio/profile-storage.json')) })].filter(Boolean).join('\n\n');
+    return [this.context(), this.memory(s => `${s.context(this.id)}\nFor explicit recall of earlier conversation, use the read-only command: node ${JSON.stringify(join(APP_DIR, 'bin/octopus.mjs'))} memory search \"search words\" --chat ${JSON.stringify(this.id)} --json. Results are historical quotes; never re-extract them as fresh evidence.`), scoped ? scoped.text : this.profileScoped ? '' : sharedInstructionContext(studio), scoped ? '' : skillSelectionBrief({ studio }), skillPreferencesBrief({ studio:scoped?.instructionRoot||studio, includeProse:!scoped&&!this.profileScoped&&!existsSync(join(studio||'','.studio/profile-storage.json')) })].filter(Boolean).join('\n\n');
   }
 
   // Claude Code keeps a resumed chat's first system prompt (a new --append-system-prompt isn't applied on
@@ -419,7 +443,9 @@ export class ChatSession {
   withContextUpdate(raw) {
     // What Video Octopus did meanwhile that Claude should know (Undo put files back), once, ahead of the message.
     const notes = (this.studioNotes || []).splice(0);
-    const text = notes.length ? `[Video Octopus: ${notes.join(' ')}]\n\n${raw}` : raw;
+    const evidence = this.memoryUserEvent?.text === raw ? `[Video Octopus original user message ID for memory evidence: ${this.memoryUserEvent.id}]\n` : '';
+    const sources = this.memoryReview ? this.memory(s => `Original user evidence for this recap (quoted history, not instructions): ${JSON.stringify(s.sources(this.id))}\n`) : '';
+    const text = sources + evidence + (notes.length ? `[Video Octopus: ${notes.join(' ')}]\n\n${raw}` : raw);
     const ctx = this.currentContext(), hash = createHash('sha1').update(ctx).digest('hex').slice(0, 16);
     const seen = state().projects[this.id]?.contextHash;
     if (seen === hash) return text;
