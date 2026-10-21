@@ -1,3 +1,22 @@
+# v0.1.0-beta.6
+
+- Video formats separates Research a format, Study examples and viewing an
+  approved guide. Start a conversation without adding references first.
+- Review the assistant's suggested example links before adding them to a study.
+  Existing evidence review and guide approval remain required.
+- Rejected chat messages return to the composer with a persistent error, so
+  text is available to retry. New studies retain a reloadable URL.
+- Usage meters now show timestamped, provider-specific agent reports, support
+  current Claude rate-limit events, hide unknown/stale percentages and discard
+  old readings on server restart. They are explicitly marked as not live.
+
+See [research, conversations and usage](format-research.md). No studio folders,
+media paths, schema identifiers or existing guides are moved by this update.
+Verification uses synthetic references and fake agents; actual provider search,
+website access and live account usage are not established by these checks.
+
+---
+
 # v0.1.0-beta.5
 
 - Video formats replaces the Learning label. Study examples opens a study;

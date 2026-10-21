@@ -37,7 +37,7 @@ import { saveToLibrary as addToLibrary } from './library.mjs';
 import { blocksRoute, blocksSummary, blocksContext, prepareState, stepBrief, noteStep, receiveBlockTake } from './blocks.mjs';
 import { shotsRoute, readShotsAndZooms, shotsContext, onShotNotes } from './shots.mjs';
 import { recRoute, unfinishedTakes, recorderChoices, recorderBusy } from './browser-recorder.mjs';
-import { logUse, usageFromFiles, cutSaved, dashboard, backfill, catchUpUsage, planUsage } from './usage.mjs';
+import { logUse, usageFromFiles, cutSaved, dashboard, backfill, catchUpUsage, getPlanUsage } from './usage.mjs';
 import { schedulesRoute, startScheduler, stopScheduler, readSchedules, schedulesBusy } from './schedules.mjs';
 import { inboxRoute, inboxItems } from './inbox.mjs';
 import { updatesRoute, startUpdateChecks, updateCount, RESTART_CODE, activateStudioSkills, managedSkillsView } from './updates.mjs';
@@ -441,6 +441,8 @@ async function route(req, res) {
   }
   if ((p === '/api/library' || p.startsWith('/api/library/')) && await libraryRoute(req, res, url, { send, body, serveFile })) return;
 
+  if (p === '/api/plan-usage' && req.method === 'GET') return send(res, 200, {engine:engineName(),usage:modelSourceView()?null:getPlanUsage(engineName())});
+
   if (p === '/api/status' && req.method === 'GET') {
     const s = settings();
     const studioOk = Boolean(s.studio) && existsSync(s.studio);
@@ -449,7 +451,7 @@ async function route(req, res) {
       permissionMode: s.permissionMode, model: s.model,
       claude: await claudeInfo(url.searchParams.has('refresh')),
       // modelSource: Claude Code on another model than the plan (then there are no plan limits to show).
-      formats: formats(), formatInfo: formatInfo(), usage: modelSourceView() ? null : planUsage, modelSource: modelSourceView(), engine: engineName(), engineLabel: ENGINES[engineName()],
+      formats: formats(), formatInfo: formatInfo(), usage: modelSourceView() ? null : getPlanUsage(engineName()), modelSource: modelSourceView(), engine: engineName(), engineLabel: ENGINES[engineName()],
       appearance: section('appearance', s), // Settings → Appearance: how Video Octopus looks (web/appearance.js applies it)
       help: section('help', s), // first-time help seen (help.stepsIntro: 'dismissed')
       ffmpeg: await ffmpegReady(), // Export stays off without it (Setup installs it)

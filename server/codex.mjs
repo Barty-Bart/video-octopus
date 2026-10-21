@@ -213,10 +213,10 @@ export class CodexSession extends ChatSession {
       }
       case 'account/rateLimits/updated': {
         // The plan's limits, for the same meter Claude's fill: a window of 5 h or less, and the weekly one.
-        const r = p.rateLimits || {}, out = { fiveHour: null, sevenDay: null, at: Date.now() };
-        for (const w of [r.primary, r.secondary]) if (w) out[w.windowDurationMins <= 300 ? 'fiveHour' : 'sevenDay'] = (w.usedPercent ?? 0) / 100;
+        const r = p.rateLimits || {}, out = { engine: 'codex', fiveHour: null, sevenDay: null, at: Date.now() };
+        for (const w of [r.primary, r.secondary]) if (w) out[w.windowDurationMins <= 300 ? 'fiveHour' : 'sevenDay'] = w.usedPercent == null ? null : w.usedPercent / 100;
         setPlanUsage(out);
-        this.emit({ t: 'usage', fiveHour: out.fiveHour, sevenDay: out.sevenDay });
+        this.emit({ t: 'usage', ...out });
         break;
       }
       case 'thread/compacted':

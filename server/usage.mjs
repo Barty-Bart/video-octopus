@@ -9,10 +9,12 @@ import { LOCAL_DIR, readJSON, mtime } from './util.mjs';
 import { projectsRoot, projectMeta, listTakes } from './studio.mjs';
 
 // Not the log: the plan limits the agent reported last (Claude Code's rate-limit events, Codex's rateLimits), for the
-// meter in the top bar (/api/status). Any chat sets it; kept in local/plan-usage.json so a restart still shows the
-// last reading (for a week).
+// meter in the top bar (/api/status). Any chat sets it; local/plan-usage.json retains
+// the last reading for diagnostics. Only readings from this server run are displayed.
 const PLAN_USAGE = join(LOCAL_DIR, 'plan-usage.json');
-export let planUsage = (() => { const u = readJSON(PLAN_USAGE, null); return u && Date.now() - (u.at || 0) < 7 * 86400000 ? u : null; })();
+// Do not revive an old or differently signed-in account's reading on restart.
+export let planUsage = null;
+export const getPlanUsage = engine => planUsage?.engine === engine ? planUsage : null;
 export const setPlanUsage = (u) => { planUsage = u; try { writeFileSync(PLAN_USAGE, JSON.stringify(u)); } catch {} };
 
 const LOG = join(LOCAL_DIR, 'usage.jsonl');

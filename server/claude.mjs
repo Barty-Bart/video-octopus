@@ -8,6 +8,7 @@ import { join, dirname, delimiter, relative, resolve } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { settings, state, setProjectState, shellPath, childPathEnv, inside, expandHome, npmProgram, startError, IS_WIN, LOCAL_DIR, APP_DIR } from './util.mjs';
 import { OUTSIDE_REASON } from './outside-hook.mjs';
+import { claudeUsage } from './plan-usage.mjs';
 import { logUse, setPlanUsage } from './usage.mjs';
 import { childEnv, settingsBrief, section } from './settings.mjs';
 import { ccSource, claudeLaunchNow, sourceBrief, CC_SOURCES } from './claude-source.mjs';
@@ -287,10 +288,10 @@ export class ChatSession {
       this.emit({ t: 'permission_done', id: j.request_id, outcome: 'withdrawn' });
     } else if (j.type === 'rate_limit_event' && j.rate_limit_info && (this.source || 'plan') === 'plan') {
       // The plan's limits (another model source has none of the plan's to report).
-      const w = j.rate_limit_info.unifiedWindows || {};
-      const u = { fiveHour: w.five_hour?.utilization ?? null, sevenDay: w.seven_day?.utilization ?? null, at: Date.now() };
+      const u = claudeUsage(j.rate_limit_info);
+      if (!u) return;
       setPlanUsage(u);
-      this.emit({ t: 'usage', fiveHour: u.fiveHour, sevenDay: u.sevenDay });
+      this.emit({ t: 'usage', ...u });
     } else if (j.type === 'result') {
       this.stopping = false;
       const win = Object.values(j.modelUsage || {}).map((m) => m?.contextWindow).find(Boolean);

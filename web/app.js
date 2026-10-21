@@ -1,3 +1,4 @@
+import { usageView } from './plan-usage.js';
 import { TERMS } from './terms.js';
 // Video Octopus web app: home (projects + recorder takes) and the project screen
 // (Claude chat · canvas / Cut Editor / renders · steps and skills).
@@ -63,17 +64,31 @@ async function loadStatus(refresh = false) {
   if (ms) { const u = $('#usage'); if (u) u.hidden = true; } // the plan's meter means nothing while another model runs
   else if (!c.signedIn) { chip.textContent = 'Claude Code: not signed in'; chip.classList.add('bad'); }
   else { chip.textContent = `Claude Code ${c.version}${c.plan ? ' · ' + c.plan : ''}`; chip.classList.add('ok'); }
-  // The plan's meter from the last reading (a reload or a restart doesn't wait for the next reply).
-  if (!ms && STATUS.usage) showUsage(STATUS.usage);
+  // A recent provider-tagged snapshot; the display expires it independently.
+  showUsage(ms ? null : STATUS.usage);
   return STATUS;
 }
-function showUsage(ev) {
-  if (ev.fiveHour == null && ev.sevenDay == null) return;
-  $('#usage').hidden = false;
-  const set = (el, v) => { el.style.width = `${Math.round((v || 0) * 100)}%`; el.style.background = v > 0.85 ? 'var(--bad)' : v > 0.6 ? 'var(--warn)' : 'var(--ok)'; };
-  set($('#u5'), ev.fiveHour); set($('#u7'), ev.sevenDay);
-  $('#usage').title = `Claude plan usage (from Claude Code): 5-hour window ${Math.round((ev.fiveHour || 0) * 100)}%, 7-day ${Math.round((ev.sevenDay || 0) * 100)}%`;
+function usageMarkup(snapshot) {
+  const v = usageView(snapshot, 'claude');
+  const row = (label, value) => value == null ? '' : `<div class="cc-use"><span>${label}</span><i><b style="width:${value}%"></b></i><span>${value}%</span></div>`;
+  return `${row('5h',v.fiveHour)}${row('7d',v.sevenDay)}<p class="sub usage-note">${esc(v.note)}</p>`;
 }
+function showUsage(ev) {
+  if (STATUS) STATUS.usage = ev;
+  const v = usageView(ev, STATUS?.engine || 'claude');
+  const meter = $('#usage'); meter.hidden = v.fiveHour == null && v.sevenDay == null;
+  const set = (el, value) => { el.style.width = `${value ?? 0}%`; el.parentElement.hidden = value == null; el.parentElement.previousElementSibling.hidden = value == null; };
+  set($('#u5'), v.fiveHour); set($('#u7'), v.sevenDay);
+  meter.title = `${engineName(STATUS?.engine)} usage: ${v.note}`;
+  const card = $('#claudeUsage'); if (card) card.innerHTML = usageMarkup(ev);
+}
+async function refreshUsage() {
+  if (!STATUS || document.hidden) return;
+  try { const r = await api('/api/plan-usage'); showUsage(r.engine === STATUS.engine ? r.usage : null); }
+  catch { showUsage(STATUS.usage); } // Still expire old readings when the server is unreachable.
+}
+setInterval(refreshUsage, 30000);
+addEventListener('focus', refreshUsage);
 
 // The app is one window: its panels scroll, the page itself never does (above ~980 px wide, where the panels fill the
 // window; narrower, they stack and the page scrolls). If anything still scrolls the page (a focus or a scrollIntoView
@@ -134,11 +149,10 @@ async function home(view = 'projects', route = null) { // route: { signal, alive
     ? `<div class="notice">Claude Code isn't on this computer yet. Install it in a terminal with <code>${esc(claude.install)}</code>, run <code>claude</code> once to sign in, then reload.</div>`
     : !claude.signedIn && !STATUS.modelSource ? `<div class="notice">Claude Code is installed but not signed in. Open Terminal, run <code>claude</code> and sign in with your Claude account, then reload. Video Octopus uses that sign-in; it never asks for your password.</div>` : '';
   const u = STATUS.usage;
-  const use = (label, v) => `<div class="cc-use"><span>${label}</span><i><b style="width:${Math.round((v || 0) * 100)}%"></b></i><span>${Math.round((v || 0) * 100)}%</span></div>`;
   const claudeCard = `<div class="cc">
       <div class="cc-top"><span class="dot ${claude.installed && claude.signedIn ? 'ok' : 'bad'}"></span><b>Claude Code${claude.version ? ` ${esc(claude.version)}` : ''}</b></div>
       <div class="sub">${!claude.installed ? 'Not installed' : STATUS.modelSource ? `${esc(STATUS.modelSource.label)}${STATUS.modelSource.model ? ` · ${esc(STATUS.modelSource.model)}` : ': pick a model'} · not your Claude plan` : !claude.signedIn ? 'Not signed in' : `Signed in${claude.plan ? ` · ${esc(claude.plan)}` : ''}`}</div>
-      ${u && (u.fiveHour != null || u.sevenDay != null) ? `<div class="cc-uses" title="Your plan's usage, as Claude Code last reported it">${use('5h', u.fiveHour)}${use('7d', u.sevenDay)}</div>` : ''}
+      ${STATUS.engine==='claude'&&!STATUS.modelSource?`<div class="cc-uses" id="claudeUsage">${usageMarkup(u)}</div>`:''}
     </div>`;
   const nav = (k, label, n, wait) => `<a class="nav-i${view === k ? ' on' : ''}" href="${k === 'projects' ? '#/' : `#/${k}`}"${view === k ? ' aria-current="page"' : ''}>${HOME_ICON[k] || LIB_ICON[k]}<span>${label}</span>${n != null ? `<span class="n${wait ? ' wait' : ''}"${wait ? ` title="${esc(wait)}"` : ''}>${n}</span>` : ''}</a>`;
   const el = h(`<div class="home">
@@ -1079,7 +1093,7 @@ async function openProject(id) {
     const ev = JSON.parse(m.data);
     if (ev.t === 'files') return softRefresh();
     if (ev.t === 'busy') softRefresh(); // the rail shows Prepare running / done
-    if (ev.t === 'usage') return showUsage(ev);
+    if (ev.t === 'usage') { if (!ev.replay && ev.engine === STATUS?.engine) showUsage(ev); return; }
     if (ev.t === 'take') {
       if (ev.error) return toast(ev.error);
       toast(takeMessage(ev));
@@ -1377,19 +1391,27 @@ function makeChat(root, id, ext = {}, opts = {}) {
     send(text);
   }
 
-  async function send(text) {
+  const sendError = h('<p class="notice chat-send-error" role="alert" hidden></p>');
+  input.closest('.composer')?.before(sendError);
+  let sending = false, preparing = false;
+  async function send(text, raw = text) {
     if (!text.trim()) return;
-    try { await api(`${base}/chat`, { text }); } catch (e) { toast(e.message); }
+    sending = true; sendError.hidden = true;
+    try { await api(`${base}/chat`, { text }); } catch (e) {
+      input.value = input.value ? raw + '\n\n' + input.value : raw; autosize();
+      sendError.textContent = `Message not sent: ${e.message} Your text is back in the message box.`; sendError.hidden = false;
+    } finally { sending = false; }
   }
   sendBtn.onclick = async () => {
     if (busy && !stepMode()) { await api(`${base}/stop`, {}); return; }
     const t = input.value;
-    if (!t.trim()) return;
+    if (!t.trim() || sending || preparing) return;
     input.value = ''; autosize();
-    const out = ext.beforeSend ? await ext.beforeSend(t) : t;
+    let out; preparing = true;
+    try { out = ext.beforeSend ? await ext.beforeSend(t) : t; } catch(e) { input.value = input.value ? t + '\n\n' + input.value : t; autosize(); sendError.textContent = `Message not sent: ${e.message}`; sendError.hidden = false; return; } finally { preparing = false; }
     if (!out) return;
     if (stepMode()) { held.push({ raw: t, out }); paintComposer(); return; }
-    send(out);
+    await send(out, t);
   };
   input.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); if (!busy || stepMode()) sendBtn.onclick(); } };
   const autosize = () => { input.style.height = 'auto'; input.style.height = Math.min(160, input.scrollHeight) + 'px'; };
@@ -1434,6 +1456,7 @@ function makeChat(root, id, ext = {}, opts = {}) {
     (root.querySelector('.dock') || input.closest('.composer'))?.before(banner);
   }
   function handle(ev) {
+    if (ev.t === 'usage') { if (!ev.replay && ev.engine === STATUS?.engine) showUsage(ev); return; }
     switch (ev.t) {
       case 'local-down': localDown(ev); break;
       case 'busy': setBusy(ev.busy); if (!ev.busy) flushHeld(); break;
