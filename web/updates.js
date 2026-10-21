@@ -54,6 +54,7 @@ export function updatesSection(V, save, { row, group, toggle }) {
 
   const draw = () => {
     const u = S.u, a = u.app;
+    setUpdateBadge(document, a.behind || 0);
     // ---- this copy and its version ----
     const ver = `<b>Video Octopus ${esc(a.version || '')}</b>${a.clone ? `<span class="sub">${[a.commit && `<code>${esc(a.commit)}</code>`, a.date && esc(a.date), a.branch && (a.upstream ? `${esc(a.branch)}, follows ${esc(a.upstream)}` : esc(a.branch))].filter(Boolean).join(' · ')}</span>` : '<span class="sub">Not a git clone</span>'}`;
     const running = u.restart.needed ? `<span class="sub">Running ${esc(u.restart.running.commit || 'the old version')} until Video Octopus restarts.</span>` : '';
@@ -305,10 +306,19 @@ function comparisonView(comparison, close) {
   return box;
 }
 
-// "New" also remains after an app update when customized skills need a choice.
+// Only app updates get a New badge. Skill review notices remain inside Updates.
+let badgeRevision = 0;
+export function setUpdateBadge(nav, count) {
+  badgeRevision++;
+  nav.querySelectorAll('a[href="#/settings/updates"]').forEach(a => {
+    const existing = a.querySelector('.n');
+    if (!(count > 0)) { existing?.remove(); return; }
+    if (!existing) a.append(h('<span class="n wait" title="An app update is available">New</span>'));
+  });
+}
 export function markUpdateBadge(nav) {
-  api('/api/app/counts').then((c) => {
-    const a = nav.querySelector('a[href="#/settings/updates"]');
-    if ((c?.update || c?.skillUpdates) && a && !a.querySelector('.n')) a.append(h('<span class="n wait" title="App or skill updates are ready (Settings → Updates)">New</span>'));
+  const revision = ++badgeRevision;
+  return api('/api/app/counts').then(c => {
+    if (revision === badgeRevision) setUpdateBadge(nav, c?.update || 0);
   }).catch(() => {});
 }

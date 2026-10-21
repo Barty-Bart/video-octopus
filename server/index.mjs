@@ -405,7 +405,7 @@ async function route(req, res) {
   if (p === '/api/app/counts') {
     let inbox = 0; try { inbox = settings().studio ? inboxItems().length : 0; } catch {}
     const skillUpdates = settings().studio ? managedSkillsView().pending : 0;
-    return send(res, 200, { schedules: readSchedules().filter((x) => x.enabled).length, inbox, skillUpdates, update: await updateCount() + skillUpdates });
+    return send(res, 200, { schedules: readSchedules().filter((x) => x.enabled).length, inbox, skillUpdates, update: await updateCount() });
   }
   // Settings → Updates: the app's update (git), Restart, starter files, Open Video Octopus when I log in (server/updates.mjs).
   if (await updatesRoute(req, res, url, { send, body, restart: () => shutdown(RESTART_CODE) })) return;

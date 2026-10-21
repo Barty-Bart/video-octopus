@@ -16,7 +16,7 @@ A local video editor with an AI assistant. Record or import footage, edit from t
 | Exports | MP4; WAV, M4A/AAC and MP3; transcript text/Markdown; SRT/VTT and burned captions; layer exports and timeline XML. Tested platform coverage and limitations are listed below. |
 | Project formats | YouTube tutorial, faceless explainer, Short and product explainer. |
 
-> **v0.1.0-beta.2 — source update.** Learning, SQLite-backed skills and instructions, brand profiles, and automatic New video context are included. Read the [release notes](docs/release-notes.md) and [verification limits](docs/managed-skills-verification.md) before relying on an untested workflow.
+> **v0.1.0-beta.3 — source update.** Learning, SQLite-backed skills and instructions, brand profiles, and automatic New video context are included. Read the [release notes](docs/release-notes.md) and [verification limits](docs/managed-skills-verification.md) before relying on an untested workflow.
 
 ### Six bundled starter skills
 

@@ -1,3 +1,19 @@
+# v0.1.0-beta.3
+
+- Clear the Updates “New” badge when no app update is available. Skill review
+  notices remain inside Updates and no longer count as new app versions.
+- Explain profiles and formats with channel examples and useful placeholders.
+  “Video setup” selects the starting workflow; the format name is your own label.
+- Copy an approved format into another profile after reviewing its guide. The
+  copy gets independent learning history, retains source provenance and uses
+  the destination profile's brand. Personal skill selections can be shared.
+
+Verified on macOS: 170 isolated tests, 16 fake-agent runtime groups, and browser
+checks of profile creation, setup presets, reviewed copy and badge clearing.
+No packages/models are installed; Python/SAM discovery remains a follow-up.
+
+---
+
 # v0.1.0-beta.2
 
 Adds Learning, profile-specific brands and SQLite-backed skills/instructions.

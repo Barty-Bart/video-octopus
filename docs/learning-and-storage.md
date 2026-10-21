@@ -98,6 +98,28 @@ One active package per profile/format is supported. Named sibling style variants
 weekly rollups, timed overlays and After Effects export remain later work.
 Faceless workflows use imported/recorded narration; no TTS provider is selected.
 
+## Profiles, presets and reusing formats
+
+A profile is a channel, brand or series. A format is a repeatable video style
+with its own approved guide and learning history. For example, one channel can
+have long-form explainers and Shorts, while a second channel has its own formats.
+**Video setup** selects one of the existing workflow presets (on-camera long-form,
+voiceover long-form, Short/Reel or product explainer). **Your format name** is a
+custom label; several formats can use the same preset and learn different styles.
+
+**Copy an existing format** starts a new format in the selected profile from a
+reviewed approved version. It copies rules, workflow, reusable assets and personal
+skill selections, and records the source profile/format/version. It does not copy
+profile brand settings or draft sessions. Evidence remains linked to the retained
+original study. Check the guide and assets for channel-specific text or logos.
+The new format begins at version 1 and learns independently; changing either copy
+does not change the other or existing pinned projects. Stale source-version reviews
+are rejected. This is an independent copy, not a live-linked shared format.
+
+Personal skills are studio-wide and can be selected by formats across profiles
+through **Format skills**. Learned packages keep their exact-version applicability;
+copy a format to reuse its complete approved package. Source media stay in place.
+
 ## Brand profiles, instructions and New video
 
 **Brand profiles** owns identity, audience, voice, colours, fonts, guidance and uploaded

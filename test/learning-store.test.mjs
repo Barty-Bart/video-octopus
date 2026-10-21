@@ -45,3 +45,33 @@ test('skill explanations are versioned SQL metadata without changing core owners
  const personal=view.items.find(x=>x.name==='summary-test');assert.equal(personal.summary,'A concise personal workflow.');assert.match(sqlSkillContent(root,personal.id).text,/different description/);
  view=syncSkills({studio:root,action:{action:'restore-sql',snapshot:initial,revision:view.revision}});assert.equal(view.items.find(x=>x.id===core.id).summary,core.summary);
 });
+
+test('copying an approved format preserves provenance and assets with independent history', t => {
+ const {store:st,f,p}=fixture(t), target=st.profile('Second synthetic channel'),d=draft(st,f);
+ const asset=join(st.sessionDir(d.s.id),'work/assets/shape.svg');mkdirSync(join(st.sessionDir(d.s.id),'work/assets'),{recursive:true});writeFileSync(asset,'<svg><rect width="2" height="2"/></svg>');
+ d.proposal.assets=[{file:'work/assets/shape.svg',note:'Synthetic shape'}];writeFileSync(join(st.sessionDir(d.s.id),'work/proposal.json'),JSON.stringify(d.proposal));
+ const source=approve(st,d);st.update('formats',{...st.get('formats',f.id),skillIds:['synthetic-shared-skill']});
+ st.pin('original-project',{versionId:source.id});
+ const copy=st.copyFormat(f.id,{profileId:target.id,name:'Second channel explainers',expected:source.id,reviewed:true});
+ assert.notEqual(copy.id,f.id);assert.equal(copy.profileId,target.id);assert.deepEqual(copy.skillIds,['synthetic-shared-skill']);
+ const v=st.version(copy.activeVersion),original=st.version(source.id);
+ assert.equal(v.number,1);assert.equal(v.copiedFrom.profileId,p.id);assert.equal(v.copiedFrom.versionId,source.id);assert.deepEqual(v.rules,original.rules);
+ assert.equal(readFileSync(join(v.path,v.assets[0].file),'utf8'),readFileSync(join(original.path,original.assets[0].file),'utf8'));
+ assert.match(readFileSync(join(v.path,'SKILL.md'),'utf8'),new RegExp(v.id));assert.doesNotMatch(readFileSync(join(v.path,'SKILL.md'),'utf8'),new RegExp(source.id));
+ assert.equal(st.list('sessions').filter(s=>s.formatId===copy.id).length,0);
+ const newer=approve(st,draft(st,copy,[{id:'opening',text:'Use a different opening.'}]));
+ assert.equal(newer.number,2);assert.equal(st.get('formats',f.id).activeVersion,source.id);assert.equal(st.binding('original-project').versionId,source.id);
+ assert.equal(st.version(source.id).rules[0].text,'Show the result first.');
+});
+
+test('format copy requires explicit review and a current approved source without partial writes', t => {
+ const {store:st,f}=fixture(t),target=st.profile('Destination');
+ assert.throws(()=>st.copyFormat(f.id,{profileId:target.id,name:'Copy',expected:null,reviewed:true}),/changed/);
+ const v=approve(st,draft(st,f));
+ assert.throws(()=>st.copyFormat(f.id,{profileId:target.id,name:'Copy',expected:v.id}),/Review/);
+ const newer=approve(st,draft(st,f));
+ assert.throws(()=>st.copyFormat(f.id,{profileId:target.id,name:'Copy',expected:v.id,reviewed:true}),/changed/);
+ writeFileSync(join(st.versionDir(newer.id),'guide.md'),'Unaccepted edits');
+ assert.throws(()=>st.copyFormat(f.id,{profileId:target.id,name:'Copy',expected:newer.id,reviewed:true}),/changed/);
+ assert.equal(st.list('formats').length,1);assert.equal(st.list('versions').length,2);
+});

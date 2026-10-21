@@ -20,3 +20,13 @@ test('database backups include brand assets/instructions and reject missing pinn
 test('instruction and brand storage reject symbolic link redirection',t=>{if(process.platform==='win32'){t.skip('symlink privileges');return;}const {s,root}=fixture(t),p=s.profile('A'),r=s.research(p.id,'https://example.com');symlinkSync(join(root,'missing'),join(s.researchDir(r.id),'work/brand-proposal.json'));assert.throws(()=>s.researchProposal(r.id),/symbolic/);});
 
 test('canonical instruction loss and pre-profile backups never fall back to generated files',t=>{const {s,root}=fixture(t);const backup=s.backup();s.db.prepare('DELETE FROM instruction_head').run();assert.throws(()=>new ProfileStore(root),/Canonical instructions are missing/);const incomplete=s.backup();assert.throws(()=>previewDatabaseRestore(root,incomplete.id),/predates profile/);s.db.prepare('INSERT INTO instruction_head VALUES(1,?)').run(s.instructionHistory()[0].id);const b=s.bundle({type:'short'});assert.equal(previewDatabaseRestore(root,backup.id,[{project:'later',name:'Later',...b}]).missingPins.length,1);});
+
+test('copied formats use the destination brand and leave source project context pinned', t=>{
+ const {s,root}=fixture(t),a=s.profile('Source channel'),b=s.profile('Destination channel');brand(s,a,'Source identity');brand(s,b,'Destination identity');
+ const {f,v}=learned(s,a);const original=s.bundle({profileId:a.id,formatId:f.id,type:f.type});s.pinContext('original',original);
+ const copy=s.copyFormat(f.id,{profileId:b.id,name:'Reused format',expected:v.id,reviewed:true});
+ const selected=s.bundle({profileId:b.id,formatId:copy.id,type:copy.type});
+ assert.equal(s.brand(b.id,selected.brandVersion).brand.identity,'Destination identity');assert.equal(s.projectBundle('original').versionId,v.id);
+ assert.equal(selected.versionId,copy.activeVersion);assert.notEqual(selected.brandVersion,original.brandVersion);
+ assert.equal(s.list('brand_versions').length,2);
+});

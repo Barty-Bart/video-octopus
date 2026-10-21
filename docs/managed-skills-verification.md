@@ -1,5 +1,7 @@
 # SQLite and learning checks
 
+21 October 2026 follow-up (v0.1.0-beta.3): **170 tests** and **16 disposable runtime groups** passed. Browser checks covered profile/format placeholders and presets, reviewed format copying, and update-badge add/remove/no-duplicate/stale-response behavior. Copy tests verify destination-brand isolation, asset integrity, independent version history and original project pins. No real providers or creator studios used.
+
 21 October 2026 publishing check: **167 tests** and **14 disposable runtime groups** passed on macOS with Node 24.21.0, including fake-agent profile research, context pinning and synthetic frame extraction. Real provider quality and native Windows/Linux SQLite migration remain unverified.
 
 Earlier implementation checkpoint: the expanded isolated suite passed **156 tests**, zero failures/skips on macOS with Node 24.21.0. After the final reference-removal recovery addition, all **11 learning/storage tests** passed again. Runtime integration exercised **11 groups** with a synthetic learning agent, stubbed credential store and local synthetic video, including approval/pinning, plan invalidation, database backup/restore, origin rejection and resumable frame extraction. An actual browser walkthrough covered review/edit/approval, project handoff, in-app personal skill creation and restore preview. Real model quality and new native Windows/Linux storage behavior remain unverified.

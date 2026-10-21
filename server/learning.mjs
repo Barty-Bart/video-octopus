@@ -122,6 +122,7 @@ export async function learningRoute(req,res,url,{send,body,serveFile}) {
     if(group==='versions' && action==='regenerate') return reply(current(s=>s.regenerateVersion(id)));
     if(group==='profiles') return reply(current(s=>s.profile(b.name)));
     if(group==='formats') {
+      if(action==='copy') return reply(current(s=>{const f=s.copyFormat(id,b);try{publish(s,{id:f.activeVersion});}catch(e){f.warning=`Format copied. Skill publication needs attention: ${e.message}`;}return f;}));
       if(action==='activate') return reply(current(s=>s.activate(id,b.versionId,b.expected)));
       return reply(current(s=>s.format(b.profileId,b.name,b.type,b.targetSeconds)));
     }

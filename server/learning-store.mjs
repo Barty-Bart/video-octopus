@@ -23,6 +23,7 @@ export function safeFile(root, rel) {
   return path;
 }
 function atomic(path, data) { mkdirSync(dirname(path), { recursive: true }); const tmp = `${path}.${id()}.tmp`; writeFileSync(tmp, data, { flag: 'wx' }); renameSync(tmp, path); }
+function approvedSkill(keyV, type, workflow) { return `---\nname: learned-${keyV}\ndescription: Apply this approved format only when the project explicitly pins learning version ${keyV}.\n---\n\nRead the pinned guide and project brief first. This skill applies only to version ${keyV}.\nKeep source media untouched, preserve creator overrides, lock cuts before planning/building, and review before export.\n${type === 'faceless' ? 'Use narration and appropriate visuals; do not apply talking-head zooms. Do not choose a TTS provider automatically.\n' : ''}\n${workflow}\n`; }
 export class LearningStore {
   constructor(studio) {
     if (!studio || !existsSync(studio)) fail('Choose an existing studio first.');
@@ -154,7 +155,7 @@ export class LearningStore {
     mkdirSync(staging, { recursive: true });
     try {
       const guide = `# ${f.name}\n\n${[...rules.values()].map(r=>`## ${r.area} · ${r.id}\n${r.text}\n`).join('\n')}`;
-      const skill = `---\nname: learned-${keyV}\ndescription: Apply this approved format only when the project explicitly pins learning version ${keyV}.\n---\n\nRead the pinned guide and project brief first. This skill applies only to version ${keyV}.\nKeep source media untouched, preserve creator overrides, lock cuts before planning/building, and review before export.\n${f.type === 'faceless' ? 'Use narration and appropriate visuals; do not apply talking-head zooms. Do not choose a TTS provider automatically.\n' : ''}\n${p.workflow}\n`;
+      const skill = approvedSkill(keyV, f.type, p.workflow);
       atomic(join(staging, 'guide.md'), guide); atomic(join(staging, 'SKILL.md'), skill);
       const assets = [];
       for (const [i,a] of p.assets.entries()) { const file = `assets/${i}-${a.file.split('/').pop()}`; const target = safeFile(staging, file); mkdirSync(dirname(target), { recursive: true }); copyFileSync(safeFile(this.sessionDir(key),a.file),target); assets.push({ ...a, file }); }
@@ -172,6 +173,43 @@ export class LearningStore {
         this.put('versions',v,f.id); this.update('formats',{...fmt,activeVersion:keyV}); this.update('sessions',{...current,status:'approved',approvedVersion:keyV,revision:revision+1,updated:now()}); return { ...v, package: undefined };
       });
     } catch(e) { rmSync(staging,{recursive:true,force:true}); rmSync(folder,{recursive:true,force:true}); throw e; }
+  }
+  copyFormat(sourceId, { profileId, name, expected, reviewed } = {}) {
+    if (reviewed !== true) fail('Review the approved guide before copying it.');
+    const source = this.get('formats', sourceId), destination = this.get('profiles', profileId);
+    if (!source.activeVersion || expected !== source.activeVersion) fail('The source format changed. Review its approved version again.');
+    const original = this.version(expected), sourceProfile = this.get('profiles', source.profileId);
+    const keyF = id(), keyV = id(), folder = this.versionDir(keyV), staging = `${folder}.staging`;
+    const copiedFrom = { profileId: source.profileId, formatId: source.id, versionId: original.id,
+      profileName: sourceProfile.name, formatName: source.name, number: original.number };
+    const format = { id: keyF, profileId: destination.id, name: text(name), type: source.type,
+      targetSeconds: source.targetSeconds, skillIds: [...(source.skillIds || [])],
+      activeVersion: keyV, created: now(), copiedFrom };
+    const rules = structuredClone(original.rules), assets = structuredClone(original.assets);
+    mkdirSync(staging, { recursive: true });
+    try {
+      atomic(join(staging, 'guide.md'), `# ${format.name}\n\n${rules.map(r=>`## ${r.area} · ${r.id}\n${r.text}\n`).join('\n')}`);
+      atomic(join(staging, 'SKILL.md'), approvedSkill(keyV, format.type, original.workflow));
+      for (const asset of assets) {
+        const target = safeFile(staging, asset.file); mkdirSync(dirname(target), { recursive: true });
+        copyFileSync(safeFile(original.path, asset.file), target);
+      }
+      const files = ['guide.md', 'SKILL.md', ...assets.map(a=>a.file)].map(file=>({file,sha256:hash(readFileSync(safeFile(staging,file)))}));
+      // Evidence points back to the retained original study. No draft sessions or profile brand are copied.
+      const pack = { rules, workflow: original.workflow, assets, files,
+        evidence: structuredClone(original.evidence), sourceSession: original.sourceSession, copiedFrom };
+      const raw = json(pack); atomic(join(staging, 'package.json'), raw);
+      const version = { id: keyV, formatId: keyF, number: 1, name: `Copied: ${format.name}`,
+        created: now(), sha256: hash(raw), package: pack, baseVersion: null, copiedFrom };
+      renameSync(staging, folder);
+      return this.tx(() => {
+        if (this.get('formats', sourceId).activeVersion !== expected) fail('The source format changed. Review it again.');
+        this.get('profiles', profileId);
+        for (const file of files) this.db.prepare('INSERT OR IGNORE INTO learning_blobs(hash,bytes) VALUES(?,?)').run(file.sha256,readFileSync(safeFile(folder,file.file)));
+        this.put('formats', format, profileId); this.put('versions', version, keyF);
+        return format;
+      });
+    } catch (e) { rmSync(staging,{recursive:true,force:true}); rmSync(folder,{recursive:true,force:true}); throw e; }
   }
   activate(formatId, versionId, expected) { this.version(versionId); return this.tx(()=>{ const f=this.get('formats',formatId),v=this.get('versions',versionId); if(v.formatId!==f.id || f.activeVersion!==expected) fail('Format changed. Reload and review before switching versions.'); return this.update('formats',{...f,activeVersion:versionId}); }); }
   // Consistent local recovery bundle. Files are immutable during this synchronous operation.
