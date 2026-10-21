@@ -1,3 +1,4 @@
+import { TERMS } from './terms.js';
 // The studio library (Home → Library): styles, sounds, backgrounds, components, B-roll and stills, with
 // previews; sounds waiting for approval; "New style from samples"; the Library's own Claude in a side
 // panel. Also the pieces projects use: the style picker, "Save to library" on renders, and audio previews.
@@ -63,15 +64,15 @@ export function mdLite(src) {
 // ---------- the style picker (a Short's project inspector and its Post tab) ----------
 export async function styleSection(host, { id, getP, onChange }) {
   const P = getP();
-  if (!isShort(P.type)) { host.replaceChildren(); host.hidden = true; return; }
+  if (P.learning?.versionId || !isShort(P.type)) { host.replaceChildren(); host.hidden = true; return; }
   host.hidden = false;
   let styles = [];
   try { styles = await api('/api/library/styles'); } catch {}
   const cur = P.kit?.style || '';
   const missing = cur && !styles.some((s) => s.name === cur);
-  const sec = h(`<section class="kit-style"><h3>Style</h3>
+  const sec = h(`<section class="kit-style"><h3>Legacy style</h3>
     <select class="field small" aria-label="This project's style"><option value="">No style</option>${styles.map((s) => `<option value="${esc(s.name)}"${s.name === cur ? ' selected' : ''}>${esc(s.name)}</option>`).join('')}${missing ? `<option value="${esc(cur)}" selected>${esc(cur)} (missing)</option>` : ''}</select>
-    <p class="sub">${cur && !missing ? esc(styles.find((s) => s.name === cur)?.note || '') : styles.length ? 'Claude reads the style when it edits and writes for this project.' : 'No styles yet.'} <a href="#/library?new-style">New style from samples</a></p></section>`);
+    <p class="sub">${cur && !missing ? esc(styles.find((s) => s.name === cur)?.note || '') : styles.length ? 'Claude reads the style when it edits and writes for this project.' : 'No legacy styles.'} <a href="#/learning">${TERMS.formats}</a></p></section>`);
   $('select', sec).onchange = async (e) => {
     try {
       await api(`/api/projects/${encodeURIComponent(id)}/style`, { style: e.target.value });
@@ -142,87 +143,13 @@ async function uploadFile(file, { kind, style, note }, onProgress) {
 }
 
 // ---------- New style from samples ----------
-export function newStyleDialog({ onStarted, files: dropped = [] } = {}) {
-  const picked = new Map(); // key -> {kind: 'file'|'path'|'link', label, file?, path?, url?}
-  for (const f of dropped) picked.set(`f:${f.name}:${f.size}`, { kind: 'file', label: f.name, file: f });
-  const modal = $('#modal');
-  const d = h(`<div class="dialog np ns" role="dialog" aria-modal="true" aria-labelledby="nsT">
-    <div class="np-head"><div><h3 id="nsT">New style from samples</h3><div class="sub">Pick 3 to 10 short videos in the style you want. Claude studies them and writes the style into your library.</div></div>
-      <button class="btn ghost small np-x" data-a="x" aria-label="Close">${ICON.x}</button></div>
-    <label class="fl" for="nsName">Name</label><input class="field big" id="nsName" placeholder="e.g. calm-tool-reels" autocomplete="off">
-    <div class="fl">Samples <span class="sub" id="nsCount"></span></div>
-    <div class="ns-drop" id="nsDrop" tabindex="0"><b>Drop videos here</b><span class="sub">or</span><button class="btn small" data-a="choose">Choose files…</button><input type="file" accept="video/*" multiple hidden id="nsFile"></div>
-    <div class="ns-or"><span class="sub">From your studio (read only, nothing is copied)</span>
-      <input class="field" id="nsQ" type="search" placeholder="Search your renders: reel, short, final…" autocomplete="off"><div class="ns-vids" id="nsVids"></div></div>
-    <label class="fl" for="nsLinks">Or paste links, one per line</label><textarea class="field ns-links" id="nsLinks" rows="3" placeholder="https://www.instagram.com/reel/…"></textarea>
-    <div class="ns-picked" id="nsPicked"></div>
-    <div class="actions"><span class="sub" id="nsMsg"></span><span class="gap"></span><button class="btn ghost" data-a="x">Cancel</button><button class="btn primary" data-a="go">Make the style</button></div></div>`);
-  modal.replaceChildren(d); modal.hidden = false;
-  const close = () => { modal.hidden = true; document.removeEventListener('keydown', onEsc); };
-  const onEsc = (e) => { if (e.key === 'Escape') close(); };
-  document.addEventListener('keydown', onEsc);
-  d.querySelectorAll('[data-a=x]').forEach((b) => (b.onclick = close));
-  const links = () => $('#nsLinks', d).value.split('\n').map((s) => s.trim()).filter((s) => /^https?:\/\/\S+$/.test(s));
-  const count = () => picked.size + links().length;
-  const draw = () => {
-    const n = count();
-    $('#nsCount', d).textContent = `${n} picked${n < 3 ? `, ${3 - n} more to go` : n > 10 ? ', 10 at most' : ''}`;
-    $('[data-a=go]', d).disabled = n < 3 || n > 10;
-    $('#nsPicked', d).replaceChildren(...[...picked.entries()].map(([k, x]) => {
-      const c = h(`<span class="ns-chip" title="${esc(x.path || x.label)}"><span>${esc(x.label)}</span><button aria-label="Remove ${esc(x.label)}">${ICON.x}</button></span>`);
-      $('button', c).onclick = () => { picked.delete(k); draw(); drawVids(); };
-      return c;
-    }));
-  };
-  $('#nsLinks', d).oninput = draw;
-  const addFiles = (list) => { for (const f of list) if (/^video\//.test(f.type) || /\.(mp4|mov|m4v|webm)$/i.test(f.name)) picked.set(`f:${f.name}:${f.size}`, { kind: 'file', label: f.name, file: f }); draw(); };
-  $('[data-a=choose]', d).onclick = () => $('#nsFile', d).click();
-  $('#nsFile', d).onchange = (e) => addFiles(e.target.files);
-  const drop = $('#nsDrop', d);
-  drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('over'); };
-  drop.ondragleave = () => drop.classList.remove('over');
-  drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('over'); addFiles(e.dataTransfer.files); };
-  let vids = [];
-  const drawVids = () => {
-    $('#nsVids', d).replaceChildren(...vids.map((v) => {
-      const k = `p:${v.rel}`;
-      const row = h(`<label class="ns-vid"><input type="checkbox" aria-label="Use ${esc(v.rel)} as a sample"${picked.has(k) ? ' checked' : ''}><span class="ns-vt"><b>${esc(v.rel.split('/').pop())}</b><small>${esc(v.rel.split('/').slice(0, -1).join('/'))} · ${mb(v.bytes)} · ${ago(v.at)}</small></span></label>`);
-      $('input', row).onchange = (e) => { if (e.target.checked) picked.set(k, { kind: 'path', label: v.rel.split('/').pop(), path: v.rel }); else picked.delete(k); draw(); };
-      return row;
-    }));
-    if (!vids.length) $('#nsVids', d).append(h(`<div class="sub" style="padding:10px 12px">No videos found.</div>`));
-  };
-  let qTimer;
-  const search = async () => { try { vids = await api(`/api/library/videos?q=${encodeURIComponent($('#nsQ', d).value)}`); } catch { vids = []; } drawVids(); };
-  $('#nsQ', d).oninput = () => { clearTimeout(qTimer); qTimer = setTimeout(search, 200); };
-  search();
-  draw();
-  setTimeout(() => $('#nsName', d).focus(), 30);
-  $('[data-a=go]', d).onclick = async () => {
-    const name = $('#nsName', d).value.trim();
-    if (!name) return $('#nsName', d).focus();
-    const go = $('[data-a=go]', d), msg = $('#nsMsg', d);
-    go.disabled = true;
-    try {
-      const { slug } = await api('/api/library/style-new', { name });
-      const files = [...picked.values()].filter((x) => x.kind === 'file');
-      for (const [i, x] of files.entries()) {
-        await uploadFile(x.file, { kind: 'samples', style: slug }, (p) => { msg.textContent = `Copying ${i + 1} of ${files.length}: ${Math.round(p * 100)}%`; });
-      }
-      msg.textContent = 'Asking Claude…';
-      await api('/api/library/style-make', { slug, paths: [...picked.values()].filter((x) => x.kind === 'path').map((x) => x.path), links: links() });
-      close();
-      toast(`Claude is studying the samples for "${slug}". Follow along in the Library assistant.`);
-      onStarted?.(slug);
-    } catch (e) { msg.textContent = ''; toast(e.message); go.disabled = false; }
-  };
-}
+export function newStyleDialog() { location.hash='#/learning'; }
 
 // ---------- the Library's Claude (side panel) ----------
 function makeMiniChat(box, onFiles) {
   box.replaceChildren(h(`<div class="lib-chat">
     <div class="rc-head"><b>Library assistant</b><span class="gap"></span><span class="sub" id="lcState"></span></div>
-    <p class="sub">Claude for the library: styles from samples, finding and making sounds. Your own Claude Code, like in projects.</p>
+    <p class="sub">Find or make sounds and organize reusable assets with your configured assistant. Study video references in Video formats.</p>
     <div class="lc-msgs" id="lcMsgs"><div class="sub lc-empty">Nothing yet. Make a style or find a sound, or ask here.</div></div>
     <div class="composer"><label class="vh" for="lcIn">Message the Library assistant</label><textarea id="lcIn" rows="1" placeholder="Ask about the library…"></textarea>
       <button class="send" id="lcSend" aria-label="Send"><span class="l-send"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M7 12V2M3 6l4-4 4 4"/></svg></span><i class="stop-sq l-stop" aria-hidden="true"></i></button></div></div>`));
@@ -288,7 +215,7 @@ export function renderLibrary(main, side) {
   main.replaceChildren(h(`<div class="home-wrap lib">
     <div class="home-head"><div class="hh-title"><h1>Library</h1><div class="sub mono" id="libDir"></div></div>
       <span class="gap"></span><button class="btn" id="libFolders">${ICON.folder}Folders</button><button class="btn" id="libReveal">Show in ${fileManager()}</button></div>
-    <p class="sub lead">Reusable pieces for every project. Claude reads the same folders: each has an INDEX.md with one line per file.</p>
+    <p class="sub lead">Reusable pieces for every project. Sound descriptions, tags and approvals live in SQLite; audio stays in your folders.</p>
     <nav class="seg lib-jump" aria-label="Jump to"></nav>
     <div id="libBody"></div></div>`));
   $('#libReveal', main).onclick = () => api('/api/library/reveal', { file: '.' });
@@ -353,19 +280,19 @@ export function renderLibrary(main, side) {
     // Drop files on a section to add them (on Styles: start a new style with them).
     sec.ondragover = (e) => { if (e.dataTransfer?.types?.includes('Files')) { e.preventDefault(); sec.classList.add('over'); } };
     sec.ondragleave = (e) => { if (!sec.contains(e.relatedTarget)) sec.classList.remove('over'); };
-    sec.ondrop = (e) => { e.preventDefault(); sec.classList.remove('over'); const files = [...(e.dataTransfer?.files || [])]; if (!files.length) return; if (k.key === 'styles') newStyleDialog({ files, onStarted: load }); else addFiles(k.key, files); };
+    sec.ondrop = (e) => { e.preventDefault(); sec.classList.remove('over'); const files = [...(e.dataTransfer?.files || [])]; if (!files.length) return; if (k.key === 'styles') toast('Open Video formats, choose a format and Study examples to add these files.'); else addFiles(k.key, files); };
     if (k.key === 'styles') {
-      const nb = h(`<button class="btn accent small">New style from samples</button>`);
+      const nb = h(`<button class="btn accent small">${TERMS.formats}</button>`);
       nb.onclick = () => newStyleDialog({ onStarted: load });
       head.append(nb);
       const cards = h(`<div class="lib-styles"></div>`);
-      for (const s of L.pendingStyles) cards.append(h(`<div class="style-card pending"><b>${esc(s.name)}</b><span class="sub"><span class="spin" style="display:inline-block;vertical-align:-2px"></span> Claude is studying ${(s.samples || []).length} samples…</span></div>`));
+      for (const s of L.pendingStyles) cards.append(h(`<div class="style-card pending"><b>${esc(s.name)}</b><span class="sub"><span class="spin" style="display:inline-block;vertical-align:-2px"></span> Retained draft · ${(s.samples || []).length} samples</span></div>`));
       for (const it of k.items) {
         const c = h(`<button class="style-card"><b>${esc(it.name)}</b><span class="sub">${esc(it.note || 'No summary yet')}</span><span class="sc-meta">${it.samples ? `${it.samples} samples · ` : ''}${ago(it.at)}</span></button>`);
         c.onclick = () => viewStyle(it);
         cards.append(c);
       }
-      if (!k.items.length && !L.pendingStyles.length) cards.append(h(`<div class="empty small"><b>No styles yet</b><span class="sub">Make one from 3–10 sample shorts, or drop videos here.</span></div>`));
+      if (!k.items.length && !L.pendingStyles.length) cards.append(h(`<div class="empty small"><b>No legacy styles</b><span class="sub">Create a format and study examples in Video formats.</span></div>`));
       body.append(cards);
       return sec;
     }
@@ -397,14 +324,16 @@ export function renderLibrary(main, side) {
     const add = h(`<label class="btn small">Add files<input type="file" accept="audio/*" multiple hidden></label>`);
     $('input', add).onchange = (e) => addFiles('sfx', [...e.target.files]);
     head.append(add);
-    const find = h(`<form class="find-row"><input class="field" id="libFind" placeholder="Find a sound: a soft whoosh for a page turn…" autocomplete="off"><button class="btn dark">Find with Claude</button></form>`);
+    const find = h(`<form class="find-row"><input class="field" id="libFind" placeholder="Find a sound: a soft whoosh for a page turn…" autocomplete="off"><button class="btn dark">Find or make a sound</button></form>`);
     find.onsubmit = async (e) => {
       e.preventDefault();
       const q = $('input', find).value.trim();
       if (!q) return;
-      try { await api('/api/library/sound-find', { query: q }); $('input', find).value = ''; toast('Claude is looking. New sounds show up under “Waiting for you”.'); } catch (err) { toast(err.message); }
+      try { await api('/api/library/sound-find', { query: q }); $('input', find).value = ''; toast('The assistant is working. New sounds show up under “Waiting for you”.'); } catch (err) { toast(err.message); }
     };
     body.append(find);
+    for(const warning of L.soundCatalog?.warnings||[])body.append(h(`<p class="notice">${esc(warning)}</p>`));
+    body.append(h('<p class="sub">Reuses an approved sound, makes a simple effect locally, or uses your available sound sources. Listen before approving. Catalog metadata is backed up with SQLite; back up audio files separately.</p>'));
     if (L.candidates.length) {
       const w = h(`<div class="snd-group"><h4>Waiting for you <span class="sub">${L.candidates.length}</span></h4><div class="snd-rows"></div></div>`);
       for (const c of L.candidates) $('.snd-rows', w).append(candidateRow(c, load));
@@ -414,8 +343,8 @@ export function renderLibrary(main, side) {
     const rows = $('.snd-rows', lib);
     const fill = () => {
       const q = soundQ.toLowerCase();
-      const list = k.items.filter((it) => !q || `${it.name} ${it.note}`.toLowerCase().includes(q));
-      rows.replaceChildren(...list.map((it) => soundRow(it)));
+      const list = k.items.filter((it) => !q || `${it.name} ${it.note} ${(it.tags||[]).join(' ')} ${it.source||''}`.toLowerCase().includes(q));
+      rows.replaceChildren(...list.map(it=>{const edit=h('<button class="btn small">Edit details</button>');edit.onclick=()=>soundDetails(it,load);return soundRow(it,edit);}));
       if (!list.length) rows.append(h(`<div class="sub snd-none">${k.items.length ? 'No sound matches.' : 'No sounds yet. Find one with Claude, add files, or pick from the free folder below.'}</div>`));
     };
     $('.snd-q', lib).oninput = (e) => { soundQ = e.target.value; fill(); };
@@ -458,6 +387,7 @@ export function renderLibrary(main, side) {
       <div class="style-md">Loading…</div>
       <div class="actions"><button class="btn" data-a="reveal">Show in ${fileManager()}</button><button class="btn primary" data-a="x">Close</button></div></div>`);
     modal.replaceChildren(d); modal.hidden = false;
+    const reuse=h('<button class="btn primary">Use notes as an example</button>');reuse.onclick=()=>{modal.hidden=true;location.hash='#/learning?legacyStyle='+encodeURIComponent(it.name);};d.append(reuse);
     const close = () => { modal.hidden = true; };
     $('.np-x', d).onclick = close; $('[data-a=x]', d).onclick = close;
     modal.onclick = (e) => { if (e.target === modal) close(); };
@@ -470,10 +400,17 @@ export function renderLibrary(main, side) {
   return { teardown: () => { chat.close(); stopPreview(); } };
 }
 
+function soundDetails(it,after){
+ const modal=$('#modal'),form=h(`<form class="dialog" role="dialog" aria-modal="true"><h3>Sound details</h3><p class="sub">Saved in SQLite. Editing details keeps the audio file in place.</p>${[['Description','note',it.note],['Source / attribution','source',it.source],['Licence notes','licence',it.licence],['Tags (comma separated)','tags',(it.tags||[]).join(', ')]].map(([label,key,value])=>`<label>${label}<input class="field" name="${key}" value="${esc(value||'')}" maxlength="${key==='note'?4000:2000}"></label>`).join('')}<p class="sub mono">${esc(it.path||it.file)}</p><p class="learn-error" role="alert"></p><div class="actions"><button type="button" class="btn" data-close>Cancel</button><button type="submit" class="btn primary">Save details</button></div></form>`);
+ modal.replaceChildren(form);modal.hidden=false;$('[data-close]',form).onclick=()=>modal.hidden=true;
+ form.onsubmit=async e=>{e.preventDefault();const b=$('[type=submit]',form);b.disabled=true;try{const data=Object.fromEntries(new FormData(form));await api('/api/library/sound-edit',{...data,tags:data.tags.split(',').map(t=>t.trim()).filter(Boolean),file:it.file,revision:it.revision});modal.hidden=true;after?.();}catch(e){$('.learn-error',form).textContent=e.message;}finally{b.disabled=false;}};
+ form.onkeydown=e=>{if(e.key==='Escape')modal.hidden=true;};$('input',form).focus();
+}
+
 export function soundRow(it, extra) {
-  const row = h(`<div class="snd-row"><span class="snd-n"><b>${esc(it.name)}</b><small>${esc(it.note || '')}</small></span><span class="snd-d sub"></span></div>`);
-  row.prepend(playButton(libUrl(it.file), `Play ${it.name}`));
-  const a = new Audio(); a.preload = 'metadata'; a.src = libUrl(it.file);
+  const row = h(`<div class="snd-row"><span class="snd-n"><b>${esc(it.name)}</b><small>${esc([it.note,it.source,it.licence&&`licence: ${it.licence}`,(it.tags||[]).join(', '),it.missing&&'File missing — restore it at the original path'].filter(Boolean).join(' · '))}</small></span><span class="snd-d sub"></span></div>`);
+  const play=playButton(libUrl(it.file), `Play ${it.name}`);play.disabled=Boolean(it.missing);row.prepend(play);
+  const a = new Audio(); a.preload = 'metadata'; if(!it.missing)a.src = libUrl(it.file);
   a.onloadedmetadata = () => { $('.snd-d', row).textContent = `${a.duration.toFixed(1)} s`; };
   if (extra) row.append(extra);
   return row;
@@ -481,10 +418,10 @@ export function soundRow(it, extra) {
 
 export function candidateRow(c, after) {
   const acts = h(`<span class="snd-acts"><button class="btn small dark" data-a="ok">Approve</button><button class="btn ghost small" data-a="no">Discard</button></span>`);
-  const row = soundRow({ ...c, note: [c.note, c.source, c.licence && `licence: ${c.licence}`].filter(Boolean).join(' · ') }, acts);
+  const row = soundRow(c, acts);const edit=h('<button class="btn small">Edit details</button>');edit.onclick=()=>soundDetails(c,after);acts.prepend(edit);if(c.missing)$('[data-a=ok]',acts).disabled=true;
   row.classList.add('cand');
-  $('[data-a=ok]', acts).onclick = async () => { try { const r = await api('/api/library/sound-approve', { file: c.file }); toast(`Approved: ${r.file}`); after?.(r); } catch (e) { toast(e.message); } };
-  $('[data-a=no]', acts).onclick = async () => { if (!confirm(`Discard ${c.name}?`)) return; try { await api('/api/library/sound-discard', { file: c.file }); after?.(); } catch (e) { toast(e.message); } };
+  $('[data-a=ok]', acts).onclick = async () => { try { const r = await api('/api/library/sound-approve', { file: c.file, revision:c.revision }); toast(`Approved: ${r.file}`); after?.(r); } catch (e) { toast(e.message); } };
+  $('[data-a=no]', acts).onclick = async () => { if (!confirm(`Remove ${c.name} from review? Its file and catalog history will be kept.`)) return; try { await api('/api/library/sound-discard', { file: c.file, revision:c.revision }); after?.(); } catch (e) { toast(e.message); } };
   return row;
 }
 

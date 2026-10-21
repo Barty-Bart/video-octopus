@@ -1,19 +1,19 @@
 // The studio library: reusable pieces every project can use. One folder per kind inside <studio>/library
-// (or the libraryDir setting): backgrounds/, sfx/, styles/, components/, broll/, stills/. Each folder has an
-// INDEX.md with one line per file (what it is, where it came from, its licence), so Claude and the creator
-// read the same list. Also here: the Library's own Claude chat (style breakdowns and finding sounds from
+// (or libraryDir). Sound metadata lives in SQLite; audio paths stay intact. Other legacy sections use
+// INDEX.md. Agents read the generated sound catalog or the app API. Also here: the Library's own Claude chat (style breakdowns and finding sounds from
 // Home), uploads (sample videos, sound files), "Save to library" and the "style from samples" brief.
 import { existsSync, mkdirSync, readdirSync, statSync, readFileSync, writeFileSync, appendFileSync, copyFileSync,
   createWriteStream, renameSync, rmSync, watch, constants } from 'node:fs';
 import { join, basename, extname, relative, dirname } from 'node:path';
-import { settings, saveSettings, expandHome, inside, readJSON, writeJSON, mtime, slugify } from './util.mjs';
+import { APP_DIR, settings, saveSettings, expandHome, inside, readJSON, writeJSON, mtime, slugify } from './util.mjs';
 import { makeChat, staleChat } from './engines.mjs';
+import { withSoundCatalog } from './sound-catalog.mjs';
 import { projectsRoot } from './studio.mjs';
 
 export const KINDS = [
   { key: 'backgrounds', label: 'Backgrounds', about: 'Backgrounds for layouts and scenes: images, videos, or code that draws one.' },
   { key: 'sfx', label: 'Sounds', about: 'Sound effects approved for use. Effects sit under the voice at the level in Settings → Sound.' },
-  { key: 'styles', label: 'Styles', about: 'Styles made from sample videos: hook, pacing, layouts, captions, sound, CTA.' },
+  { key: 'styles', label: 'Legacy styles', about: 'Existing style files remain available to older projects. Study new examples in Video formats.' },
   { key: 'components', label: 'Components', about: 'Reusable scene pieces: cards, titles, windows, lower thirds.' },
   { key: 'broll', label: 'B-roll', about: 'Clips to cut in over the voice.' },
   { key: 'stills', label: 'Stills', about: 'Frames saved from renders.' },
@@ -45,7 +45,11 @@ export function readIndex(dir) {
   return map;
 }
 
+export const soundCatalog = () => withSoundCatalog(settings().studio,libraryDir(),c=>c.snapshot());
+export function editSound(file,revision,patch){if(!Number.isInteger(revision))throw Error('Include the sound revision.');const row=withSoundCatalog(settings().studio,libraryDir(),c=>c.change(file,revision,patch));soundCatalog();send({t:'files'});return row;}
+
 export function addIndexLine(kind, file, note) {
+  if(kind==='sfx'){withSoundCatalog(settings().studio,libraryDir(),c=>c.register(`sfx/${file}`,{note:note||''}));soundCatalog();send({t:'files'});return;}
   const dir = join(libraryDir(), kind);
   mkdirSync(dir, { recursive: true });
   const p = join(dir, 'INDEX.md');
@@ -108,28 +112,17 @@ function pendingStyles() {
     .map((n) => ({ name: n, ...readJSON(join(dir, n, 'samples.json'), {}) }));
 }
 
-export function candidates() {
-  const dir = join(libraryDir(), NEW_SOUNDS);
-  let files = [];
-  try { files = readdirSync(dir).filter((f) => AUDIO.test(f) && !f.startsWith('.')); } catch { return []; }
-  const meta = readJSON(join(dir, 'candidates.json'), []);
-  const list = Array.isArray(meta) ? meta : Array.isArray(meta?.candidates) ? meta.candidates : [];
-  const by = new Map(list.filter((c) => c && c.file).map((c) => [basename(String(c.file)), c]));
-  return files.map((f) => {
-    const c = by.get(f) || {};
-    return { file: `${NEW_SOUNDS}/${f}`, name: f, note: String(c.note || ''), source: String(c.source || ''), licence: String(c.licence || c.license || ''),
-      at: mtime(join(dir, f)) };
-  }).sort((a, b) => b.at - a.at);
-}
+export function candidates() { return soundCatalog().items.filter(r=>r.status==='pending'); }
 
 export function listLibrary() {
   const dir = libraryDir();
-  const s = settings();
+  const s = settings(),catalog=soundCatalog();
   return {
+    soundCatalog:{storage:catalog.storage,snapshot:catalog.snapshot,warnings:catalog.warnings},
     dir, exists: existsSync(dir),
     settings: { libraryDir: s.libraryDir || '', sfxFreeDir: s.sfxFreeDir || '', defaultDir: join(s.studio, 'library') },
-    kinds: KINDS.map((k) => ({ ...k, items: kindItems(k.key) })),
-    candidates: candidates(), pendingStyles: pendingStyles(),
+    kinds: KINDS.map((k) => ({ ...k, items: k.key==='sfx'?catalog.items.filter(r=>r.status==='approved'):kindItems(k.key) })),
+    candidates: catalog.items.filter(r=>r.status==='pending'), pendingStyles: pendingStyles(),
   };
 }
 
@@ -141,6 +134,7 @@ export const stylePath = (slug) => (slug && /^[\w-]+$/.test(slug) ? join(library
 export function saveToLibrary(kind, src, { name, note } = {}) {
   if (!KIND[kind] || kind === 'styles') throw new Error('Pick where it goes: backgrounds, sounds, components, B-roll or stills.');
   if (!src || !existsSync(src)) throw new Error('That file is gone.');
+  if(kind==='sfx'&&!AUDIO.test(src))throw Error('Choose an audio file for Sounds.');
   const dir = join(libraryDir(), kind);
   mkdirSync(dir, { recursive: true });
   const file = freeName(dir, name ? `${name}${extname(src)}` : basename(src));
@@ -151,6 +145,7 @@ export function saveToLibrary(kind, src, { name, note } = {}) {
 
 export function saveBuffer(kind, buf, name, note) {
   if (!KIND[kind] || kind === 'styles') throw new Error('Unknown library folder.');
+  if(kind==='sfx'&&!AUDIO.test(name))throw Error('Choose an audio file for Sounds.');
   const dir = join(libraryDir(), kind);
   mkdirSync(dir, { recursive: true });
   const file = freeName(dir, name);
@@ -162,6 +157,7 @@ export function saveBuffer(kind, buf, name, note) {
 // A dropped file, streamed to disk: a sample video for a style, or a file for one of the library folders.
 export async function upload(req, { kind, style, name, note }) {
   const clean = basename(String(name || 'file')).replace(/[^\w.\- ()]+/g, '_').slice(-120) || 'file';
+  if(kind==='sfx'&&!AUDIO.test(clean))throw Error('Choose an audio file for Sounds.');
   let dir, indexed = false;
   if (kind === 'samples') {
     if (!/^[\w-]+$/.test(style || '')) throw new Error('Bad style name');
@@ -186,33 +182,13 @@ export async function upload(req, { kind, style, name, note }) {
 }
 
 // ---- sounds waiting for approval ----
-export function approveSound(rel, note) {
-  const src = libPath(rel);
-  if (!src || !rel.startsWith(`${NEW_SOUNDS}/`) || !existsSync(src)) throw new Error('That sound is no longer waiting.');
-  const c = candidates().find((x) => x.file === rel) || {};
-  const dir = join(libraryDir(), 'sfx');
-  const file = freeName(dir, basename(src));
-  renameSync(src, join(dir, file));
-  const bits = [note || c.note || basename(file, extname(file)), c.source, c.licence && `licence: ${c.licence}`, `added ${today()}`].filter(Boolean);
-  addIndexLine('sfx', file, bits.join(' · '));
-  dropCandidate(basename(src));
-  return { file: `sfx/${file}` };
+export function approveSound(rel, note, revision) {
+  const row=withSoundCatalog(settings().studio,libraryDir(),c=>{c.scan();return c.change(rel,revision,note===undefined?{}:{note},'approved');});
+  soundCatalog();send({t:'files'});return {file:row.file,id:row.id};
 }
-
-export function discardSound(rel) {
-  const src = libPath(rel);
-  if (!src || !rel.startsWith(`${NEW_SOUNDS}/`)) throw new Error('Bad file');
-  rmSync(src, { force: true });
-  dropCandidate(basename(src));
-  return { ok: true };
-}
-
-function dropCandidate(file) {
-  const p = join(libraryDir(), NEW_SOUNDS, 'candidates.json');
-  const meta = readJSON(p, null);
-  if (!meta) return;
-  const list = Array.isArray(meta) ? meta : meta.candidates || [];
-  writeJSON(p, list.filter((c) => basename(String(c?.file || '')) !== file));
+export function discardSound(rel,revision) {
+  withSoundCatalog(settings().studio,libraryDir(),c=>{c.scan();c.change(rel,revision,{},'discarded');});
+  soundCatalog();send({t:'files'});return {ok:true,note:'Removed from the review queue. The audio and catalog history are retained.'};
 }
 
 // ---- the free sound folder (a setting): search by file name, copy into the library ----
@@ -337,15 +313,18 @@ export function styleBrief(slug, { paths = [], links = [] }) {
   ].join('\n');
 }
 
+export function soundCatalogContext(){const c=soundCatalog();return `Sound metadata, approval status, source/licence and tags live in SQLite. Read the current generated catalog at ${c.snapshot}, or GET /api/library/sound-catalog (run library sounds --json using ${join(APP_DIR, 'bin/octopus.mjs')}). Each entry has a stable id, revision, relative file and absolute path; use only approved, non-missing sounds. Audio stays at these paths, including approved files in sfx/_new/. Never move media or edit SQLite directly. Use POST /api/library/sound-edit with {file,revision,note,source,licence,tags} for explicitly requested metadata edits. Existing INDEX.md is retained legacy metadata, not the authority. Back up through Storage before any migration; do not reorganize creator folders.`;}
+
 // ---- the Library's own Claude chat ----
 function libraryContext() {
   const s = settings(), lib = libraryDir();
   return [
     `You are the Library assistant inside Video Octopus, the creator's local video editing app. You look after the studio library: reusable pieces every project can use.`,
     `Your studio folder (your working directory): ${s.studio}. Library: ${lib}.`,
-    `Library folders: ${KINDS.map((k) => `${k.key}/ (${k.about})`).join(' ')} Each folder has an INDEX.md with one line per file: "- \`file\` — what it is · where it came from · licence · date". Keep it in step when you add a file.`,
-    `Sounds you find or make go to ${join(lib, NEW_SOUNDS)}/ with a line each in ${join(lib, NEW_SOUNDS, 'candidates.json')} ([{"file", "note", "source", "licence"}]); the creator approves them in Video Octopus, which moves them into sfx/ and indexes them. Don't move them yourself.`,
-    `Styles are <name>.md files in ${join(lib, 'styles')}/ (working files in styles/<name>/).`,
+    `Library folders: ${KINDS.map((k) => `${k.key}/ (${k.about})`).join(' ')} Non-sound folders have an INDEX.md with one line per file: "- \`file\` — what it is · where it came from · licence · date". Keep it in step when you add a file.`,
+    soundCatalogContext(),
+    `Sounds you find or make go to ${join(lib, NEW_SOUNDS)}/ with a line each in ${join(lib, NEW_SOUNDS, 'candidates.json')} ([{"file", "note", "source", "licence"}]); the app imports NEW candidate entries into SQLite and the creator approves them in Video Octopus. Approval keeps the audio path unchanged. Never edit existing catalog entries through JSON or SQL; use the catalog API. Do not approve sounds yourself.`,
+    `Existing legacy styles remain in ${join(lib, 'styles')}/ for older projects. New reference studies belong in Video formats; do not start another file-based style workflow.`,
     `The creator reads you in a narrow side panel: keep replies short and plain, and say what you're doing before long jobs.`,
   ].join('\n');
 }

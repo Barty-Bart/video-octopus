@@ -12,7 +12,10 @@ export function previewDatabaseRestore(studio,id,projects=[]){
   if(db.prepare('PRAGMA integrity_check').get().integrity_check!=='ok')throw Error('Backup integrity check failed.');
   if(db.prepare('PRAGMA user_version').get().user_version!==1)throw Error('Unsupported backup database version.');
   if(existsSync(safeFile(studio,'.studio/profile-storage.json'))&&(!db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='instruction_head'").get()||!db.prepare('SELECT version FROM instruction_head WHERE singleton=1').get()))throw Error('This backup predates profile/instruction storage. Choose a backup containing canonical profile data.');
-  const counts={};for(const table of ['profiles','formats','sessions','versions','skill_snapshots','brand_versions','instruction_versions','project_context'])counts[table]=db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table)?db.prepare(`SELECT count(*) n FROM ${table}`).get().n:0;
+  const soundSchema=db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='sound_catalog_schema'").get();
+  if(existsSync(safeFile(studio,'.studio/sound-storage.json'))&&!soundSchema)throw Error('This backup predates the sound catalog. Choose a backup containing sound metadata.');
+  if(soundSchema&&db.prepare('SELECT version FROM sound_catalog_schema WHERE singleton=1').get()?.version!==1)throw Error('Unsupported sound catalog backup version.');
+  const counts={};for(const table of ['profiles','formats','sessions','versions','skill_snapshots','brand_versions','instruction_versions','project_context','sound_assets','sound_history'])counts[table]=db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table)?db.prepare(`SELECT count(*) n FROM ${table}`).get().n:0;
   const has=(table,id)=>!id||(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table)&&db.prepare(`SELECT id FROM ${table} WHERE id=?`).get(id));
   const missingPins=projects.filter(p=>{
     if(!has('versions',p.versionId)||!has('brand_versions',p.brandVersion)||!has('instruction_versions',p.instructionVersion)||!has('skill_snapshots',p.skillSnapshot))return true;

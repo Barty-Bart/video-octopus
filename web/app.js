@@ -1,3 +1,4 @@
+import { TERMS } from './terms.js';
 // Video Octopus web app: home (projects + recorder takes) and the project screen
 // (Claude chat · canvas / Cut Editor / renders · steps and skills).
 
@@ -124,7 +125,7 @@ async function home(view = 'projects', route = null) { // route: { signal, alive
   $('#crumbs').innerHTML = '';
   clearBar();
   document.body.classList.add('in-home');
-  document.title = view === 'projects' ? 'Video Octopus' : `${{ dashboard: 'Dashboard', scheduled: 'Scheduled', recordings: 'Recordings', skills: 'Skills', library: 'Library', learning: 'Learning', storage: 'Storage' }[view]} · Video Octopus`;
+  document.title = view === 'projects' ? 'Video Octopus' : `${{ dashboard: 'Dashboard', scheduled: 'Scheduled', recordings: 'Recordings', skills: 'Skills', library: 'Library', learning: TERMS.formats, storage: 'Storage' }[view]} · Video Octopus`;
   await loadStatus();
   if (!STATUS.studioOk) return setupScreen();
   const [projects, takes, skills, counts] = await Promise.all([api('/api/projects'), api('/api/takes'), view === 'skills' ? api('/api/skills') : null, api('/api/app/counts').catch(() => ({}))]);
@@ -143,7 +144,7 @@ async function home(view = 'projects', route = null) { // route: { signal, alive
   const el = h(`<div class="home">
     <nav class="side-nav" aria-label="Video Octopus">
       <a class="brand" href="#/"><span class="logo" aria-hidden="true"><i></i></span>Video Octopus</a>
-      ${nav('projects', 'Projects', projects.length)}${nav('dashboard', 'Dashboard')}${nav('scheduled', 'Scheduled', counts.schedules || null)}${nav('recordings', 'Recordings', takes.length)}${nav('library', 'Library', counts.inbox || null, counts.inbox ? `${counts.inbox} waiting in the inbox` : '')}${nav('learning', 'Learning')}${nav('skills', 'Skills')}${nav('storage', 'Storage')}${homeNav(counts)}
+      ${nav('projects', 'Projects', projects.length)}${nav('dashboard', 'Dashboard')}${nav('scheduled', 'Scheduled', counts.schedules || null)}${nav('recordings', 'Recordings', takes.length)}${nav('library', 'Library', counts.inbox || null, counts.inbox ? `${counts.inbox} waiting in the inbox` : '')}${nav('learning', TERMS.formats)}${nav('skills', 'Skills')}${nav('storage', 'Storage')}${homeNav(counts)}
       <span class="gap"></span>${claudeCard}
     </nav>
     <div class="home-main" id="homeMain"></div>
@@ -376,7 +377,7 @@ async function newProjectDialog(pick, takes) {
     <input class="field big" id="pname" placeholder="e.g. Cut Editor walkthrough" autocomplete="off" aria-describedby="npErr">
     <div class="np-err" id="npErr" role="alert" hidden>Give the video a name first. It becomes the project's folder.</div>
     <div class="sub np-folder" id="npFolder"></div>
-    <div class="learn-toolbar"><label>Brand profile<select id="npProfile"><option value="">No brand</option>${profiles.profiles.map(p=>`<option value="${p.id}">${esc(p.name)}${p.brand?'':' · brand not saved'}</option>`).join('')}</select></label><label>Learned format<select id="npFormat"><option value="">No learned format</option></select></label></div>
+    <div class="learn-toolbar"><label>Brand profile<select id="npProfile"><option value="">No brand</option>${profiles.profiles.map(p=>`<option value="${p.id}">${esc(p.name)}${p.brand?'':' · brand not saved'}</option>`).join('')}</select></label><label>Approved video format<select id="npFormat"><option value="">No approved format</option></select></label></div>
     <p class="sub" id="npContext">Enabled core workflows and current studio instructions will be included.</p>
     <div class="fl" id="typeLabel">Type</div>
     <div class="types" role="radiogroup" aria-labelledby="typeLabel">${types.map(([k, v]) => `<button type="button" class="type" role="radio" data-k="${k}"><span class="ty-shape ${info[k]?.aspect === '9:16' ? 'tall' : 'wide'}${info[k]?.camera === false ? ' nocam' : ''}" aria-hidden="true"></span><b>${esc(v)}</b><small>${esc(info[k]?.hint || '')}</small>
@@ -396,7 +397,7 @@ async function newProjectDialog(pick, takes) {
   modal.replaceChildren(d); modal.hidden = false;
   let contextToken=0, selectedContext=null;
   const contextPreview=async()=>{const token=++contextToken;selectedContext=null;const f=profiles.formats.find(f=>f.id===$('#npFormat',d).value);try{const x=await api('/api/video-context',{profileId:$('#npProfile',d).value||null,formatId:f?.id||null,type});if(token!==contextToken)return;selectedContext=x;$('#npContext',d).textContent=`${x.profileName||'No brand'} · ${x.brandVersion?'approved brand · ':''}${x.versionId?'approved learned format · ':''}${x.skills.length} skills: ${x.skills.map(s=>s.name).join(', ')}. This setup is saved for this video.`;}catch(e){if(token===contextToken)$('#npContext',d).textContent=e.message;}};
-  const formatOptions=()=>{const fs=profiles.formats.filter(f=>f.profileId===$('#npProfile',d).value&&f.activeVersion);$('#npFormat',d).innerHTML='<option value="">No learned format</option>'+fs.map(f=>`<option value="${f.id}">${esc(f.name)}</option>`).join('');};
+  const formatOptions=()=>{const fs=profiles.formats.filter(f=>f.profileId===$('#npProfile',d).value&&f.activeVersion);$('#npFormat',d).innerHTML='<option value="">No approved format</option>'+fs.map(f=>`<option value="${f.id}">${esc(f.name)}</option>`).join('');};
   $('#npProfile',d).onchange=()=>{formatOptions();sync();};
   $('#npFormat',d).onchange=()=>{const f=profiles.formats.find(f=>f.id===$('#npFormat',d).value);if(f)type=f.type;sync();};
   const sync = () => {
@@ -856,7 +857,7 @@ async function openProject(id) {
       <section class="ex-go">
         <button class="btn dark wide big" id="exGo"${ready && !job && STATUS?.ffmpeg !== false ? '' : ' disabled'}>${ICON.export}${job ? 'Exporting…' : P.renders.length ? 'Export a new version' : 'Export'}</button>
         ${STATUS?.ffmpeg === false ? '<p class="sub">Exporting needs ffmpeg: <a href="#/setup">Setup → Tools</a> installs it.</p>' : ready ? '' : '<p class="sub">Add a recording first, and wait until its playback copies are ready.</p>'}
-        <button class="btn wide" id="exLearn" title="${esc(P.pipeline?.learn?.ask || '')}">Learn from this project</button>
+        <button class="btn wide" id="exLearn" title="${esc(P.pipeline?.learn?.ask || '')}">Study this project</button>
         <p class="sub ta-c">Saves reusable pieces and lessons into your library.</p></section>
     </div>`));
     exKinds.picker(box);

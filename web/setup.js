@@ -1,3 +1,4 @@
+import { TERMS } from './terms.js';
 // First-time setup checks local tools, then offers skippable database-backed brand profiles.
 import { $, esc, h, api, toast, confirmBox } from './ui.js';
 import { support, browserName } from './recorder.js';
@@ -21,7 +22,7 @@ export function studioCreator({ suggest, onCreated, button = 'Set up local stora
     <div class="su-pick"><input class="field mono" name="path" value="${esc(suggest?.shown || '~/Video Octopus')}" spellcheck="false" autocomplete="off" aria-label="Where your studio goes"><button class="btn small primary">${esc(button)}</button></div>
     <p class="su-warn" role="status" hidden></p>
     <p class="sub su-note" aria-live="polite"></p>
-    <p class="sub">SQLite stores your skills, versions and learning. Video Octopus manages media files alongside it. The suggested location is local application storage; you can choose another location. Existing studios can stay where they are.</p><p class="sub">Optional after setup: open <a href="#/learning">Learning</a> to teach a reusable format, or start a project straight away.</p>
+    <p class="sub">SQLite stores your skills, versions and learning. Video Octopus manages media files alongside it. The suggested location is local application storage; you can choose another location. Existing studios can stay where they are.</p><p class="sub">Optional after setup: open <a href="#/learning">${TERMS.formats}</a> to study examples for a reusable video format, or start a project straight away.</p>
   </form>`);
   const input = el.elements.path, warn = $('.su-warn', el), note = $('.su-note', el);
   const show = (info) => {

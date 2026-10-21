@@ -10,9 +10,9 @@ import { readPost, savePost, postBrief, postSummary, isShort } from './postkit.m
 import { readCues, cueOp, findBrief, cuePath, underVoiceDb, cueMix } from './sound.mjs';
 import { KINDS, NEW_SOUNDS, libraryDir, libPath, listLibrary, listStyles, stylePath, saveToLibrary, saveBuffer, upload,
   approveSound, discardSound, freeSounds, freePath, addFreeSound, studioVideos, newStyle, styleBrief, libraryChat,
-  libraryEvents, saveLibrarySettings, candidates } from './library.mjs';
+  libraryEvents, saveLibrarySettings, candidates, soundCatalog, soundCatalogContext, editSound } from './library.mjs';
 
-const POSTS = new Set(['/settings', '/chat', '/answer', '/stop', '/style-new', '/style-make', '/sound-approve', '/sound-discard', '/sound-free-add', '/sound-find', '/reveal']);
+const POSTS = new Set(['/settings', '/chat', '/answer', '/stop', '/style-new', '/style-make', '/sound-approve', '/sound-discard', '/sound-free-add', '/sound-find', '/sound-edit', '/reveal']);
 export const KIT_ACTIONS = new Set(['/post', '/post-write', '/sound', '/sfx', '/sound-find', '/style', '/save-to-library']);
 
 // Extra lines for the project chat's system prompt.
@@ -21,7 +21,8 @@ export function kitContext(dir, meta) {
   const style = meta?.style && stylePath(meta.style);
   return [
     style && existsSync(style) ? `This project's style is "${meta.style}": ${style}. Read it before planning, editing or writing for this project and follow it (the studio's own notes win where they differ).` : '',
-    `The studio library is ${lib}: ${KINDS.map((k) => `${k.key}/`).join(', ')}, each with an INDEX.md (one line per file). Approved sound effects are in sfx/; sounds you find or make wait in ${NEW_SOUNDS}/ (listed in candidates.json) until the creator approves them in Video Octopus.`,
+    `The studio library is ${lib}. Media paths stay in place.`,
+    soundCatalogContext(),
     `Sound cues: work/sfx.json {v: 1, cues: [{id, t (seconds on the canvas take, before the cut), file (a path in the library such as sfx/whoosh.wav, or in the project with from "project"), from "library"|"project", gain (dB on top of the default level, which puts the sound's loudest part about ${underVoiceDb()} dB under the voice: Settings → Sound, the level for your own renders too), label, by? ("hand" = the creator placed it in Video Octopus)}]}. Video Octopus shows them on the timeline and mixes them under the voice in its Export. A cue you add inside a block you build (the intro) goes with that block's render: Export → Video puts your render in for the block and mixes the cue only then, so list your render's transition sounds here at the moments they play.`,
     `The post kit is work/post.json (Video Octopus's Post tab; post.md follows it): {word, youtube {title, description, comment}, instagram {caption}, tiktok {caption}, dm {reply, tool}, links [{label, url, checked}], facts [...], notes, edited {field: time}}. Never invent links or prices, and keep fields the creator edited.`,
   ].filter(Boolean);
@@ -48,7 +49,7 @@ export async function kitRoute(action, req, res, url, ctx) {
       // (Settings → Sound's level, measured against the take's voice like the export: sound.mjs cueMix).
       const cues = readCues(dir), src = canvasSources(dir), voice = [src.cam, src.screen, src.audio].find((f) => f && probe(dir, f)?.audio);
       const mix = cueMix(dir, cues, voice ? join(dir, 'source', voice) : null);
-      return send(res, 200, { cues: cues.map((c, i) => ({ ...c, missing: !existsSync(cuePath(dir, c) || ''), mix: mix[i] })), under: underVoiceDb(), sounds: lib.kinds.find((k) => k.key === 'sfx').items, candidates: lib.candidates,
+      return send(res, 200, { cues: cues.map((c, i) => ({ ...c, missing: !existsSync(cuePath(dir, c) || ''), mix: mix[i] })), under: underVoiceDb(), sounds: lib.kinds.find((k) => k.key === 'sfx').items.filter(x=>!x.missing), candidates: lib.candidates,
         free: Boolean(lib.settings.sfxFreeDir), library: lib.dir });
     }
     if (req.method !== 'POST') return send(res, 405, { error: 'POST only' });
@@ -105,6 +106,7 @@ async function libraryRouteInner(req, res, url, { send, body, serveFile }) {
       if (p === '/free-file') return serveFile(req, res, freePath(q('f')));
       if (p === '/videos') return send(res, 200, studioVideos(q('q')).map(({ rel, at, bytes }) => ({ rel, at, bytes })));
       if (p === '/styles') return send(res, 200, listStyles());
+      if (p === '/sound-catalog') return send(res, 200, soundCatalog());
       if (p === '/candidates') return send(res, 200, candidates());
       return false;
     }
@@ -125,8 +127,9 @@ async function libraryRouteInner(req, res, url, { send, body, serveFile }) {
       await c.send(text, { brief: { name: 'Make a style' } });
       return send(res, 200, { ok: true });
     }
-    if (p === '/sound-approve') return send(res, 200, approveSound(String(b.file || ''), b.note));
-    if (p === '/sound-discard') return send(res, 200, discardSound(String(b.file || '')));
+    if (p === '/sound-edit') return send(res, 200, editSound(String(b.file||''),b.revision,b));
+    if (p === '/sound-approve') return send(res, 200, approveSound(String(b.file || ''), b.note, b.revision));
+    if (p === '/sound-discard') return send(res, 200, discardSound(String(b.file || ''), b.revision));
     if (p === '/sound-free-add') return send(res, 200, addFreeSound(String(b.file || ''), b.note));
     if (p === '/sound-find') { await c.send(findBrief({ query: b.query }), { brief: { name: 'Find a sound' } }); return send(res, 200, { ok: true }); }
     if (p === '/reveal') {

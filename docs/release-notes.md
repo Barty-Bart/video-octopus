@@ -1,3 +1,24 @@
+# v0.1.0-beta.5
+
+- Video formats replaces the Learning label. Study examples opens a study;
+  its reviewed result is an Approved guide. Existing URLs and database IDs stay valid.
+- Library sounds now use a SQLite catalog for descriptions, source/licence notes,
+  tags, revisions and approval history. Edit details and search tags in Library.
+- Migration backs up the database and legacy metadata before import. Audio paths
+  and existing project cues stay intact. Approval keeps candidate files in place;
+  discarded candidates remain recoverable on disk and in catalog history.
+- Agents receive exact audio paths through the catalog API/CLI and generated
+  snapshot. Legacy styles remain usable by old projects; new studies go to Video
+  formats, with an option to reuse old style notes as examples.
+
+See [storage and update rules](storage-updates.md) for backup scope and recovery.
+Verification: 180 isolated tests, 19 disposable runtime groups and browser checks
+for format studies, metadata editing/search, audio serving and legacy note reuse.
+Synthetic media/fake agents only; real provider search and listening quality are
+not proven by these checks. Audio needs its own backup alongside SQLite.
+
+---
+
 # v0.1.0-beta.4
 
 - Learn this format now opens an examples-first workspace immediately. Drop

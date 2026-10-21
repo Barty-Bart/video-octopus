@@ -1,3 +1,4 @@
+import { TERMS } from './terms.js';
 // The smarter onboarding's pieces, shared by Setup (#/setup) and Settings → Brand: the "About you" questions, the
 // brand kit (uploads into <library>/brand/ with thumbnails and remove, the logo's colours as swatches, the fonts),
 // the motion-graphics skills picker (the recommended GitHub repo, or any public repo from the Skills page) and the
@@ -320,10 +321,10 @@ export function brandSettings({ formats, ask }) {
   act.append(saved, save);
   const kit = brandKit({ onChange: (v) => drawNotes(v) });
   wrap.append(
-    sec('Brand library and Learning', 'Keep shared identity here. Learn pacing, captions and visual rules for a particular format in Learning. Approved formats do not overwrite these files or switch brand kits automatically.', h('<a class="btn small" href="#/learning">Open Learning</a>')),
+    sec('Brand library and video formats', 'Keep shared identity here. Learn pacing, captions and visual rules for a particular format in Video formats. Approved formats do not overwrite these files or switch brand kits automatically.', h(`<a class="btn small" href="#/learning">Open ${TERMS.formats}</a>`)),
     sec('About you', 'Your answers from Setup. They go into BRAND.md, which every chat in your studio reads.', about.el, act),
     sec('Brand files', 'Logos, photos of you, product images, fonts and examples you like, kept in your studio’s library (brand/).', kit.el),
-    sec('Shared style notes', 'Optional studio-wide notes. For versioned, reviewed learning from references, use Learning above.', notes),
+    sec('Shared style notes', 'Optional studio-wide notes. For versioned, reviewed learning from references, use Video formats above.', notes),
     sec('Motion-graphics skills', 'Skills Claude uses to build your graphics. More from any GitHub repo: Home → Skills → Add skills from GitHub.', skillsPicker({ compact: true }).el));
   api('/api/app/profile').then((p) => about.fill(p || {})).catch(() => {});
   api('/api/app/brand').then(drawNotes).catch(() => drawNotes(null));

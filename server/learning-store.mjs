@@ -231,7 +231,7 @@ export class LearningStore {
     try {
       for (const v of this.list('versions')) { this.version(v.id); const folder=join(dest,'versions',v.id); mkdirSync(folder,{recursive:true}); const copy=(src,out)=>{ for(const e of readdirSync(src,{withFileTypes:true})) { const p=safeFile(src,e.name),q=join(out,e.name); if(e.isDirectory()){mkdirSync(q,{recursive:true});copy(p,q);} else if(e.isFile())copyFileSync(p,q); else fail('Unsupported backup file.'); } }; copy(this.versionDir(v.id),folder); }
       this.db.exec(`VACUUM INTO '${join(dest,'studio.sqlite').replaceAll("'","''")}'`);
-      atomic(join(dest,'manifest.json'),json({schema:1,created:now(),profiles:this.list('profiles').length,versions:this.list('versions').length}));
+      atomic(join(dest,'manifest.json'),json({schema:1,created:now(),profiles:this.list('profiles').length,versions:this.list('versions').length,sounds:this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='sound_assets'").get()?this.db.prepare('SELECT count(*) n FROM sound_assets').get().n:0}));
       return { id:key, path:dest };
     } catch(e){rmSync(dest,{recursive:true,force:true});throw e;}
   }

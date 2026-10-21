@@ -29,6 +29,7 @@ const HELP = `octopus: act on the running Video Octopus (${BASE})
   octopus schedules run|stop|on|off|delete <id>
   octopus schedules runs <id>              the latest runs and their summaries
   octopus library [section]                what's in the library (or one section)
+  octopus library sounds                   SQLite sound catalog, status and exact audio paths
   octopus library inbox                    pieces waiting in the Library inbox
   octopus library accept <piece> --kind <section> [--note "..."]
   octopus library aside <piece>            take a piece out of the inbox (kept in inbox/.aside)
@@ -145,6 +146,7 @@ const cmds = {
     return out(r, () => ({ run: 'Running now (or queued behind another run).', stop: 'Stopping.', on: 'On.', off: 'Off.', delete: 'Deleted.' })[verb]);
   },
   async library() {
+    if(verb==='sounds'){const r=await api('/api/library/sound-catalog');return out(r,()=>JSON.stringify(r,null,2));}
     if (verb === 'inbox') {
       const r = await api('/api/library/inbox');
       return out(r, () => (r.items.length ? r.items.map((i) => `${i.id}\n  ${i.summary || i.files.join(', ')}\n  suggested section: ${i.kind}${i.from ? ` · from ${i.from}` : ''}`).join('\n\n') : 'The inbox is empty.'));

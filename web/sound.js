@@ -101,7 +101,7 @@ export function makeSound({ host, id, getP, media, history }) {
       <div class="sd-bar"><div class="seg" role="tablist"><button data-t="lib">Library <span class="count" id="sdN1"></span></button><button data-t="wait">Waiting for you <span class="count" id="sdN2"></span></button>${data.free ? '<button data-t="free">Free folder</button>' : ''}</div>
         <input class="field small" type="search" id="sdQ" placeholder="Filter" autocomplete="off"></div>
       <div class="snd-rows sd-list" id="sdList"></div>
-      <form class="find-row" id="sdFind"><input class="field" placeholder="Find a sound: a soft whoosh into the split screen…" autocomplete="off"><button class="btn dark">Find with Claude</button></form>
+      <form class="find-row" id="sdFind"><input class="field" placeholder="Find a sound: a soft whoosh into the split screen…" autocomplete="off"><button class="btn dark">Find or make a sound</button></form>
       <p class="sub" id="sdFindNote">Claude makes it in code, searches Epidemic Sound if it's connected, or picks from your free sound folder. New sounds wait here until you approve them.</p></div>`);
     modal.replaceChildren(d); modal.hidden = false;
     const close = () => { modal.hidden = true; dlg = null; clearInterval(poll); stopPreview(); document.removeEventListener('keydown', onEsc); };

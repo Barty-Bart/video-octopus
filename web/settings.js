@@ -1,3 +1,4 @@
+import { TERMS } from './terms.js';
 // Settings (#/settings/<section>), the Video Octopus assistant (a side panel here and on Setup, a drawer on Home) and
 // the routing for the app-level pages. Design brief 2, §5–6: one section per row in a left list; API keys show
 // as "•••• set ✓ · Replace · Test · Remove" and never come back to the page.
@@ -90,7 +91,7 @@ const ABOUT = {
   sound: 'Where sound effects come from, and how they sit under your voice.',
   folders: 'The studio is the home for your local database, projects and media. Skills are managed in the app; you do not need to arrange their folders.',
   appearance: 'How Video Octopus looks. Your videos keep their own look, under Look.',
-  look: 'Starting background and framing for your videos. Brand profiles provide colours and fonts; Learning provides approved format guidance. Existing edits remain under your control.',
+  look: 'Starting background and framing for your videos. Brand profiles provide colours and fonts; Video formats provides approved format guidance. Existing edits remain under your control.',
   brand: 'Create a profile, research its website, review the findings and save its brand. New video loads the selected profile’s approved brand and format.',
   instructions: 'Canonical studio prompts and agent instructions, saved in local SQLite with version history.',
   updates: 'New versions of Video Octopus, the starter files in your studio, and opening Video Octopus when you log in.',
@@ -628,7 +629,7 @@ const DRAW = {
     drawColors();
     return frag(
       group('Video defaults',
-        row('Learned formats', 'For pacing, captions, storytelling and format-specific visual rules, use Learning. Review the scene plan before applying those rules to a video.', h('<a class="btn small" href="#/learning">Open Learning</a>')),
+        row(TERMS.formats, 'For pacing, captions, storytelling and format-specific visual rules, use Video formats. Review the scene plan before applying those rules to a video.', h(`<a class="btn small" href="#/learning">Open ${TERMS.formats}</a>`)),
         row('Background', 'Behind the picture in the picture-in-picture, Boxed and Split layouts.', sw),
         row('Picture-in-picture frame', '', seg([['rounded', 'Rounded'], ['circle', 'Circle'], ['frame', 'Whole frame']], l.pip, (x) => save('look', { pip: x }).then(redraw)))),
       group('Profile brand',

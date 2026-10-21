@@ -9,7 +9,7 @@ import { join, basename, extname } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { readJSON, writeJSON, inside, mtime, settings, studioTool, expandHome } from './util.mjs';
-import { libraryDir, NEW_SOUNDS, AUDIO } from './library.mjs';
+import { libraryDir, NEW_SOUNDS, AUDIO, soundCatalogContext } from './library.mjs';
 
 const CUES = 'work/sfx.json';
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -191,13 +191,14 @@ export function findBrief({ query, at, project }) {
   if (!q) throw new Error('Say what sound you need.');
   return [
     `Find a sound: "${q}"${project ? ` for this project${at != null ? ` (I'm placing it at ${at.toFixed(1)} s on the take)` : ''}` : ''}.`,
-    `First check ${join(lib, 'sfx', 'INDEX.md')}: if a sound in the library already fits, tell me its name instead of adding another.`,
+    soundCatalogContext(),
+    `First check the sound catalog: if an approved, non-missing sound already fits, tell me its name and file instead of adding another.`,
     `Otherwise find 2 to 4 options, in this order, and stop when you have good ones:`,
     `1. Make it in code when it's a whoosh, riser, swell, thud, click or pop${script ? `: use the studio's own sound design script ${script} (vary its parameters for this request; the studio's notes say which designed sounds were approved)` : ' (Python with numpy/scipy: shaped noise through a swept filter, a soft envelope, a little room)'}. Proper soft swooshes, never sharp synthetic "slash" sounds.`,
     `2. Epidemic Sound: if you have its tools (search and download sound effects), search there and download the best matches. Note the plan's licence.`,
     free ? `3. The free sound folder ${free}: pick files whose names fit (copy them, never move them) and note their licence (the folder's licence file).` : `3. No free sound folder is set in Video Octopus; skip it.`,
-    `Put each option as a WAV or MP3 with a clear name in ${join(lib, NEW_SOUNDS)}/ and list them in ${join(lib, NEW_SOUNDS, 'candidates.json')} as [{"file": "<name>", "note": "<what it is, length>", "source": "made in code" | "Epidemic Sound" | "<folder>", "licence": "<licence>"}] (keep entries already there). Peak around -1 dBFS; Video Octopus sets the level under the voice.`,
+    `Put each option as a WAV or MP3 with a clear unused filename in ${join(lib, NEW_SOUNDS)}/ (never overwrite an existing audio file) and list them in ${join(lib, NEW_SOUNDS, 'candidates.json')} as [{"file": "<name>", "note": "<what it is, length>", "source": "made in code" | "Epidemic Sound" | "<folder>", "licence": "<licence>"}] (keep entries already there). Peak around -1 dBFS; Video Octopus sets the level under the voice.`,
     `Never write into other projects' folders: if a script writes files next to itself, run a copy of it from a temporary folder.`,
-    `Don't add them to sfx/ or INDEX.md yourself, and don't place them: I listen in Video Octopus and approve the ones I want. Reply in one or two lines.`,
+    `Don't mark sounds approved or place them: I listen in Video Octopus and approve the ones I want. Reply in one or two lines.`,
   ].join('\n');
 }

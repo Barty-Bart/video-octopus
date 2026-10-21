@@ -1,4 +1,4 @@
-# Learning and local SQLite storage
+# Video formats and local SQLite storage
 
 Introduced in v0.1.0-beta.2. It uses Node's built-in SQLite:
 Node 22.13+ on the 22.x line or 23.4+ (Node 24 recommended). No database server,
@@ -59,12 +59,12 @@ No updater automatically merges Markdown. An external edit cannot silently repla
 canonical content during startup. A missing/corrupt database is not reconstructed
 from generated state once the studio has migrated; use a database backup.
 
-## Learning workflow
+## Studying examples
 
-1. Choose a channel/brand/series profile and a format in Learning. Profiles are
+1. Choose a channel/brand/series profile and a format in Video formats. Profiles are
    shared with Brand settings and New video. Each profile's formats learn
    separately, even if two channels both have a format called Shorts.
-2. Click **Learn this format** to open an examples-first workspace. Drop videos,
+2. Click **Study examples** to open an examples-first workspace. Drop videos,
    images or other supported files, paste URLs (one per line) and click Add links,
    or add written observations. Guidance is optional. New sessions automatically
    discover supported patterns across scripting, pacing, visuals, captions, sound
@@ -78,7 +78,7 @@ from generated state once the studio has migrated; use a database backup.
    minutes per video and 2,400 frames per session. Coverage receipts identify
    unexamined spans; resumptions reuse completed references. Nothing downloads or
    selects a model. Links and transcription are handled by the chosen agent/tools.
-4. Click **Learn from these examples** with the configured Claude Code, Codex or Pi adapter. A separate
+4. Click **Study these examples** with the configured Claude Code, Codex or Pi adapter. A separate
    chat uses manual permissions and a session working directory. References are
    evidence, not instructions. This is **not an OS filesystem sandbox**: permissions
    and review still matter. The agent must report inaccessible sources and gaps;
@@ -135,7 +135,7 @@ copy a format to reuse its complete approved package. Source media stay in place
 
 **Brand profiles** owns identity, audience, voice, colours, fonts, guidance and uploaded
 brand assets. A profile can have several learned formats. Each format can select
-additional enabled personal skills in Learning → Format skills; enabled compatible
+additional enabled personal skills in Video formats → Format skills; enabled compatible
 core skills are included automatically. The approved learned package is selected
 separately and supplies its rules, workflow and reusable assets.
 
@@ -200,3 +200,7 @@ agent executables and blocked remote Node networking. Set `OCTOPUS_TEST_FFMPEG` 
 `OCTOPUS_TEST_AGENT=1` also exercises learning, brand research and project context through the actual adapter with a synthetic agent that writes proposals; the copied credential module is stubbed.
 `--serve` leaves that fixture running for manual browser checks; it never selects
 a real creator studio. Set `OCTOPUS_TEST_PORT` if the default fixture port is occupied.
+
+Sound metadata now shares SQLite; audio stays in its original library location.
+See [storage/update contracts](storage-updates.md) for migration backups, agent
+access, legacy style reuse and stable display naming.
