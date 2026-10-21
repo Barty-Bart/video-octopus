@@ -16,7 +16,7 @@ A local video editor with an AI assistant. Record or import footage, edit from t
 | Exports | MP4; WAV, M4A/AAC and MP3; transcript text/Markdown; SRT/VTT and burned captions; layer exports and timeline XML. Tested platform coverage and limitations are listed below. |
 | Project formats | YouTube tutorial, faceless explainer, Short and product explainer. |
 
-> **v0.1.0-beta.3 — source update.** Learning, SQLite-backed skills and instructions, brand profiles, and automatic New video context are included. Read the [release notes](docs/release-notes.md) and [verification limits](docs/managed-skills-verification.md) before relying on an untested workflow.
+> **v0.1.0-beta.4 — source update.** Learning, SQLite-backed skills and instructions, brand profiles, and automatic New video context are included. Read the [release notes](docs/release-notes.md) and [verification limits](docs/managed-skills-verification.md) before relying on an untested workflow.
 
 ### Six bundled starter skills
 
@@ -214,6 +214,6 @@ No top-level application licence has been selected. [Asset provenance](docs/asse
 
 Automatic publishing, a managed cloud rendering service and a complete packaged installer are not shipped features.
 
-## Learning and local skill storage (unreleased)
+## Learning and local skill storage
 
 Profiles now have versioned brands and optional website research with review before saving. Shared instructions live in SQLite. New video automatically loads the selected brand, approved format and relevant skills. Profiles and formats can learn from references, with evidence-backed proposals for your review. Approved versions stay pinned to their projects. Skills now live in a local SQLite database with Core, Customized core and Personal views, in-app editing, retained history and recovery. Agents receive generated skill files; video and audio stay as ordinary files. New studios default to local application storage, and existing studios stay in place. See [learning and storage](docs/learning-and-storage.md) for the workflow, migration and backup boundaries.

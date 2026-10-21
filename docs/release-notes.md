@@ -1,3 +1,23 @@
+# v0.1.0-beta.4
+
+- Learn this format now opens an examples-first workspace immediately. Drop
+  videos/images or other supported files, add several URLs, or add written examples.
+- New sessions discover relevant patterns automatically. Guidance is optional;
+  study name and inspection depth are tucked into Study settings. Existing
+  sessions retain their selected focus.
+- Show the channel/brand/series and format together, so two channels can each
+  have a Shorts format with different learning histories and styles.
+- Preserve guidance and successful uploads when another file in a batch fails.
+  Study settings are stored in SQLite with revision and running-state checks.
+
+Verified on macOS: 172 isolated tests, 16 fake-agent runtime groups, and browser
+checks covering file drops, bulk links, partial failures and Learn → review →
+approve. Real provider access and the quality of learned conclusions still need
+creator testing. This discovers patterns in supplied examples; it does not
+search the web automatically for reference videos.
+
+---
+
 # v0.1.0-beta.3
 
 - Clear the Updates “New” badge when no app update is available. Skill review

@@ -11,6 +11,7 @@ const json = (v) => JSON.stringify(v);
 const parse = (r) => r && JSON.parse(r.data);
 const fail = (s) => { throw new Error(s); };
 const text = (s, max = 200) => typeof s === 'string' && s.trim() && s.length <= max ? s.trim() : fail(`Enter text between 1 and ${max} characters.`);
+const focusAreas = ['scripting','pacing','visuals','captions','sound','knowledge'];
 export const learningId = (s) => typeof s === 'string' && /^[a-f0-9-]{36}$/.test(s) ? s : fail('Invalid learning ID.');
 export function safeFile(root, rel) {
   const path = resolve(root, rel), r = relative(resolve(root), path);
@@ -65,9 +66,11 @@ export class LearningStore {
   }
   session(formatId, { name, focus, direction = '', study = 'overview', project = null } = {}) {
     const f = this.get('formats', formatId);
-    if (!Array.isArray(focus) || !focus.length || focus.some(x => !['scripting','pacing','visuals','captions','sound','knowledge'].includes(x))) fail('Choose at least one learning focus.');
+    const autoFocus = focus === undefined;
+    if (autoFocus) focus = focusAreas;
+    if (!Array.isArray(focus) || !focus.length || focus.some(x => !focusAreas.includes(x))) fail('Choose at least one learning focus.');
     if (!['overview','detailed'].includes(study)) fail('Unknown study mode.');
-    const s = { id: id(), formatId, name: text(name), focus: [...new Set(focus)], direction: String(direction).slice(0, 12000), study, project, baseVersion: f.activeVersion, revision: 1, status: 'draft', references: [], created: now() };
+    const s = { id: id(), formatId, name: text(name), autoFocus, focus: [...new Set(focus)], direction: String(direction).slice(0, 12000), study, project, baseVersion: f.activeVersion, revision: 1, status: 'draft', references: [], created: now() };
     const folder = this.sessionDir(s.id); mkdirSync(join(folder, 'work'), { recursive: true }); mkdirSync(join(folder, 'intake'), { recursive: true });
     return this.put('sessions', s, formatId);
   }
@@ -75,6 +78,16 @@ export class LearningStore {
   versionDir(key) { return safeFile(this.root, `.studio/learning/versions/${learningId(key)}`); }
   change(key, rev, fn) {
     return this.tx(() => { const s = this.get('sessions', key); if (s.revision !== rev) fail('This session changed. Reload before saving.'); if (s.status === 'approved') fail('Approved sessions are retained. Start another learning session.'); fn(s); s.revision++; s.updated = now(); return this.update('sessions', s); });
+  }
+  configure(key, rev, { name, direction, study } = {}) {
+    return this.change(key, rev, s => {
+      if (s.status === 'running') fail('Stop the study before changing its settings.');
+      if (study !== undefined && !['overview','detailed'].includes(study)) fail('Unknown study mode.');
+      if (direction !== undefined && (typeof direction !== 'string' || direction.length > 12000)) fail('Guidance must be text up to 12000 characters.');
+      if (name !== undefined) s.name = text(name);
+      if (direction !== undefined) s.direction = direction;
+      if (study !== undefined) s.study = study;
+    });
   }
   reference(key, rev, input) {
     return this.change(key, rev, s => {

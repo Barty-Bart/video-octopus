@@ -3,3 +3,5 @@
 .learn-page .skill-explanation{font-size:13px;line-height:1.5;margin:4px 0 12px;flex:1;overflow-wrap:anywhere}
 
 .learn-explainer{padding:20px 24px;border:1px solid var(--line,#ddd);border-radius:12px;background:var(--paper,#fff);line-height:1.6}.learn-explainer h2{font-size:18px;margin:0 0 10px}.learn-explainer p{margin:8px 0}.learn-explainer details{margin-bottom:0}
+
+.learn-context{font-size:13px;font-weight:600;overflow-wrap:anywhere}.learn-intake{display:grid;gap:14px;margin:20px 0}.learn-drop{border:2px dashed var(--line,#ddd);border-radius:12px;padding:28px;text-align:center;background:var(--paper,#fff)}.learn-drop.dragging{outline:3px solid currentColor;outline-offset:2px}.learn-drop p{margin:10px 0 16px}#learnIntakeStatus:empty{display:none}#learnDetail>label{margin:18px 0}#learnDetail details label{margin:12px 0}

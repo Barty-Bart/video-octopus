@@ -75,3 +75,29 @@ test('format copy requires explicit review and a current approved source without
  assert.throws(()=>st.copyFormat(f.id,{profileId:target.id,name:'Copy',expected:newer.id,reviewed:true}),/changed/);
  assert.equal(st.list('formats').length,1);assert.equal(st.list('versions').length,2);
 });
+
+test('examples-first sessions discover all supported areas while explicit and legacy focus stay scoped',t=>{
+ const {store:st,f}=fixture(t);
+ const automatic=st.session(f.id,{name:'Examples first'});
+ assert.equal(automatic.autoFocus,true);
+ assert.deepEqual(automatic.focus,['scripting','pacing','visuals','captions','sound','knowledge']);
+ const manual=st.session(f.id,{name:'Only visuals',focus:['visuals']});
+ assert.equal(manual.autoFocus,false);assert.deepEqual(manual.focus,['visuals']);
+ assert.throws(()=>st.session(f.id,{name:'Invalid',focus:[]}),/focus/);
+ assert.throws(()=>st.session(f.id,{name:'Invalid',focus:['invented']}),/focus/);
+});
+test('study settings preserve references and scope, reject stale, running and approved writes',t=>{
+ const {store:st,f}=fixture(t);let d=draft(st,f);
+ const changed=st.configure(d.s.id,d.s.revision,{direction:'Watch the opening',study:'detailed',name:'Opening study'});
+ assert.deepEqual(changed.references,d.s.references);assert.deepEqual(changed.focus,d.s.focus);
+ assert.equal(changed.direction,'Watch the opening');assert.equal(changed.study,'detailed');assert.equal(changed.name,'Opening study');
+ assert.throws(()=>st.configure(changed.id,d.s.revision,{direction:'stale'}),/changed/);
+ assert.throws(()=>st.configure(changed.id,changed.revision,{study:'unbounded'}),/mode/);
+ assert.equal(st.get('sessions',changed.id).revision,changed.revision);
+ assert.throws(()=>st.configure(changed.id,changed.revision,{direction:'x'.repeat(12001)}),/12000/);
+ const running=st.change(changed.id,changed.revision,s=>s.status='running');
+ assert.throws(()=>st.configure(running.id,running.revision,{direction:'during run'}),/Stop/);
+ st.change(running.id,running.revision,s=>s.status='review');approve(st,d);
+ const approved=st.get('sessions',d.s.id);
+ assert.throws(()=>st.configure(approved.id,approved.revision,{name:'After approval'}),/retained/);
+});

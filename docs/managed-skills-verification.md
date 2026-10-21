@@ -1,5 +1,7 @@
 # SQLite and learning checks
 
+21 October 2026 examples-first follow-up (v0.1.0-beta.4): **172 tests** and **16 disposable runtime groups** passed. Browser checks covered direct study creation, profile/format context, drag-and-drop image/text intake, bulk URLs, invalid input retention, partial-upload success, optional guidance, automatic scope, saving after an agent turn, review/approval and mobile overflow. The fake agent validates automatic-study context but does not prove real media interpretation or remote URL access. Real studios and providers were not used.
+
 21 October 2026 follow-up (v0.1.0-beta.3): **170 tests** and **16 disposable runtime groups** passed. Browser checks covered profile/format placeholders and presets, reviewed format copying, and update-badge add/remove/no-duplicate/stale-response behavior. Copy tests verify destination-brand isolation, asset integrity, independent version history and original project pins. No real providers or creator studios used.
 
 21 October 2026 publishing check: **167 tests** and **14 disposable runtime groups** passed on macOS with Node 24.21.0, including fake-agent profile research, context pinning and synthetic frame extraction. Real provider quality and native Windows/Linux SQLite migration remain unverified.

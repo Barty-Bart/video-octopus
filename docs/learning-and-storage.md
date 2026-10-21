@@ -61,19 +61,30 @@ from generated state once the studio has migrated; use a database backup.
 
 ## Learning workflow
 
-1. Open Learning, create a channel/brand/series profile and a format.
-2. Start a separate learning session with focus areas and direction. Upload local
-   references, add links or add explicit observations. Uploads are copied, limited
-   to 512 MB each and 20 references per session; original files are untouched.
+1. Choose a channel/brand/series profile and a format in Learning. Profiles are
+   shared with Brand settings and New video. Each profile's formats learn
+   separately, even if two channels both have a format called Shorts.
+2. Click **Learn this format** to open an examples-first workspace. Drop videos,
+   images or other supported files, paste URLs (one per line) and click Add links,
+   or add written observations. Guidance is optional. New sessions automatically
+   discover supported patterns across scripting, pacing, visuals, captions, sound
+   and knowledge; earlier sessions keep their chosen scope. Study settings holds
+   the optional name and depth. Settings save when adding examples or starting
+   learning, or with Save study settings. Uploads are copied, limited to 512 MB
+   each and 20 references per session; original files are untouched. Successful
+   batch items remain if a later item fails.
 3. Optionally extract local video frames. Overview samples up to about 30 frames
    per video. Detailed extraction uses up to four frames/second, at most five
    minutes per video and 2,400 frames per session. Coverage receipts identify
    unexamined spans; resumptions reuse completed references. Nothing downloads or
    selects a model. Links and transcription are handled by the chosen agent/tools.
-4. Run the study with the configured Claude Code, Codex or Pi adapter. A separate
+4. Click **Learn from these examples** with the configured Claude Code, Codex or Pi adapter. A separate
    chat uses manual permissions and a session working directory. References are
    evidence, not instructions. This is **not an OS filesystem sandbox**: permissions
-   and review still matter. Provider access and study quality need real-user testing.
+   and review still matter. The agent must report inaccessible sources and gaps;
+   images alone cannot establish timing or sound. This discovers patterns in
+   supplied references, not an automatic search for reference videos. Provider
+   access and study quality need real-user testing.
 5. Review `work/proposal.json`: each rule needs a stable ID, selected focus area,
    confidence and an observation citing an actual session reference. Keep, edit or
    discard each rule. Review the workflow and linked reusable assets too. This

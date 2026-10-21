@@ -24,6 +24,7 @@ if(process.env.OCTOPUS_TEST_AGENT==='1'){
   const isBrand=context.includes('brand onboarding research'),isLearning=context.includes('This is a learning session');
   if((isBrand||isLearning)&&mode!=='manual')throw Error('Study permission mode missing');
   const session=isLearning?JSON.parse(context.match(/^Session: (.+)$/m)[1]):null,referenceId=session?.references[0]?.id;
+  if(session?.autoFocus&&(!context.includes('Discover the relevant patterns yourself')||!context.includes('still images do not demonstrate timing, motion or sound')))throw Error('Automatic study guidance missing');
   writeFileSync(join(process.cwd(),'work','adapter-receipt.json'),JSON.stringify({mode,session:session?.id,contextContainsFormat:context.includes('Practical explainer'),contextContainsReference:referenceId?context.includes(referenceId):false,isBrand,hasSharedPrivate:context.includes('SHARED_NOTES_RESEARCH_SENTINEL'),projectPinned:context.includes('Project context is pinned in SQLite'),hasAlpha:context.includes('Alpha research identity'),hasLegacy:context.includes('SYNTHETIC_CONTEXT_ISOLATION_SENTINEL')}));
   const out=x=>console.log(JSON.stringify(x));
   for await(const line of createInterface({input:process.stdin})){let x;try{x=JSON.parse(line);}catch{continue;}if(x.type!=='user')continue;
@@ -63,11 +64,15 @@ try{
  const preview=await call(`/backups/${backup.id}/preview`,{});assert.equal(preview.missingPins.length,0);const restored=await call(`/backups/${backup.id}/restore`,{token:preview.token});assert(restored.ok);assert(!restored.warning,restored.warning);assert.equal((await call('/skills')).storage,'sqlite');
  const rejected=await fetch(url+'/api/learning/profiles',{method:'POST',headers:{'Content-Type':'application/json','Origin':'https://example.invalid'},body:JSON.stringify({name:'blocked'})});assert.equal(rejected.status,403);
  if(process.env.OCTOPUS_TEST_AGENT==='1'){
-  let agentSession=await call('/sessions',{formatId:f.id,name:'Fake agent lifecycle',focus:['scripting'],study:'overview'});agentSession=await call(`/sessions/${agentSession.id}/references`,{kind:'note',name:'Synthetic evidence',note:'00:02: the result appears.',revision:agentSession.revision});
+  let agentSession=await call('/sessions',{formatId:f.id,name:'Fake agent lifecycle'});agentSession=await call(`/sessions/${agentSession.id}/references`,{kind:'note',name:'Synthetic evidence',note:'00:02: the result appears.',revision:agentSession.revision});
+  assert.equal(agentSession.autoFocus,true);assert.equal(agentSession.focus.length,6);
+  const priorRevision=agentSession.revision;agentSession=await call(`/sessions/${agentSession.id}/configure`,{revision:priorRevision,direction:'Notice the opening',study:'overview'});
+  await call(`/sessions/${agentSession.id}/configure`,{revision:priorRevision,name:'Stale edit'},400);
   await call(`/sessions/${agentSession.id}/run`,{revision:agentSession.revision});let finished;
   for(let i=0;i<100;i++){finished=await call(`/sessions/${agentSession.id}`);if(finished.status!=='running')break;await new Promise(r=>setTimeout(r,50));}
   assert.equal(finished.status,'review',finished.error);const output=await call(`/sessions/${agentSession.id}/proposal`);assert.equal(output.rules[0].evidence[0].referenceId,agentSession.references[0].id);
   const receipt=JSON.parse(readFileSync(join(studio,'.studio/learning/sessions',agentSession.id,'work/adapter-receipt.json')));assert.equal(receipt.mode,'manual');assert(receipt.contextContainsFormat&&receipt.contextContainsReference);
+  assert.equal(finished.direction,'Notice the opening');
   const approved=await call(`/sessions/${agentSession.id}/approve`,{revision:output.revision,token:output.token,decisions:[{id:'opening',action:'keep'}]});assert(approved.id);assert(!approved.warning,approved.warning);
  }
  const appCall=async(path,data)=>{const r=await fetch(url+'/api/'+path,data===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json','X-Studio':'1'},body:JSON.stringify(data)});const j=await r.json();assert.equal(r.status,200,JSON.stringify(j));return j;};
