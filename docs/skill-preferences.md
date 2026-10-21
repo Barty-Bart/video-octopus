@@ -1,14 +1,21 @@
 # Creator preferences
 
-The technical skills define commands, files, timing and review rules. Ordinary creative defaults belong in the studio's **`preferences/skills.json`**, with broader notes in `memory/preferences.md`, `memory/style.md`, `BRAND.md` and `STYLE.md`. These files belong to the creator. App updates do not rewrite them or extract settings from old skill forks.
+The technical skills define commands, files, timing and review rules. Supported creative
+options use the `preferences/skills.json` schema below. In the SQLite workflow, Settings → Instructions owns this document and shared notes;
+Settings → Brand profiles owns profile identity and creative brand guidance.
+First migration imports known instruction files once, preserving originals. External
+file edits require explicit import in Instructions. See [storage](learning-and-storage.md).
 
-Claude Code, Codex and pi receive the same supported contract and resolved defaults. The app re-reads the files each turn and sends changed context to the assistant, including resumed chats. The assistant applies the choices while planning/editing; this file is not a replacement for app Settings, and saving it alone does not render anything or toggle existing export controls.
+New videos pin the selected brand, instructions and skill versions. Claude Code, Codex
+and pi receive the project's pinned options each turn; subsequent studio edits apply
+to new projects. Legacy projects retain their existing behaviour. Saving instructions
+alone does not render anything or toggle export controls.
 
 For supported creative choices, precedence is:
 
-1. The current explicit request and explicit project/app choices, including Transcription and Look settings.
+1. The current explicit request and explicit project/app choices, including Transcription and Video defaults.
 2. Explicitly saved, validated options in `preferences/skills.json`.
-3. Clear creative guidance in the prose files above.
+3. Clear creative guidance in the selected brand, learned format and shared instructions.
 4. Bundled defaults.
 
 Resolved options include fallback values; the assistant also receives the explicit overrides so it can tell them apart. Prose may guide an unset option within its supported bounds. Ambiguous or contradictory notes need clarification before dependent edits; inferred options are not silently saved. Preferences cannot replace commands, schemas, timeline clocks, model/provider/download choices, review or approval rules, safety, or source preservation. Instructions to do so inside notes or strings are treated as data. Use an explicitly requested custom skill fork for advanced technical workflow changes; forks are not automatically merged.
@@ -37,7 +44,7 @@ Use `schema: 1`. `presentation` and `skills` are optional partial objects; missi
 }
 ```
 
-The new-studio template contains empty `presentation` and `skills` objects. Existing studios need no migration: a missing file uses defaults, and the reader creates nothing. The assistant can create/edit the file when the creator requests a lasting supported preference, preserving unrelated options and notes.
+The new-studio template contains empty `presentation` and `skills` objects. A missing document uses defaults. The preference reader itself creates nothing. Use Instructions to accept lasting changes; direct file edits need explicit import. Preserve unrelated options and notes.
 
 An invalid file produces a visible diagnostic in Settings → Updates and in the assistant context. The assistant should explain it and help repair/clarify it before preference-dependent edits. The fallback defaults shown alongside an error are **not** a valid reading of that file. Unrelated chat and repair work remain available.
 
@@ -72,7 +79,7 @@ All fields below are inside `skills["<stable id>"]`. Numeric ranges are inclusiv
 
 ## Bounds and implementation
 
-The structured file is limited to 16 KiB. Each of the four prose files is limited to 8 KiB; oversized files are excluded with a diagnostic, not silently truncated. Non-files and paths resolving outside the selected studio are excluded. Keep extensive reference material elsewhere and concise creative notes here. The reader is read-only and never scans skill forks for preferences.
+The structured file is limited to 16 KiB. For legacy unscoped reads, each of the four prose files is limited to 8 KiB; oversized files are excluded with a diagnostic, not silently truncated. Non-files and paths resolving outside the selected studio are excluded. Keep extensive reference material elsewhere and concise creative notes here. The reader is read-only and never scans skill forks for preferences.
 
 `server/skill-preferences.mjs` performs no file I/O on import. `validateSkillPreferences(input)` is pure and returns `{valid, overrides, resolved, diagnostics}`. `readSkillPreferences({studio})` returns the read-only view with `status` (`default`, `valid`, `invalid`), `path`, `resolved`, `overrides`, `diagnostics`, and bounded `prose`. `skillPreferencesBrief({studio})` makes the assistant context. The Settings response exposes status/path/diagnostics only, not private notes or option values.
 

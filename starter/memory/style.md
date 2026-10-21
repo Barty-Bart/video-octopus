@@ -1,4 +1,5 @@
-# Style
+# Shared style notes
 
-Brand and style facts: fonts, colours (hex), logo files (in `library/brand/`), light or dark, the look of graphics and cards, captions, sound. One line each, dated. Claude reads this before planning or building anything.
-
+Only guidance intended for every profile belongs here. Profile colours, fonts, logos
+and identity belong in Brand profiles; editing patterns belong in reviewed Learning.
+SQLite owns accepted notes. Save changes in Instructions, not generated project files.

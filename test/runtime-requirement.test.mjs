@@ -23,7 +23,7 @@ test('Node requirement is enforced before the launcher can start the app', async
       PATH: [join(root, 'bin'), dirname(process.execPath), ...(win ? [join(process.env.SystemRoot || 'C:\\Windows', 'System32')] : ['/usr/bin', '/bin'])].join(delimiter),
       NODE_OPTIONS: `--require=${JSON.stringify(preload)}`, TEST_NODE_VERSION: version, TEST_RUNTIME_MARKER: marker, TEST_BROWSER_MARKER: opened,
       STUDIO_LOG: '', STUDIO_NO_OPEN: '1' });
-    for (const [version, supported] of [['18.20.8', false], ['20.20.0', false], ['21.7.3', false], ['22.0.0', false], ['22.1.0', false], ['22.2.0', true], ['22.20.0', true], [process.versions.node, true]]) {
+    for (const [version, supported] of [['18.20.8', false], ['20.20.0', false], ['21.7.3', false], ['22.0.0', false], ['22.1.0', false], ['22.13.0', true], ['22.20.0', true], ['22.12.0', false], ['23.3.0', false], ['23.4.0', true], [process.versions.node, true]]) {
       await t.test(`preflight and launcher with Node ${version}`, () => {
         rmSync(marker, { force: true }); rmSync(opened, { force: true });
         const env = envFor(version);
@@ -35,7 +35,7 @@ test('Node requirement is enforced before the launcher can start the app', async
         assert.equal(preflight.status, supported ? 0 : 1, preflight.stderr);
         assert.equal(existsSync(marker), false);
         if (supported) assert.equal(preflight.stderr, '');
-        else assert.match(preflight.stderr, /needs Node\.js 22\.2 or newer \(found /);
+        else assert.match(preflight.stderr, /needs Node\.js 22\.13 or newer \(found /);
         const launch = win
           ? spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/c', 'start.cmd'], { cwd: root, env, encoding: 'utf8', timeout: 10000 })
           : spawnSync('/bin/bash', ['start.sh'], { cwd: root, env, encoding: 'utf8', timeout: 10000 });
@@ -48,11 +48,11 @@ test('Node requirement is enforced before the launcher can start the app', async
     }
     await t.test('npm and both launchers use the same preflight and declared minimum', () => {
       const pkg = JSON.parse(readFileSync(join(app, 'package.json'), 'utf8'));
-      assert.equal(pkg.engines.node, '>=22.2.0');
+      assert.equal(pkg.engines.node, '>=22.13.0 <23 || >=23.4.0');
       assert.equal(pkg.scripts.start, 'node server/runtime-check.cjs && node server/index.mjs');
       for (const f of ['start.sh', 'start.cmd']) {
         const source = readFileSync(join(app, f), 'utf8');
-        assert.match(source, /Node\.js 22\.2 or newer/);
+        assert.match(source, /Node\.js 22\.13 or newer/);
         assert(source.indexOf('runtime-check.cjs') < source.indexOf('STUDIO_SUPERVISED=1'));
       }
     });

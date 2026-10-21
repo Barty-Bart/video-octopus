@@ -88,7 +88,7 @@ export class CodexSession extends ChatSession {
 
   async start() {
     assertNotUpdating();
-    const skillRoot = activeSkillRoot({ studio: settings().studio });
+    const skillRoot = this.skillRoot();
     const info = await codexInfo();
     if (!info.installed) throw new Error(info.error || 'Codex is not installed on this computer (npm install -g @openai/codex), or pick another agent in Settings → Agent & model.');
     const s = settings(), c = section('claude', s), provider = PROVIDERS[c.codexProvider] ?? null;
@@ -146,7 +146,7 @@ export class CodexSession extends ChatSession {
     const [approvalPolicy, sandbox] = POLICY[this.mode?.() || s.permissionMode] || POLICY.auto;
     return {
       cwd, approvalPolicy, sandbox,
-      developerInstructions: [this.currentContext(), settingsBrief(extra)].filter(Boolean).join('\n'),
+      developerInstructions: [this.currentContext(), settingsBrief(extra,{profileScoped:Boolean(this.profileScoped||this.projectScope?.())})].filter(Boolean).join('\n'),
       ...(c.codexModel ? { model: c.codexModel } : {}),
       ...(provider ? { modelProvider: provider } : {}),
       ...(this.isRun() ? { config: await this.runConfig(cwd) } : {}),
@@ -304,7 +304,7 @@ export class CodexSession extends ChatSession {
 
   async send(text, { echo = true, brief = null } = {}) {
     assertNotUpdating();
-    activeSkillRoot({ studio: settings().studio });
+    this.skillRoot();
     this.lastSend = text;
     this.setBusy(true);
     if (!this.proc) {

@@ -3,7 +3,7 @@
 // as "•••• set ✓ · Replace · Test · Remove" and never come back to the page.
 import { $, esc, h, api, toast, tilde, ENGINES } from './ui.js';
 import { setupPage, studioCreator } from './setup.js';
-import { brandSettings } from './brand.js';
+import { profileSettings, instructionSettings } from './profiles.js';
 import { LOOKS, applyLook } from './appearance.js';
 import { updatesSection, markUpdateBadge } from './updates.js';
 import { support, browserName } from './recorder.js';
@@ -74,10 +74,11 @@ const SECTIONS = [
   ['recorder', 'Recording', 'Camera, mic, screen, takes'],
   ['editing', 'Editing', 'Trimming at a cut, telling Claude'],
   ['sound', 'Sound', 'Sources, voice vs effects'],
-  ['folders', 'Folders', 'Video Octopus, projects, library'],
+  ['folders', 'Folders', 'Studio, media and local database'],
   ['appearance', 'Appearance', 'How Video Octopus looks'],
-  ['look', 'Look', 'Your videos: background, frame, brand'],
-  ['brand', 'Brand', 'About you, brand files, style notes'],
+  ['look', 'Video defaults', 'Starting background and framing'],
+  ['brand', 'Brand profiles', 'Research, identity and assets per profile'],
+  ['instructions', 'Instructions', 'Shared prompts and agent instructions'],
   ['updates', 'Updates', 'New versions, starter files, log-in'],
 ];
 const ABOUT = {
@@ -87,10 +88,11 @@ const ABOUT = {
   recorder: 'Your camera, microphone and screen for Record, and where takes go.',
   editing: 'How trimming feels in the Cut tab, and how your changes reach Claude.',
   sound: 'Where sound effects come from, and how they sit under your voice.',
-  folders: 'Where your studio, projects and library live.',
+  folders: 'The studio is the home for your local database, projects and media. Skills are managed in the app; you do not need to arrange their folders.',
   appearance: 'How Video Octopus looks. Your videos keep their own look, under Look.',
-  look: 'The background, frame and brand your videos start from.',
-  brand: 'Who you are and how your videos look: your Setup answers, brand files and colours, BRAND.md and STYLE.md, and the motion-graphics skills.',
+  look: 'Starting background and framing for your videos. Brand profiles provide colours and fonts; Learning provides approved format guidance. Existing edits remain under your control.',
+  brand: 'Create a profile, research its website, review the findings and save its brand. New video loads the selected profile’s approved brand and format.',
+  instructions: 'Canonical studio prompts and agent instructions, saved in local SQLite with version history.',
   updates: 'New versions of Video Octopus, the starter files in your studio, and opening Video Octopus when you log in.',
 };
 // More words the settings search finds a section by.
@@ -143,12 +145,15 @@ async function settingsPage(sec) {
       return true;
     } catch (e) { toast(e.message); return false; }
   };
+  let sectionNode;
   const draw = () => {
+    sectionNode?.teardown?.();
+    sectionNode=DRAW[sec](V, save, draw);
     const [, label] = SECTIONS.find((s) => s[0] === sec);
-    body.replaceChildren(h(`<div class="set-head">${secIcon(sec).replace('sec-ic', 'sec-ic big')}<div class="sh-t"><h1>${label}</h1><span class="sub">${esc(ABOUT[sec] || '')}</span></div><span class="set-saved" id="saved" aria-live="polite"></span></div>`), DRAW[sec](V, save, draw));
+    body.replaceChildren(h(`<div class="set-head">${secIcon(sec).replace('sec-ic', 'sec-ic big')}<div class="sh-t"><h1>${label}</h1><span class="sub">${esc(ABOUT[sec] || '')}</span></div><span class="set-saved" id="saved" aria-live="polite"></span></div>`), sectionNode);
   };
   draw();
-  return { teardown: () => document.body.classList.remove('in-home', 'in-app-page') };
+  return { teardown: () => {sectionNode?.teardown?.();document.body.classList.remove('in-home', 'in-app-page');} };
 }
 
 function flash(body) {
@@ -556,8 +561,9 @@ const DRAW = {
     };
     return frag(
       group('',
-        row('Your studio folder', 'Your projects, style notes and skills (.claude/skills). Video Octopus never changes anything outside it.', studio),
-        row('Projects folder', `Inside the studio: ${esc(tilde(f.studio))}/<b>${esc(f.projectsDir)}</b>`, projects),
+        row('Your studio folder', 'Home for your projects, recordings, library and local SQLite database. New studios use application storage by default; you can choose another location.', studio),
+        row('Skills & learning', 'Saved in <b>.studio/studio.sqlite</b> inside this studio, including versions and approvals. Any skill folders are app-generated working copies for agents.', h('<a class="btn small" href="#/skills">Open Skills</a>')),
+        row('Projects folder', `Recordings and source media, editing work and renders. Inside the studio: ${esc(tilde(f.studio))}/<b>${esc(f.projectsDir)}</b>`, projects),
         row('Library folder', `Inside the studio: reusable backgrounds, sounds and cards. ${esc(tilde(f.studio))}/<b>${esc(f.libraryDir)}</b>`, library),
         row('', 'To move the files themselves, ask the Video Octopus assistant.', apply)),
       group('New studio',
@@ -621,13 +627,12 @@ const DRAW = {
     };
     drawColors();
     return frag(
-      group('Defaults',
+      group('Video defaults',
+        row('Learned formats', 'For pacing, captions, storytelling and format-specific visual rules, use Learning. Review the scene plan before applying those rules to a video.', h('<a class="btn small" href="#/learning">Open Learning</a>')),
         row('Background', 'Behind the picture in the picture-in-picture, Boxed and Split layouts.', sw),
         row('Picture-in-picture frame', '', seg([['rounded', 'Rounded'], ['circle', 'Circle'], ['frame', 'Whole frame']], l.pip, (x) => save('look', { pip: x }).then(redraw)))),
-      group('Brand',
-        row('Colours', 'Claude uses these for titles, cards and accents.', colors),
-        row('Fonts', 'The fonts you use for titles and captions.', text(l.fonts, (x) => save('look', { fonts: x.trim() }), { placeholder: 'e.g. Geist, Caveat for hand-drawn notes', wide: true })),
-        row('Brand kit', 'Your logo, photos, product images, font files and the examples you like, and BRAND.md.', h(`<a class="btn small" href="#/settings/brand">Open Brand</a>`))),
+      group('Profile brand',
+        row('Colours, fonts and brand assets', 'Choose these in Brand profiles. New video loads the selected profile’s approved brand; these global video controls do not replace it.', h('<a class="btn small" href="#/settings/brand">Open Brand profiles</a>'))),
     );
   },
 };
@@ -637,7 +642,8 @@ FIND.updates = 'version git github update restart starter log in login startup a
 
 // Settings → Brand (web/brand.js): the Setup answers, the brand files and colours, BRAND.md / STYLE.md and the skills.
 // "Write my style" goes to the Video Octopus assistant, in the drawer.
-DRAW.brand = (V) => brandSettings({ formats: V.formats, ask: async (text) => { openDrawer(); await api('/api/projects/_studio/chat', { text }); } });
+DRAW.brand = () => profileSettings({makeChat:CTX.makeChat});
+DRAW.instructions = () => instructionSettings();
 
 // ---------- the Video Octopus assistant: an app-level chat (id "_studio"), same Claude Code login, own session ----------
 // `id` another chat instead: the drawer's "This project" shows a project's own chat (the same conversation as inside

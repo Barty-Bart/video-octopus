@@ -15,6 +15,7 @@ try { var a = JSON.parse(localStorage.getItem('studio.look') || 'null'), d = doc
     if (a.look === 'frost' && /^\/api\/projects\/[\w.%-]+\/thumb$/.test(a.frost || '')) { d.style.setProperty('--frost-image', 'url("' + a.frost + '")'); if (a.frostDim > 0 && a.frostDim <= 1) d.style.setProperty('--frost-dim', a.frostDim); } }
 } catch (e) {}</script>
 <link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/learning.css">
 <link rel="stylesheet" href="/onboarding.css">
 <link rel="stylesheet" href="/looks.css">
 </head>

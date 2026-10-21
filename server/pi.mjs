@@ -73,7 +73,7 @@ export class PiSession extends ChatSession {
 
   async start() {
     assertNotUpdating();
-    const skillRoot = activeSkillRoot({ studio: settings().studio });
+    const skillRoot = this.skillRoot();
     const info = await piInfo();
     if (!info.installed) throw new Error(info.error || `pi is not installed on this computer (${info.install}), or pick another agent in Settings → Agent & model.`);
     const s = settings(), c = section('claude', s), extra = await childEnv();
@@ -85,7 +85,7 @@ export class PiSession extends ChatSession {
     const skills = skillRoot ? ['--skill', skillRoot] : [];
     const model = endpoint ? ['--provider', 'studio', '--model', c.piModel] : c.piModel ? ['--model', c.piModel] : [];
     const args = ['--mode', 'rpc', '-e', EXTENSION, ...skills, ...model,
-      '--append-system-prompt', [this.currentContext(), settingsBrief(extra)].filter(Boolean).join('\n'),
+      '--append-system-prompt', [this.currentContext(), settingsBrief(extra,{profileScoped:Boolean(this.profileScoped||this.projectScope?.())})].filter(Boolean).join('\n'),
       ...(saved ? ['--session', saved] : [])];
     this.resumed = Boolean(saved);
     const env = await childPathEnv({
@@ -223,7 +223,7 @@ export class PiSession extends ChatSession {
 
   async send(text, { echo = true, brief = null } = {}) {
     assertNotUpdating();
-    activeSkillRoot({ studio: settings().studio });
+    this.skillRoot();
     this.lastSend = text;
     this.setBusy(true);
     if (!this.proc) {

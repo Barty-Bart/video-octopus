@@ -9,7 +9,7 @@ cd /d "%~dp0"
 
 where node >nul 2>nul
 if errorlevel 1 (
-  echo Video Octopus needs Node.js 22.2 or newer: https://nodejs.org
+  echo Video Octopus needs Node.js 22.13 or newer: https://nodejs.org
   exit /b 1
 )
 node server\runtime-check.cjs

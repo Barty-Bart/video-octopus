@@ -220,7 +220,7 @@ export async function childEnv() {
 
 // A few lines for every chat's system prompt: the engines picked here and which keys are in the environment
 // (names only). `env` is childEnv()'s result.
-export function settingsBrief(env = {}) {
+export function settingsBrief(env = {}, { profileScoped = false } = {}) {
   const s = settings();
   const t = section('transcribe', s), r = section('render', s), so = section('sound', s), lk = section('look', s);
   const p = PROVIDERS[t.provider];
@@ -236,15 +236,15 @@ export function settingsBrief(env = {}) {
   const o = section('objsep', s), sam = sam2Have();
   lines.push(`- Object separation: the object-separation skill with SAM 2.1 ${o.model === 'auto' ? 'as recommended for this computer (--model left out: its own pick)' : `${o.model} (STUDIO_OBJSEP_MODEL=${o.model})`}; downloaded: ${sam.length ? sam.join(', ') : 'none yet'}. The skill never downloads a model: when it isn't there, the creator presses Download in Video Octopus's Setup (Object separation row) or picks another one in Settings → Rendering.`);
   lines.push(`- Sound sources: ${[so.claude && 'made by Claude', so.epidemic && 'Epidemic Sound (through its connector)', so.library && `the library folder ${so.library}`].filter(Boolean).join(', ') || 'none picked'}; effects sit about ${Math.abs(so.fxDb)} dB under the voice (an effect's loudest 0.2 s against the voice's level while it talks: Video Octopus's export and canvas mix sound cues this way, so mix your renders the same).`);
-  lines.push(`- Look defaults: background ${{ 'night-desk': 'Night Desk', stars: 'Stars', led: 'LED wave' }[lk.background]}, picture-in-picture frame ${lk.pip}${lk.colors.length ? `, brand colours ${lk.colors.join(' ')}` : ''}${lk.fonts ? `, fonts ${lk.fonts}` : ''}.`);
+  lines.push(`- Look defaults: background ${{ 'night-desk': 'Night Desk', stars: 'Stars', led: 'LED wave' }[lk.background]}, picture-in-picture frame ${lk.pip}${!profileScoped && lk.colors.length ? `, brand colours ${lk.colors.join(' ')}` : ''}${!profileScoped && lk.fonts ? `, fonts ${lk.fonts}` : ''}.`);
   const keys = Object.keys(KEYS).filter((n) => env[n]);
   lines.push(`- API keys from ${KEY_STORE} are in your environment${keys.length ? `: ${keys.join(', ')}` : ' (none saved yet)'}. Never print, log or write a key anywhere; check one only by whether it is set or by its length. Never ask the creator to paste a key into a chat: keys go in Video Octopus's Settings, which keeps them in ${KEY_STORE}.`);
-  const pr = profile();
+  const pr = profileScoped ? null : profile();
   if (pr && (pr.who || pr.make || pr.brand || pr.creators || pr.tone || pr.formats?.length)) {
     lines.push(`- About the creator (Setup interview): ${[pr.who && `who: ${pr.who}`, pr.make && `makes ${pr.make}`, pr.formats?.length && `formats: ${pr.formats.join(', ')}`, pr.tone && `tone: ${pr.tone}`, pr.brand && `brand: ${pr.brand}`, pr.creators && `likes the editing of ${pr.creators}`].filter(Boolean).join('; ')}.`);
   }
   // The studio's own brand and style notes (Setup writes BRAND.md; STYLE.md is the fuller guide the assistant drafts).
-  const own = s.studio ? ['BRAND.md', 'STYLE.md'].filter((f) => existsSync(join(s.studio, f))) : [];
+  const own = !profileScoped && s.studio ? ['BRAND.md', 'STYLE.md'].filter((f) => existsSync(join(s.studio, f))) : [];
   if (own.length) lines.push(`- The creator's brand and style: ${own.join(' and ')} in the studio folder. Read ${own.length > 1 ? 'them' : 'it'} before planning or building graphics; brand files are in the library's brand/ folder.`);
   return lines.join('\n');
 }

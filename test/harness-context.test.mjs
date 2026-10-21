@@ -147,7 +147,7 @@ async function worker(engine, root) {
   manager.syncSkills({ studio, fresh: true });
   const custom = join(studio, 'skills/custom/synthetic-motion/SKILL.md');
   write(custom, '---\nname: synthetic-motion\ndescription: Synthetic custom fixture\n---\n\nCUSTOM-FIRST\n');
-  manager.syncSkills({ studio });
+  manager.syncSkills({ studio, action: {action: 'refresh'} });
   const customId = manager.skillsView({ studio }).items.find((x) => x.name === 'synthetic-motion').id;
   const wire = () => existsSync(process.env.OCTOPUS_TEST_LOG) ? readFileSync(process.env.OCTOPUS_TEST_LOG, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse) : [];
   const launch = () => wire().filter((x) => x.kind === 'launch').at(-1);
@@ -226,12 +226,12 @@ async function worker(engine, root) {
     });
     action('customize');
     const fork = join(studio, 'skills/overrides/octopus.transcribe/SKILL.md');
-    write(fork, readFileSync(fork, 'utf8') + '\nFORK-PRESENTATION-FIXTURE\n'); manager.syncSkills({ studio });
+    write(fork, readFileSync(fork, 'utf8') + '\nFORK-PRESENTATION-FIXTURE\n'); manager.syncSkills({ studio, action: {action: 'refresh'} });
     await send(s, 'SELECTED-FORK');
     check('compatible fork is the sole published version', () => assert.equal(turn().skills.transcribe, hash(readFileSync(fork))));
     check('core to compatible fork refreshes running context', () => assert.notEqual(textOf(), 'SELECTED-FORK'));
     await stop(s);
-    write(fork, readFileSync(fork, 'utf8') + '\nFORK-SECOND\n'); manager.syncSkills({ studio });
+    write(fork, readFileSync(fork, 'utf8') + '\nFORK-SECOND\n'); manager.syncSkills({ studio, action: {action: 'refresh'} });
     s = create(); await send(s, 'RESUME-FORK-EDIT');
     check('resumed compatible fork edit refreshes startup and first resumed turn', () => {
       assert.equal(s.resumed, true); assert.notEqual(textOf(), 'RESUME-FORK-EDIT');
@@ -244,18 +244,18 @@ async function worker(engine, root) {
       assert.match(readFileSync(fork, 'utf8'), /FORK-PRESENTATION-FIXTURE/);
     });
     check('compatible fork to core refreshes running context', () => assert.notEqual(textOf(), 'SELECTED-CORE'));
-    write(custom, readFileSync(custom, 'utf8') + '\nCUSTOM-SECOND\n'); manager.syncSkills({ studio });
+    write(custom, readFileSync(custom, 'utf8') + '\nCUSTOM-SECOND\n'); manager.syncSkills({ studio, action: {action: 'refresh'} });
     await send(s, 'CUSTOM-EDITED');
     check('custom source edit refreshes context and active publication', () => {
       assert.equal(turn().skills['synthetic-motion'], hash(readFileSync(custom))); assert.notEqual(textOf(), 'CUSTOM-EDITED');
     });
-    manager.syncSkills({ studio }); await send(s, 'SKILLS-UNCHANGED');
+    manager.syncSkills({ studio, action: {action: 'refresh'} }); await send(s, 'SKILLS-UNCHANGED');
     check('unchanged skill refresh does not duplicate context', () => assert.equal(textOf(), 'SKILLS-UNCHANGED'));
     action('disable', customId); await send(s, 'CUSTOM-DISABLED');
     check('disabled custom workflow is absent and context is refreshed', () => { assert.equal(turn().skills['synthetic-motion'], undefined); assert.notEqual(textOf(), 'CUSTOM-DISABLED'); });
     action('use-custom');
     const catalogPath = join(app, 'core/skills.json'), catalog = readJSON(catalogPath); catalog.apiVersion += 1; json(catalogPath, catalog);
-    manager.syncSkills({ studio }); await send(s, 'API-CHANGED');
+    manager.syncSkills({ studio, action: {action: 'refresh'} }); await send(s, 'API-CHANGED');
     check('incompatible selected fork is withheld but repair chat continues with diagnostic', () => {
       assert.equal(turn().skills.transcribe, undefined); assert.match(textOf(), /Unavailable selected custom workflows: transcribe/);
       assert.match(textOf(), /do not run those workflows/); assert.ok(existsSync(fork));

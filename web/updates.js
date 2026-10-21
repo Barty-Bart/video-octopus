@@ -174,7 +174,7 @@ export function updatesSection(V, save, { row, group, toggle }) {
         if (item.reason) box.append(h(`<span class="${item.pending ? 'notice small' : 'sub'}">${esc(item.reason)}</span>`));
         if (item.mode === 'default' && item.compatibilityReason) box.append(h(`<span class="sub">Saved custom version: ${esc(item.compatibilityReason)} Core remains selected.</span>`));
         if (item.dependencies?.length) box.append(h(`<span class="sub">Requires: ${esc(item.dependencies.join(', '))}. Updates do not install packages or download models.</span>`));
-        if (item.overridePath) box.append(h(`<span class="sub">Your ${item.mode === 'default' ? 'saved' : 'editable'} version: <code>${esc(item.overridePath)}</code></span>`));
+        if (item.overridePath) box.append(h(`<span class="sub">Your version is saved in SQLite. Edit it in <a href="#/skills">Skills</a>. Working copy: <code>${esc(item.overridePath)}</code></span>`));
         const buttons = h('<div class="upd-acts"></div>');
         const add = (label, action, dark = false) => {
           const b = h(`<button type="button" class="btn small${dark ? ' dark' : ''}">${esc(label)}</button>`);

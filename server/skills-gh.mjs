@@ -342,7 +342,7 @@ export async function installSkills(input, names, { studio = settings().studio }
   }
   if (out.installed.length) {
     writeJSON(join(studio, '.studio', 'skills.json'), record);
-    out.skills = syncSkills({ studio });
+    out.skills = syncSkills({ studio, action: { action: 'refresh' } });
     settingsChanged('skills');
   }
   return out;

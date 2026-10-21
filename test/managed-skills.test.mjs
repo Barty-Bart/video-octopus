@@ -3,6 +3,7 @@
 // These tests use only synthetic temporary studios, Node built-ins, and the pure
 // skill-manager module. They do not start the app, run tools, or make requests.
 import test from 'node:test';
+import { DatabaseSync } from 'node:sqlite';
 import assert from 'node:assert/strict';
 import {
   cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync,
@@ -85,7 +86,8 @@ function fixture(t, initial = [definition()]) {
     manager: (...parts) => join(studio, '.studio', 'skill-manager', ...parts),
     active: (name = 'alpha', file = 'SKILL.md') => join(studio, '.claude', 'skills', name, file),
     view: () => skillsView({ studio, appRoot }),
-    sync: (options = {}) => syncSkills({ studio, appRoot, ...options }),
+    // Most historical cases exercise deliberate file import. Startup authority has separate SQLite tests.
+    sync: (options = {}) => syncSkills({ studio, appRoot, ...(skillsView({studio,appRoot}).revision && !skillsView({studio,appRoot}).held ? {action:{action:'refresh'}} : {}), ...options }),
     action(action, id = 'octopus.alpha', extra = {}) {
       return this.sync({ action: { action, id, revision: this.view().revision, ...extra } });
     },
@@ -693,8 +695,8 @@ test('every before/after install interruption recovers safely and preserves subs
         const receipt = readJSON(f.manager('backups', journal.id, 'receipt.json'));
         assert.equal(receipt.id, journal.id);
         if (phase === 'after' && index === 3) {
-          assert.notEqual(receipt.recovered, true, 'A committed transaction is a completed, restorable update');
-          assert.equal(f.view().backups.find((b) => b.id === journal.id).restorable, true);
+          assert.equal(receipt.recovered, true, 'File publication precedes the SQLite commit and must roll back.');
+          assert.equal(f.view().backups.find((b) => b.id === journal.id).restorable, false);
         }
         if (extra) {
           const retained = snapshot(f.manager('backups', journal.id, 'interrupted'));
@@ -1032,7 +1034,9 @@ test('existing manager overrides without baseline metadata remain unknown until 
   for (const key of ['forkAvailable', 'forkName', 'forkVersion', 'forkApiVersion']) delete entry[key];
   delete entry.published.version; delete entry.published.apiVersion;
   entry.version = '9.9.9'; // Old managers recorded the available upstream version, not the actual fork base.
+  delete old.storage;
   writeJSON(f.manager('state.json'), old);
+  rmSync(f.path('.studio','studio.sqlite')); // Simulate a pre-SQLite installation, not an edit of a generated mirror.
   const migrated = item(f.sync());
   assert.equal(migrated.forkVersion, null);
   assert.equal(migrated.forkApiVersion, null);
@@ -1104,6 +1108,8 @@ test('a held old core snapshot is rejected after an API epoch change', (t) => {
   const held = state(f);
   held.held = true; held.entries['octopus.alpha'].published.apiVersion = 1;
   writeJSON(f.manager('state.json'), held);
+  const db = new DatabaseSync(f.path('.studio','studio.sqlite'));
+  db.prepare('UPDATE skill_snapshots SET state=? WHERE id=(SELECT snapshot FROM skill_head WHERE singleton=1)').run(JSON.stringify(held)); db.close();
   assert.throws(() => activeSkillRoot(f.options), /incompatible|API/i, 'Held metadata cannot bypass the harness guard');
 });
 

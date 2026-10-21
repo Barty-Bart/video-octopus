@@ -254,7 +254,7 @@ export function writeBrand({ quiet = false } = {}) {
 }
 
 // The answers or Settings → Look's colours and fonts changed (from any page, or the octopus command): BRAND.md follows.
-onSettingsChange((what) => { if (what === 'look' || what === 'profile') { try { writeBrand({ quiet: true }); } catch (e) { console.error('BRAND.md:', e.message); } } });
+onSettingsChange((what) => { if(settings().studio&&existsSync(join(settings().studio,'.studio/profile-storage.json')))return; if (what === 'look' || what === 'profile') { try { writeBrand({ quiet: true }); } catch (e) { console.error('BRAND.md:', e.message); } } });
 
 // What Setup and Settings → Brand draw.
 export function brandView() {

@@ -1,4 +1,6 @@
-// Bundled defaults + preserved creator overrides, projected into ONE discoverable skill directory.
+// SQLite owns skill versions and choices. Working files project them into ONE discoverable directory.
+import { defaultSkillSummary, validateSkillSummary } from './skill-summary.mjs';
+import { sqlSkillState, saveSkillSnapshot, stageSqlSkills, sqlSkillHistory, sqlLearnedSkillSummary } from './skill-db.mjs';
 // Deliberately standalone: importing this module performs no IO, starts no app and reads no user settings.
 import { existsSync, lstatSync, readdirSync, readFileSync, writeFileSync, mkdirSync, renameSync, rmSync,
   copyFileSync, chmodSync, openSync, closeSync, fsyncSync } from 'node:fs';
@@ -156,7 +158,13 @@ function validateState(s) {
   }
   return s;
 }
-const readState = (studio) => validateState(json(statePath(studio)));
+const readState = (studio) => {
+  const authoritative = sqlSkillState(studio);
+  if(authoritative) return validateState(authoritative);
+  const legacy = json(statePath(studio));
+  if(legacy?.storage === 'sqlite') throw new Error('The skill database is missing. Restore a database backup; generated files are not a replacement for its history.');
+  return validateState(legacy);
+};
 function lock(studio, fn) {
   const root = safe(studio, '.studio/skill-manager'); mkdirSync(root, { recursive: true });
   const p = join(root, 'lock.json');
@@ -180,7 +188,7 @@ function recover(studio) {
   if (!ID.test(j.id || '') || !Array.isArray(j.targets) || JSON.stringify(j.targets) !== JSON.stringify(TARGETS) ||
     !Array.isArray(j.had) || j.had.length !== TARGETS.length || j.had.some((v) => typeof v !== 'boolean')) throw new Error('Invalid skill recovery journal; no files were moved.');
   const tx = safe(root, `backups/${j.id}`);
-  if (readState(studio)?.transaction === j.id) {
+  if (sqlSkillState(studio)?.transaction === j.id) {
     if (!existsSync(join(tx, 'receipt.json'))) write(join(tx, 'receipt.json'), { id: j.id, at: j.at, reason: 'Completed update recovered after interruption' });
     rmSync(jp); return j.id;
   }
@@ -201,7 +209,7 @@ function commit(studio, next, staged, before, reason, fault) {
   const id = randomUUID(), root = manager(studio), tx = join(root, 'backups', id), jp = join(root, 'journal.json');
   mkdirSync(join(tx, 'next'), { recursive: true }); mkdirSync(join(tx, 'before'), { recursive: true });
   for (let i = 0; i < 3; i++) copy(staged[i], join(tx, 'next', String(i)));
-  next.transaction = id; next.revision = randomUUID();
+  next.transaction = id; next.revision = randomUUID(); next.storage = 'sqlite';
   write(join(tx, 'next', '3'), next);
   for (let i = 0; i < TARGETS.length; i++) {
     if (fingerprint(safe(studio, TARGETS[i])) !== before[i]) throw new Error('Skill files changed while preparing this update. Your files were kept; refresh and try again.');
@@ -215,6 +223,8 @@ function commit(studio, next, staged, before, reason, fault) {
     renameSync(join(tx, 'next', String(i)), target);
     fault?.(`after-install-${i}`);
   }
+  saveSkillSnapshot(studio, next, reason);
+  fault?.('after-database-commit');
   write(join(tx, 'receipt.json'), { id, at: j.at, reason });
   rmSync(jp);
   return next;
@@ -239,14 +249,30 @@ export function syncSkills({ studio, appRoot = APP, fresh = false, action = null
     const recovered = recover(studio);
     const old = readState(studio);
     requireRevision(old, action);
-    if (old?.held && !action) return skillsView({ studio, appRoot });
-    if (old?.held && !['refresh', 'restore'].includes(action?.action))
+    if (old?.held && !action && sqlSkillState(studio)) return skillsView({ studio, appRoot });
+    if (old?.held && !['refresh', 'restore', 'regenerate', 'restore-sql'].includes(action?.action))
       throw new Error('This restored skill snapshot is held. Resume updates before changing a skill choice; comparison remains available.');
     const before = TARGETS.map((p) => fingerprint(safe(studio, p)));
     const stage = join(manager(studio), `stage-${randomUUID()}`);
     const staged = [join(stage, 'active'), join(stage, 'overrides'), join(stage, 'custom')];
     try {
-      staged.forEach((p, i) => { mkdirSync(p, { recursive: true }); copy(join(studio, TARGETS[i]), p); });
+      staged.forEach(p => mkdirSync(p, {recursive:true}));
+      if(old?.storage === 'sqlite' && !action) {
+        // Startup and app updates read canonical database bytes. Missing projections are regenerated;
+        // external edits are never silently imported or overwritten. Explicit Refresh imports them.
+        stageSqlSkills(studio,staged);
+        for(let i=0;i<3;i++) {
+          const disk=tree(safe(studio,TARGETS[i])), canonical=tree(staged[i]);
+          if(Object.keys(disk).some(p=>JSON.stringify(disk[p])!==JSON.stringify(canonical[p])))
+            throw new Error('Working skill files changed. Use Skills → Refresh / import file edits to save them, or Rebuild agent files to restore the database version. Your files are unchanged.');
+        }
+      } else staged.forEach((p,i)=>copy(join(studio,TARGETS[i]),p));
+      let createdFolder;
+      if (action && Object.hasOwn(action, 'summary')) validateSkillSummary(action.summary);
+      if(action?.action === 'create') {
+        if(typeof action.text !== 'string' || !action.text.trim() || action.text.length > 100000) throw new Error('Skill text must be 1–100,000 characters.');
+        const folder = createdFolder = `custom-${randomUUID()}`, path = join(staged[2],folder);mkdirSync(path,{recursive:true});writeFileSync(join(path,'SKILL.md'),action.text);skillName(path,folder);
+      }
       let next = old ? clone(old) : { schema: SCHEMA, entries: {}, versions: {} };
       next.versions ||= {};
       const priorSemantic = JSON.stringify(next);
@@ -368,8 +394,16 @@ export function syncSkills({ studio, appRoot = APP, fresh = false, action = null
         }
       }
       const a = action?.action;
-      if (a && !['refresh', 'keep', 'latest', 'disable', 'enable', 'customize', 'use-custom', 'confirm-compatibility', 'restore'].includes(a)) throw new Error('Unknown skill action.');
-      if (a === 'restore') {
+      if (a && !['refresh', 'keep', 'latest', 'disable', 'enable', 'customize', 'use-custom', 'confirm-compatibility', 'restore', 'edit', 'create', 'describe', 'regenerate', 'restore-sql'].includes(a)) throw new Error('Unknown skill action.');
+      if (a === 'regenerate' || a === 'restore-sql') {
+        for(const p of staged){rmSync(p,{recursive:true,force:true});mkdirSync(p,{recursive:true});}
+        next = stageSqlSkills(studio, staged, a === 'restore-sql' ? action.snapshot : null);
+        if(a === 'restore-sql') { next.held = true; next.holdReason = 'A database skill version was restored. Review before resuming updates.'; }
+        for(const e of Object.values(next.entries)) {
+          if(e.published && e.mode === 'default' && e.published.apiVersion !== catalog.apiVersion) throw new Error('This database snapshot belongs to another app API.');
+          if(e.mode === 'override' && forkProblem(e,catalog.apiVersion)) { if(e.published) rmSync(join(staged[0],e.published.folder),{recursive:true,force:true});e.published=null; }
+        }
+      } else if (a === 'restore') {
         if (!ID.test(action.backup || '')) throw new Error('Invalid skill backup.');
         const backup = safe(manager(studio), `backups/${action.backup}`);
         const receipt = json(join(backup, 'receipt.json'));
@@ -395,10 +429,11 @@ export function syncSkills({ studio, appRoot = APP, fresh = false, action = null
           }
         }
       } else {
-        if (a === 'refresh') next.held = false;
-        if (a && a !== 'refresh') {
+        if (a === 'refresh' && next.held) next.held = false;
+        if (a && a !== 'refresh' && a !== 'create') {
           const e = entries[action.id], b = bundled.get(action.id);
           if (!e) throw new Error('No such skill.');
+          if (a === 'describe' || (a === 'edit' && Object.hasOwn(action, 'summary'))) { e.summary = validateSkillSummary(action.summary); e.summaryCustom = true; }
           if (a === 'keep') { e.reviewedHash = b?.hash || 'removed'; e.requirementsNotice = false; e.rollbackNotice = false; e.returned = false; }
           if (a === 'disable') { e.disabled = true; e.deleted = false; }
           if (a === 'enable') {
@@ -413,7 +448,8 @@ export function syncSkills({ studio, appRoot = APP, fresh = false, action = null
               requirementsNotice: false, rollbackNotice: false });
             e.returned = false;
           }
-          if (a === 'customize' || a === 'use-custom') {
+          if (a === 'edit' && (typeof action.text !== 'string' || !action.text.trim() || action.text.length > 100000)) throw new Error('Skill text must be 1–100,000 characters.');
+          if (a === 'customize' || a === 'use-custom' || (a === 'edit' && e.mode !== 'custom')) {
             if (e.mode === 'custom') throw new Error('This is already an independent custom skill.');
             if (!e.forkAvailable || !existsSync(join(sourceFor(e), 'SKILL.md'))) {
               if (a === 'use-custom') throw new Error('No saved custom version. Create one with Customize first.');
@@ -426,6 +462,12 @@ export function syncSkills({ studio, appRoot = APP, fresh = false, action = null
               e.forkVersion = b.version; e.forkApiVersion = catalog.apiVersion; e.reviewedHash = b.hash;
             }
             e.mode = 'override'; e.name = e.forkName; e.disabled = false; e.deleted = false; e.uncertain = false;
+          }
+          if (a === 'edit') {
+            const src = sourceFor(e);
+            writeFileSync(join(src, 'SKILL.md'), action.text);
+            const name = skillName(src, e.name); e.name = name; if(e.mode === 'override') e.forkName = name;
+            e.sourceHash = digest(src);
           }
           if (a === 'confirm-compatibility') {
             if (e.mode === 'custom' || !e.forkAvailable) throw new Error('No saved custom version to review.');
@@ -467,9 +509,19 @@ export function syncSkills({ studio, appRoot = APP, fresh = false, action = null
         next.release = catalog.release;
         next.apiVersion = catalog.apiVersion;
       }
+      if (!['restore', 'restore-sql', 'regenerate'].includes(a)) {
+        for (const e of Object.values(next.entries)) {
+          if (createdFolder && createdFolder === e.folder && Object.hasOwn(action || {}, 'summary')) { e.summary = validateSkillSummary(action.summary); e.summaryCustom = true; }
+          if (!e.summaryCustom) {
+            const src = e.mode === 'default' ? bundled.get(e.id)?.dir : sourceFor(e);
+            const body = src && existsSync(join(src, 'SKILL.md')) ? readFileSync(join(src, 'SKILL.md'), 'utf8') : '';
+            e.summary = sqlLearnedSkillSummary(studio, e.name) || defaultSkillSummary(body, e.mode === 'default' ? e.id : null);
+          }
+        }
+      }
       if (recovered) next.recovery = `Recovered interrupted update ${recovered}; extra files are kept in that backup.`;
       const changed = JSON.stringify(next) !== priorSemantic || staged.some((p, i) => fingerprint(p) !== before[i]);
-      if (changed) commit(studio, next, staged, before, a ? `Skill choice: ${a}` : old ? 'Bundled skill update' : 'Legacy skill migration', fault);
+      if (changed || !sqlSkillState(studio)) commit(studio, next, staged, before, a ? `Skill choice: ${a}` : old ? 'Bundled skill update' : 'Legacy skill migration', fault);
       return skillsView({ studio, appRoot });
     } finally { rmSync(stage, { recursive: true, force: true }); }
   });
@@ -492,7 +544,7 @@ export function skillsView({ studio, appRoot = APP } = {}) {
         e.rollbackNotice && 'The application returned to an older skill version.',
         e.uncertain && 'Legacy file history is missing; kept disabled until you choose.',
         e.collision, e.returned && 'This previously removed skill returned; enable it explicitly.'].filter(Boolean);
-      return { ...e, forkAvailable, forkVersion: e.forkVersion || null, forkApiVersion: e.forkApiVersion || null,
+      return { ...e, kind: e.mode === 'custom' ? 'personal' : e.mode === 'override' ? 'customized-core' : 'core', forkAvailable, forkVersion: e.forkVersion || null, forkApiVersion: e.forkApiVersion || null,
         activeVersion: e.published && !(e.mode === 'override' && compatibilityBlocked)
           ? e.published.version || (e.mode === 'default' ? e.version : e.forkVersion) || null : null,
         availableVersion: b?.version || null, apiVersion: catalog.apiVersion, compatibilityBlocked, compatibilityReason,
@@ -507,7 +559,7 @@ export function skillsView({ studio, appRoot = APP } = {}) {
       const r = json(join(root, id, 'receipt.json'));
       if (r) backups.push({ ...r, restorable: !r.recovered && existsSync(join(root, id, 'before', '3')) });
     }
-    return { ok: true, revision: s.revision, release: s.release, apiVersion: catalog.apiVersion, held: Boolean(s.held), holdReason: s.holdReason,
+    return { ok: true, storage: 'sqlite', history: sqlSkillHistory(studio), revision: s.revision, release: s.release, apiVersion: catalog.apiVersion, held: Boolean(s.held), holdReason: s.holdReason,
       recovery: s.recovery, pending: items.filter((e) => e.pending).length + Number(Boolean(s.held)),
       items, backups: backups.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 20) };
   } catch (e) { return { ok: false, error: e.message, items: [], backups: [], pending: 1 }; }

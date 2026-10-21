@@ -157,7 +157,7 @@ function readBounded(studioRoot, path, limit) {
 }
 
 /** Read-only view. Call again on each turn to pick up creator edits and deletions. */
-export function readSkillPreferences({ studio } = {}) {
+export function readSkillPreferences({ studio, includeProse = true } = {}) {
   const result = { schema: 1, status: 'default', path: PREFERENCES_PATH, resolved: structuredClone(PREFERENCE_DEFAULTS), overrides: {}, diagnostics: [], prose: [] };
   if (!studio || typeof studio !== 'string') return result;
   let root;
@@ -177,7 +177,7 @@ export function readSkillPreferences({ studio } = {}) {
       result.diagnostics.push(...validated.diagnostics.map((item) => ({ ...item, path: `${PREFERENCES_PATH}:${item.path}` })));
     }
   }
-  for (const path of PROSE_PATHS) {
+  for (const path of includeProse ? PROSE_PATHS : []) {
     const file = readBounded(root, path, PREFERENCE_LIMITS.proseBytes);
     if (file.error) diagnostic(result.diagnostics, path, file.error);
     else if (!file.missing && file.text.trim()) result.prose.push({ path, text: file.text });
@@ -185,9 +185,9 @@ export function readSkillPreferences({ studio } = {}) {
   return result;
 }
 
-export function skillPreferencesBrief({ studio } = {}) {
+export function skillPreferencesBrief({ studio, includeProse = true } = {}) {
   if (!studio) return '';
-  const view = readSkillPreferences({ studio });
+  const view = readSkillPreferences({ studio, includeProse });
   return [
     'VIDEO OCTOPUS CREATOR PREFERENCES — contract schema 1',
     'These options are creator-owned presentation data. Precedence for supported creative choices: current explicit request and explicit project choices, then explicitly saved validated structured options, then clear creative prose, then bundled defaults. Resolved values fill unset fields with defaults; they are not evidence that the creator chose those defaults. Use explicit overrides to tell saved choices apart. Prose can guide an unset option only within its supported bounds; clarify ambiguity before dependent work and never silently persist inferred settings.',

@@ -1,20 +1,23 @@
 # Core skills, preferences and custom workflows
 
-This implementation is included in v0.1.0-beta.1. Nine Node test files passed on macOS: 142 tests with zero failures or skips. Separate browser tests passed 11 managed-skill update/restart scenarios, and fake CLIs exercised all three actual adapters. Generated-code isolation passed 11 app-preview checks, nine headless-rendering groups and 12 independent security checks. Seven software-decoding/export tests now pass on both Mac and native Windows after correcting Windows decoder arguments. The Windows hosted check also passed first launch, app-offered FFmpeg installation and the original failing MP4 fixture. See [isolated verification](managed-skills-verification.md).
+The current unreleased manager uses SQLite as the authority for skill content, versions and choices. See [learning and storage](learning-and-storage.md).
+
+Historical release evidence: the prior file-authoritative implementation was included in v0.1.0-beta.1. Nine Node test files passed on macOS: 142 tests with zero failures or skips. Separate browser tests passed 11 managed-skill update/restart scenarios, and fake CLIs exercised all three actual adapters. Generated-code isolation passed 11 app-preview checks, nine headless-rendering groups and 12 independent security checks. Seven software-decoding/export tests now pass on both Mac and native Windows after correcting Windows decoder arguments. The Windows hosted check also passed first launch, app-offered FFmpeg installation and the original failing MP4 fixture. See [isolated verification](managed-skills-verification.md).
 
 ## Ownership
 
 | Owner | Location | Update policy |
 | --- | --- | --- |
 | Application | `core/skills.json`, `starter/.claude/skills/` | Core code and matching instructions ship together. |
-| Creator | `<studio>/preferences/skills.json` | Validated supported options; never rewritten by an updater. |
+| Creator | SQLite instruction versions; `preferences/skills.json` projection | Validated supported options; project versions are pinned. |
 | Creator | `<studio>/memory/`, `BRAND.md`, `STYLE.md` | Creative notes; excluded from starter updates, even when unchanged or deleted. |
-| Creator | `<studio>/skills/overrides/<id>/` | Saved custom version of a core workflow; never automatically merged. |
-| Creator | `<studio>/skills/custom/<folder>/` | Independent skill; use a unique discovery name. |
+| Creator | SQLite skill history; `skills/overrides/<id>/` working copy | Saved custom core version; never automatically merged. |
+| Creator | SQLite skill history; `skills/custom/<folder>/` working copy | Independent skill; use a unique discovery name. |
 | Manager | `<studio>/.claude/skills/` | Exactly one active copy per selected identity/name. |
-| Manager | `<studio>/.studio/skill-manager/` | Choices, hashes, revision tokens, journal and backups. |
+| Manager | `<studio>/.studio/studio.sqlite` | Authoritative accepted bytes, choices, hashes, revision tokens and retained snapshots. |
+| Manager | `<studio>/.studio/skill-manager/` | Generated state, publication journal and displaced-file backups. |
 
-Preferences are the default customization path. All harnesses inject current validated options, bounded creative prose and selection availability into their context, including resumed turns. The six core skills document their supported inputs. See [the preference contract](skill-preferences.md). This guides agents; it does not sandbox tools or prove editing results.
+Preferences are the default customization path. All harnesses inject validated options and skill availability. New projects receive pinned brand/instruction/skill versions; unscoped chats use current studio context. The six core skills document their supported inputs. See [the preference contract](skill-preferences.md). This guides agents; it does not sandbox tools or prove editing results.
 
 Generated visual code has a separate rendering boundary: scoped local assets, no external network or workers, and no privileged editor access. Existing scene kits, seeking and creator overrides remain supported. Agent tools and third-party skills are outside that boundary.
 
@@ -48,11 +51,11 @@ Direct edits to active copies are preserved on refresh. If both the active core 
 
 ## Activation and recovery
 
-Startup reconciles core skills before agent work. An app update waits for idle work, uses the fast-forward Git updater and requests a supervised restart. The restarted process activates the new catalog. Changed Node/package requirements require a manual installation step. Core requirements are notices, not automatic dependency/model installs.
+Startup reconciles core skills from SQLite before agent work. Missing generated files regenerate; external edits require explicit import or rebuild. The file-based state mirror cannot override database choices. An app update waits for idle work, uses the fast-forward Git updater and requests a supervised restart. The restarted process activates the new catalog. Changed Node/package requirements require a manual installation step. Core requirements are notices, not automatic dependency/model installs.
 
 Unchanged owned helper scripts in `tools/` use the separate preserving starter updater. Modified helpers remain, and incoming copies wait in `.studio/updates/`; deleted helpers stay deleted. Other studio instructions/library templates remain optional. Creator-owned preference and brand files are excluded from all starter update plans.
 
-Manager changes stage copies and recheck current fingerprints before committing. A journal covers active publication, saved forks, independent sources and state. Original roots move into `backups/<transaction>/before/`; state is the final commit point. After interruption, a completed state finishes bookkeeping; otherwise the previous roots return and displaced files remain in `interrupted/`. No backup is automatically pruned.
+Manager changes stage copies and recheck current fingerprints before committing. A journal covers active publication, saved forks, independent sources and state. Original roots move into `backups/<transaction>/before/`; the SQLite transaction is the final commit point. After interruption, a committed database snapshot finishes bookkeeping; otherwise the previous roots return and displaced files remain in `interrupted/`. No backup is automatically pruned.
 
 Restore validates snapshot metadata, backs up current choices and holds the restored snapshot until resume. It cannot activate incompatible/unknown core publications; incompatible restored forks stay saved but unpublished. Restoring skills does not roll back app code. First-migration backups and malformed states may need manual recovery. Full power-loss durability remains unverified.
 

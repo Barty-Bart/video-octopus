@@ -1,3 +1,48 @@
+# v0.1.0-beta.2
+
+Adds Learning, profile-specific brands and SQLite-backed skills/instructions.
+Choose a profile and approved learned format in New video to include their brand,
+instructions, core workflows and selected personal skills. Existing videos retain
+their saved versions when a brand or learned format changes.
+
+## Included
+
+- Reference studies with optional local frame extraction, evidence review,
+  approved format versions and reusable workflow skills/assets.
+- Profile brand onboarding from a website, using the selected agent, with review
+  before approval. Multiple learned formats can belong to one profile.
+- Editable skill explanations, Core/Customized core/Personal ownership, retained
+  versions, shared instructions and database backup/recovery.
+- New studio storage in OS application data. Existing studio paths, recordings
+  and editor files stay in place; accepted skill data migrates to SQLite.
+
+## Updating
+
+Requires Node 22.13+ on 22.x or 23.4+ (Node 24 recommended). No npm install or
+separate database service is required. Back up your studio before updating.
+Settings → Updates → Check for updates offers the update for Git installations.
+If your installed updater reports changed runtime requirements, stop the app,
+run `git pull --ff-only` in its checkout, and start it again with `./start.sh`
+(macOS) or `start.cmd` (Windows). Do not delete local settings or the studio.
+
+Incomplete onboarding remains incomplete after the update. Open Setup to revisit
+it, or use Settings → Brand profiles and Learning from an existing setup.
+An update does not reset your database or settings.
+
+## Verified and remaining limits
+
+On macOS with Node 24.21.0: 167 isolated tests and 14 runtime integration groups
+passed, including synthetic frame extraction, fake-agent brand/learning approval,
+project context pins, backup/restore and origin rejection. This does not establish
+real-provider study quality or new native Windows/Linux storage behavior.
+
+Existing Python environments in other studios and standalone SAM checkpoint files
+are not automatically discovered. This update does not fix that detection gap or
+install packages/models. After Effects export and timed overlays remain deferred.
+See [learning and storage](learning-and-storage.md) for migration and recovery details.
+
+---
+
 # v0.1.0-beta.1
 
 Initial source prerelease of Video Octopus, a local browser video editor using a

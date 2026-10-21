@@ -25,7 +25,8 @@ a deliberate test setup; existing smoke tests may otherwise fetch model weights.
 
 - App-owned defaults are in `starter/.claude/skills/` and `core/skills.json`.
   Ship both together, keep stable IDs and update versions/API compatibility.
-- Supported preferences live in the studio's `preferences/skills.json`.
+- SQLite in `<studio>/.studio/studio.sqlite` owns accepted skill bytes, choices, learning versions, profile brands/assets, shared instructions and project context pins. Read `docs/learning-and-storage.md` before changing this contract; agent files are projections. Existing media and timeline files retain their contracts.
+- Supported preferences use the `preferences/skills.json` schema, stored in SQLite instruction versions after migration. Generated files require explicit import; new projects pin their brand, instructions and selected skill snapshot.
   Creator forks/custom skills are retained separately; `.claude/skills/` is the
   publication used by agents. Never overwrite modified creator files during an
   app update or silently merge free-form skill instructions.
@@ -47,7 +48,7 @@ studio ownership. `server/claude.mjs`, `codex.mjs` and `pi.mjs` are the adapters
 `server/export*.mjs`, `scene-frames.mjs` and `backgrounds.mjs` render media;
 `generated-sandbox.mjs` implements the generated-code boundary.
 
-Use Node 22.2 or newer; verified versions and platform limits are documented.
+Use Node 22.13+ (22.x) or 23.4+; verified versions and platform limits are documented.
 Run `node --test test/*.test.mjs` for isolated unit/adapter tests. Browser suites
 need an existing Playwright installation and Chromium; commands are in the
 verification document. `test/fresh-install.mjs` is restricted to disposable

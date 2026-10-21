@@ -2,7 +2,7 @@
 
 # This studio
 
-This folder is a video studio: the projects, notes, skills and tools the assistant uses to edit the creator's videos. Video Octopus starts the assistant with this studio or one of its projects as the working folder. Read this file, the active skills in `.claude/skills/` and the supplied creator-preference context. Projects, preferences, memory and brand/style notes belong to the creator; app updates maintain the managed technical skills separately.
+This folder is a video studio: the projects, notes, skills and tools the assistant uses to edit the creator's videos. Video Octopus starts the assistant with this studio or one of its projects as the working folder. Read the supplied canonical instructions, selected skill paths and creator-preference context. When the app supplies pinned project context, use that version even if legacy files differ. Projects, preferences, memory and brand/style notes belong to the creator; app updates maintain the managed technical skills separately.
 
 ## Folders
 - `projects/<name>/`: one folder per video.
@@ -11,9 +11,9 @@ This folder is a video studio: the projects, notes, skills and tools the assista
   - `renders/`: videos to watch, with version numbers (`<project>_intro_v2.mp4`); never overwrite a render.
   - `WORKLOG.md`: one line per step done. `project.json`: Video Octopus's settings for the project (its format, blocks, canvas layout).
 - `recordings/`: recorder takes Video Octopus lists under Recordings.
-- `BRAND.md` (who the creator is, what they make, tone, colours, fonts, the brand files in `library/brand/`; Video Octopus's Setup writes it) and `STYLE.md` (the fuller style guide, when there is one): the studio's own style. **Read them before planning or building anything.**
-- `memory/`: what you know about the creator. `preferences.md` (creative editing preferences) and `style.md` (brand and style). **Read both before any edit**, within the preference scope below.
-- `preferences/skills.json`: optional, creator-owned supported options with `schema: 1`. The app resolves defaults, validates and supplies them to Claude Code, Codex and pi. It re-reads them each turn and sends changed context to resumed chats. Missing file means bundled defaults; app updates never create or rewrite this file in an existing studio.
+- SQLite owns profile brands and their assets. Use the app-supplied selected brand and learned format; never mix in another profile or legacy global BRAND.md/STYLE.md. Brand profiles in Settings is the editor.
+- Shared creative notes are versioned in SQLite through Settings → Instructions. Legacy `memory/*.md` files are imported once; project context contains the accepted version. Keep profile identity in Brand profiles.
+- `preferences/skills.json`: supported options with `schema: 1`, saved in SQLite instruction versions. The app validates and supplies the pinned project version to Claude Code, Codex and pi. A missing document means bundled defaults. External edits require explicit import.
 - `library/`: reusable things for every project (brand files, backgrounds, sounds, styles, components, B-roll, stills, resources). See `library/README.md`.
 - `.claude/skills/`: the published active technical skills; do not edit this managed copy. A core skill can be selected or an explicit custom fork can be created in Settings → Updates. A fork has to be reviewed when its skill API is incompatible; don't use a cached old skill or bypass an unavailable workflow. Includes `object-separation` (local masks in `work/objsep/<name>/`; model picked/downloaded in Setup). `tools/` includes join check and `tools/cut/apply_edit.py` (render a saved cut, re-time graphics). The Cut Editor is built into Video Octopus's Cut tab.
 - `.studio/`: Video Octopus's files about this studio. `formats.json` adds or changes formats and Short styles (merged over the app's own); `starter.json` records what the starter put here.
@@ -49,12 +49,12 @@ The assistant uses preferences while doing the edit; saving the file alone doesn
 - **Don't make things up**: real names, prices, features and links only; mark anything unconfirmed, and label planned things "in development".
 - Graphics complement what's said instead of repeating it. A brand's own material uses that brand's font and colours.
 - Log each step in the project's `WORKLOG.md` (one line: what, the numbers, the output file).
-- "Our style" or "house style" in a brief means `BRAND.md`, `STYLE.md`, `memory/style.md`, `memory/preferences.md` and the look of the projects the creator approved.
+- "Our style" or "house style" means the selected profile brand and approved learned format, together with explicit project choices.
 
 ## Remembering
-- When the creator states a lasting preference ("pauses feel too tight", "never a zoom on the outro"), add **one line to `memory/preferences.md`, in their words** (dated). Brand and style facts (fonts, colours, logo, the look) go in `memory/style.md`. Always write them to these files, not only to your own memory: the files travel with the studio and every session reads them.
-- If the creator asks for a lasting supported option (for example a 0.5-second kept pause or no automatic camera zooms), edit only the relevant fields in `preferences/skills.json` and preserve unrelated values; validate against the supplied contract, including related bounds. Keep a prose explanation when useful. Never copy private examples into core skills or replace a creator-owned file with a starter template.
-- Don't add guesses, and don't remove lines unless the creator says so. Unsure where it goes: `memory/preferences.md`.
+- Propose lasting shared preferences in the creator’s words for Settings → Instructions. Brand identity/style facts belong to the selected Brand profile; video-editing rules belong to a reviewed Learning proposal. Do not write directly to SQLite or silently change accepted state.
+- For a requested supported option, propose only the relevant `preferences/skills.json` fields and preserve unrelated values. Save through Instructions; external file edits require explicit import. Never modify generated project context or core skills.
+- Don't add guesses or silently remove accepted guidance. Ask when the intended profile or scope is unclear.
 - Reusable pieces (a sound, a background, a card, a component) go into `library/`, with one line in that folder's `INDEX.md` (what it is, where it came from, licence, date).
 
 ## Running the scripts

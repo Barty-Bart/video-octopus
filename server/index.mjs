@@ -27,6 +27,8 @@ import { buildSteps, renderKind } from './built.mjs';
 import { appRoute } from './setup.mjs';
 import { onboardingRoute, ffmpegReady, setupBusy } from './onboarding.mjs';
 import { createStudio, defaultStudioPath } from './starter.mjs';
+import { profileRoute, profileBusy, killProfileResearch, createConfiguredProject, pinnedContext, profilePalette } from './profiles.mjs';
+import { learningRoute, learningProjectContext, projectLearning, guardLearnedStep, learningBusy, killLearning } from './learning.mjs';
 import { assistantRoute, killAssistant, assistantBusy } from './assistant.mjs';
 import { onSettingsChange, restartWhenIdle, section, transcribeHow } from './settings.mjs';
 import { listBackgrounds, useLibraryBackground, saveUpload, saveToLibrary, generateBrief, libraryFile, bgJobRoute, backgroundsBusy } from './backgrounds.mjs';
@@ -54,7 +56,7 @@ const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; ch
 // ---- per-project chat sessions and event streams ----
 const chats = new Map();
 setActivityProbe(() => [
-  ([...chats.values()].some((c) => c.busy) || assistantBusy()) && 'An agent is working or awaiting your reply.',
+  ([...chats.values()].some((c) => c.busy) || assistantBusy() || learningBusy() || profileBusy()) && 'An agent is working or awaiting your reply.',
   schedulesBusy() && 'A scheduled run is running or queued.',
   (exportsBusy() || layersBusy() || audioBusy() || backgroundsBusy()) && 'An export or render is running.',
   recorderBusy() && 'Save or dismiss unfinished recordings first.',
@@ -84,7 +86,8 @@ function chatFor(id) {
     const chat = makeChat(id, () => projectContext(id));
     // pi runs inside the project's folder: weaker models write paths like "work/x.json" relative to where they run.
     // (Claude Code and Codex run in the studio folder, where they find its skills and notes; pi gets those passed in.)
-    if (chat.engine === 'pi') chat.cwd = () => projectDir(id) || settings().studio;
+    chat.projectScope = () => pinnedContext(id, projectDir(id));
+    chat.cwd = () => (chat.projectScope() || chat.engine === 'pi') ? projectDir(id) || settings().studio : settings().studio;
     // Auto mode: a change outside this project's folder asks first (server/outside-hook.mjs; Claude Code only).
     chat.guard = () => projectDir(id);
     chat.listeners.add((ev) => broadcast(id, ev));
@@ -128,6 +131,7 @@ function projectContext(id) {
     `Direct edits: the creator can drag and resize the titles, cards and boxes of an HTML scene in Video Octopus. The moves are in work/overrides.json {v: 1, scenes: {"<scene id>" or "*" (every scene): {"<element id>": {dx, dy (frame pixels), scale (around the element's centre)}}}}. Scenes that load the Video Octopus scene kit (assets/octopus-scene.js, a copy of ${KIT}) apply them by themselves whenever they draw, so renders pick them up: don't bake them into the scene code, and keep element ids stable. To make an element movable, draw it inside Octopus.el('<id>', [x, y, w, h], () => { ... }, { label }) in a canvas scene, or give it data-studio="<id>" in an HTML scene.`,
     `Keyframes: an element's entry in work/overrides.json can also hold keys: [{t, dx, dy, s, o, e}], the creator's own keyframes from the scene timeline (◆). t = seconds on the render's timeline (the same as the production sheet), dx/dy = frame pixels, s = scale around the element's centre, o = opacity 0–1 (multiplies the element's own), e = "linear" or "hold" (default: ease in and out) for the way to the next key. Leave "at" out of entries you write: Video Octopus stamps the creator's own moves with it, and only those go into the change package. The kit (kit 2) interpolates them on top of your own animation whenever the scene draws, so the preview and every render show them; with keys, they replace that element's dx/dy/scale. Respect them: when you change a scene, keep element ids and their timing, don't animate the same property against the creator's keys, and if you have to move or rename a keyed element, say so and move its keys along with it (keep their times on the render timeline). Never remove keys unless the creator asks. If a project's assets/octopus-scene.js is older than kit 2, copy ${KIT} over it before relying on keys.`,
     ...(dir ? kitContext(dir, meta) : []),
+    ...learningProjectContext({...meta, learning: projectLearning(id,meta)}),
     blocksContext(),
     shotsContext(),
     `Everything in this project's window is a file you can change, and the window follows within a second: the layout and frame (project.json layout), the blocks (work/blocks.json), sound cues (work/sfx.json), notes and Look changes (work/notes.json), keyframes and moves (work/overrides.json), the post kit (work/post.json). So when the creator asks for a change anywhere in the window, make it in the file rather than describing where to click. Read the file first and change only the keys you mean to (keep the rest exactly). Changes you make yourself don't go into the change package; the creator's do.`,
@@ -319,7 +323,7 @@ function projectView(id, dir) {
   const busy = Boolean(chats.get(id)?.busy); // read only: a GET never makes or switches the chat
   const pipeline = meta.type ? pipelineStatus(dir, meta.type, { lines: true, seen: railSeen(id) }) : null;
   return {
-    id, name: meta.name || id, type: formatId(meta.type), shortStyle: meta.shortStyle || null, app: Boolean(projectMeta(dir)),
+    id, name: meta.name || id, learning: projectLearning(id,meta), type: formatId(meta.type), shortStyle: meta.shortStyle || null, app: Boolean(projectMeta(dir)),
     path: dir, layout: normalize(meta.layout, meta.type),
     // The steps with their words, each done step's line, and the newest step finished since the page last looked.
     roles: r, canvas: canvasSources(dir), proxies, pipeline,
@@ -327,7 +331,7 @@ function projectView(id, dir) {
     runningAt: busy ? stepRuns.get(id)?.at || null : null, // when it started (the dock shows how long it has run)
     cut: cutPlan(dir), busy, renders: listRenders(dir),
     export: exportInfo(id, dir), recorder: recorderChoices(id), recUnfinished: unfinishedTakes(id), scenes: scenesSummary(dir), kit: kitSummary(dir, meta), editing: section('editing'),
-    brandColors: section('look').colors, // Settings → Look → Brand (and the Brand kit): the canvas's border picker offers them
+    brandColors: profilePalette(id) ?? section('look').colors, // Settings → Look → Brand (and the Brand kit): the canvas's border picker offers them
     blocks: blocksSummary(dir), prepare: prepareState(id, dir, busy),
     layerExports: listLayerExports(dir), // Layers and Timeline file exports (server/export-layers.mjs)
     textExports: listTextExports(dir, probeFile), // Audio, Transcript and Subtitles exports (server/export-text.mjs)
@@ -406,6 +410,8 @@ async function route(req, res) {
   // Settings → Updates: the app's update (git), Restart, starter files, Open Video Octopus when I log in (server/updates.mjs).
   if (await updatesRoute(req, res, url, { send, body, restart: () => shutdown(RESTART_CODE) })) return;
   if (await schedulesRoute(req, res, url, { send, body })) return;
+  if (await profileRoute(req, res, url, { send, body, serveFile })) return;
+  if (await learningRoute(req, res, url, { send, body, serveFile })) return;
   // Which agent runs the chats (Settings → Claude): Claude Code or Codex, and what each install reports.
   if (p === '/api/app/engines' && req.method === 'GET') return send(res, 200, await enginesView(url.searchParams.has('refresh'), { models: url.searchParams.has('models'), source: url.searchParams.has('source') }));
   // Archived projects: moved aside into <projects>/_archive/ (hidden from Home, never deleted), listed and brought back.
@@ -465,7 +471,7 @@ async function route(req, res) {
     const b = await body(req);
     if (!b.name?.trim()) return send(res, 400, { error: 'Give the project a name.' });
     try {
-      const id = createProject(b.name.trim(), b.type, b.style);
+      const id = createConfiguredProject(b);
       const dir = projectDir(id);
       logUse('project.created', { project: id, type: b.type || null });
       if (b.take) { importTake(dir, b.take); logUse('take.imported', { project: id }); makeProxies(dir, (ev) => broadcast(id, ev)); }
@@ -608,10 +614,11 @@ async function route(req, res) {
     try {
       // Transcribing steps follow Settings → Transcription (a cloud service without its key: this computer, said once).
       const tx = ['prepare', 'transcribe'].includes(b.step) ? await transcribeHow({ fill: b.step === 'prepare' }) : null;
-      const text = stepBrief(dir, meta.type, b.step) || stepPrompt(dir, meta.type, b.step, { transcribe: tx?.text });
+      let text = stepBrief(dir, meta.type, b.step) || stepPrompt(dir, meta.type, b.step, { transcribe: tx?.text });
       // The chat shows where the step's work starts as one line, "▶ Build the intro · started 14:32", with Video Octopus's
       // brief folded under it (the user event's brief), and names a new session after the step.
       const st = pipelineStatus(dir, meta.type), step = [...(st?.steps || []), ...(st?.more || [])].find((x) => x.id === b.step);
+      text += guardLearnedStep(id,dir,step);
       if (tx?.fallback && !state().noKeyTold?.[tx.fallback]) {
         chatFor(id).emit({ t: 'note', text: `Transcription is set to ${tx.fallback} in Settings, but no ${tx.fallback} key is saved, so ${step?.name || 'this step'} transcribes on this computer (${tx.model}). Add the key in Settings → Transcription to use ${tx.fallback}.` });
         patchState({ noKeyTold: { ...(state().noKeyTold || {}), [tx.fallback]: new Date().toISOString() } });
@@ -846,7 +853,7 @@ activateStudioSkills(); // recover interrupted transactions and publish matching
 const server = createServer((req, res) => {
   const pathname = req.url?.split('?')[0];
   const write = pathname?.startsWith('/api/') && !pathname.startsWith('/api/app/updates') &&
-    pathname !== '/api/app/skills/install' && !['GET', 'HEAD'].includes(req.method);
+    pathname !== '/api/app/skills/install' && pathname !== '/api/instructions' && !/^\/api\/learning\/(skills(?:\/|$)|backups\/[^/]+\/restore$|sessions\/[^/]+\/(approve|publish)$)/.test(pathname) && !['GET', 'HEAD'].includes(req.method);
   const finish = write ? beginWrite() : () => {};
   route(req, res).catch((e) => { console.error(e); try { send(res, 500, { error: e.message }); } catch {} }).finally(finish);
 });
@@ -867,6 +874,6 @@ server.listen(PORT, '127.0.0.1', () => {
   startUpdateChecks();
 });
 // Stop everything Video Octopus started. Restart exits with RESTART_CODE, and start.sh / start.cmd start the server again.
-const shutdown = (code) => { for (const c of chats.values()) c.kill(); killAssistant(); stopScheduler(); closeAll(); stopAllExports(); stopAllLayers(); stopAllAudio(); process.exit(Number.isInteger(code) ? code : 0); };
+const shutdown = (code) => { for (const c of chats.values()) c.kill(); killAssistant(); killLearning(); killProfileResearch(); stopScheduler(); closeAll(); stopAllExports(); stopAllLayers(); stopAllAudio(); process.exit(Number.isInteger(code) ? code : 0); };
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);

@@ -1,11 +1,7 @@
-// First-time Setup (#/setup): a checklist with live status, where each failing row's Fix asks the Video Octopus
-// assistant (which asks you before each step), then three short steps, each one skippable: About you (the answers go
-// to the app's local/profile.json), Your brand (uploads into the studio's library/brand, the logo's colours, fonts) and
-// Motion skills (the recommended GitHub repo into the studio's .claude/skills). The answers, colours and files become
-// the studio's BRAND.md, and "Write my style" asks the assistant for a fuller STYLE.md (web/brand.js).
+// First-time setup checks local tools, then offers skippable database-backed brand profiles.
 import { $, esc, h, api, toast, confirmBox } from './ui.js';
 import { support, browserName } from './recorder.js';
-import { aboutForm, saveAnswers, brandKit, skillsPicker, FROM_STUDIO, WRITE_STYLE } from './brand.js';
+import { profileSettings } from './profiles.js';
 
 const MARK = {
   ok: '<svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><circle cx="9" cy="9" r="8.5" class="m-ok"/><path d="M5.4 9.3l2.3 2.3 4.9-5" class="m-tick"/></svg>',
@@ -20,12 +16,12 @@ const AGENT = { ok: ['ok', 'Ready'], action: ['warn', 'Needs a look'], missing: 
 // "Create my studio": a folder field (the suggested ~/Video Octopus filled in), a live note on that folder (a cloud-synced
 // place, a folder that's already there) and the button. Creating copies Video Octopus's starter in without overwriting
 // anything and makes it the studio. Used by Setup and by Settings → Folders.
-export function studioCreator({ suggest, onCreated, button = 'Create my studio' } = {}) {
+export function studioCreator({ suggest, onCreated, button = 'Set up local storage' } = {}) {
   const el = h(`<form class="su-create">
     <div class="su-pick"><input class="field mono" name="path" value="${esc(suggest?.shown || '~/Video Octopus')}" spellcheck="false" autocomplete="off" aria-label="Where your studio goes"><button class="btn small primary">${esc(button)}</button></div>
     <p class="su-warn" role="status" hidden></p>
     <p class="sub su-note" aria-live="polite"></p>
-    <p class="sub">A new folder with everything Claude needs to edit with you: its instructions (CLAUDE.md), your notes on preferences and style, the skills for Clean up, Plan the scenes, Add zooms and object separation, a library, and folders for projects and recordings. It's yours: app updates never change it.</p>
+    <p class="sub">SQLite stores your skills, versions and learning. Video Octopus manages media files alongside it. The suggested location is local application storage; you can choose another location. Existing studios can stay where they are.</p><p class="sub">Optional after setup: open <a href="#/learning">Learning</a> to teach a reusable format, or start a project straight away.</p>
   </form>`);
   const input = el.elements.path, warn = $('.su-warn', el), note = $('.su-note', el);
   const show = (info) => {
@@ -59,7 +55,7 @@ export async function setupPage(ctx, { back = '#/', assistantPanel }) {
   document.title = 'Setup · Video Octopus';
   // One screen: what's on this computer (agents, tools, and the machine's model picks on request), then a few optional
   // steps that make the studio yours. Nothing is connected, installed or downloaded until you click.
-  const [st, prof] = await Promise.all([api('/api/app/setup'), api('/api/app/profile').catch(() => ({}))]);
+  const st = await api('/api/app/setup');
   const el = h(`<div class="app-page setup-page">
     <div class="set-main"><div class="set-wrap su-wrap">
       <div class="su-top"><a class="brand" href="#/"><span class="logo" aria-hidden="true"><i></i></span>Video Octopus</a><span class="gap"></span>
@@ -81,26 +77,8 @@ export async function setupPage(ctx, { back = '#/', assistantPanel }) {
 
       <div id="youView" hidden>
       <div class="set-head"><h1>Make it yours.</h1></div>
-      <p class="sub lead">Three short steps so Claude edits like you. Skip any of them: Settings → Brand has them all, later.</p>
-      <section class="set-group su-q ob-steps">
-        <div class="ob-tabs" role="tablist" aria-label="Make the studio yours">
-          <button type="button" role="tab" class="ob-tab" data-step="about"><i>1</i>About you</button>
-          <button type="button" role="tab" class="ob-tab" data-step="brand"><i>2</i>Your brand</button>
-          <button type="button" role="tab" class="ob-tab" data-step="skills"><i>3</i>Motion skills</button></div>
-        <div class="ob-pane" role="tabpanel" data-pane="about">
-          <div id="aboutBox"></div>
-          <div class="su-q-actions"><button type="button" class="btn small ghost" id="fromStudio" title="The assistant reads your studio's notes and fills in what it finds">Fill in from my studio</button><span class="gap"></span>
-            <span class="set-saved" id="saved" aria-live="polite"></span><button type="button" class="btn small ghost" data-skip="brand">Skip</button><button type="button" class="btn small dark" id="saveQ">Save and next</button></div></div>
-        <div class="ob-pane" role="tabpanel" data-pane="brand" hidden>
-          <p class="sub">Your logo, photos of you, product images, fonts, and videos or thumbnails whose look you like. They go into your studio's library, and your logo gives your brand colours.</p>
-          <div id="kitBox"></div>
-          <div class="su-q-actions"><span class="gap"></span><button type="button" class="btn small ghost" data-skip="skills">Skip</button><button type="button" class="btn small dark" data-next="skills">Next</button></div></div>
-        <div class="ob-pane" role="tabpanel" data-pane="skills" hidden>
-          <p class="sub"><b>Which motion graphics skills do you want?</b> Claude uses them to build your graphics, B-roll and explainers. You can add more from any GitHub repo later (Home → Skills).</p>
-          <div id="skBox"></div>
-          <div class="su-q-actions"><span class="gap"></span><button type="button" class="btn small ghost" data-next="mine">Skip</button><button type="button" class="btn small dark" data-next="mine">Done</button></div></div>
-        <div class="ob-mine" id="mine"></div>
-      </section>
+      <p class="sub lead">Set up each brand separately, then learn its video formats. This step is optional.</p>
+      <section class="set-group su-q ob-steps"></section>
 
       <div class="su-foot"><button type="button" class="su-link" id="youBack">← Back to the scan</button><span class="gap"></span><button type="button" class="btn ghost" id="skip">Skip for now</button><button type="button" class="btn primary" id="finish">Done</button></div>
       </div>
@@ -401,78 +379,25 @@ export async function setupPage(ctx, { back = '#/', assistantPanel }) {
   $('#again', el).onclick = checkAll;
 
   // ---- the assistant on the right; when it finishes a reply, check again ----
-  let fromStudio = false;
   const panel = assistantPanel({
     hint: 'Press Fix on a row and I take it from there, asking before each step.',
     onResult: async () => {
       const ids = fixing.size ? [...fixing] : [...rows.keys()].filter((id) => machineOn || rows.get(id).card !== 'machine');
       fixing.clear();
       await Promise.all(ids.map(check));
-      // "Fill in from my studio": the assistant asks before it writes, so the answers land a reply or two later.
-      if (fromStudio) { const p = await api('/api/app/profile').catch(() => ({})); if (p.who || p.make || p.tone || p.brand || p.creators || p.formats?.length) { fromStudio = false; fill(p, true); } }
+      drawSteps(rows.get('folders')?.state === 'ok');
     },
   });
   $('#asCol', el).append(panel.el);
 
-  // ---- make the studio yours: About you → Your brand → Motion skills, then BRAND.md and "Write my style" ----
-  const about = aboutForm(st.formats);
-  $('#aboutBox', el).append(about.el);
-  const fill = (p, onlyEmpty = false) => about.fill(p || {}, onlyEmpty);
-  fill(prof || {});
-  let kit = null, skills = null, studioThere = null;
-  // The brand and skills steps need the studio: drawn once it's there, again when it's just been created.
-  const drawSteps = (there) => {
-    if (there === studioThere) return;
-    studioThere = there;
-    kit = brandKit({ onChange: drawMine });
-    skills = skillsPicker({ onInstalled: () => drawMine() });
-    $('#kitBox', el).replaceChildren(kit.el);
-    $('#skBox', el).replaceChildren(skills.el);
-    drawMine();
-  };
-  const show = (step) => {
-    el.querySelectorAll('.ob-tab').forEach((t) => { const on = t.dataset.step === step; t.classList.toggle('on', on); t.setAttribute('aria-selected', String(on)); });
-    el.querySelectorAll('.ob-pane').forEach((p) => { p.hidden = p.dataset.pane !== step; });
-    // Done (or skipped to the end): the steps fold away; the tabs open any of them again.
-    $('#mine', el).classList.toggle('done', step === 'mine');
-    if (step === 'mine') $('#mine', el).scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  };
-  el.querySelectorAll('.ob-tab').forEach((t) => (t.onclick = () => show(t.dataset.step)));
-  el.querySelectorAll('[data-skip],[data-next]').forEach((b) => (b.onclick = () => show(b.dataset.skip || b.dataset.next)));
-  show('about');
-
-  // Under the steps: what the studio now has of its own (BRAND.md, STYLE.md) and "Write my style".
-  async function drawMine() {
-    const [v, rec] = await Promise.all([api('/api/app/brand').catch(() => null), api('/api/app/skills/recommended').catch(() => null)]);
-    const box = $('#mine', el);
-    if (!v?.studio) { box.replaceChildren(h(`<p class="sub">Your answers, colours and brand files become <b>BRAND.md</b> in your studio, which every chat reads.</p>`)); return; }
-    const n = (k, one, many = `${one}s`) => `${k} ${k === 1 ? one : many}`;
-    const sk = rec?.skills?.filter((s) => s.installed).length || 0;
-    const have = [about.any() && 'your answers', v.files.length && n(v.files.length, 'brand file'), v.look.colors.length && n(v.look.colors.length, 'colour'),
-      sk && `${sk} of ${rec.skills.length} motion skills`].filter(Boolean);
-    box.replaceChildren(h(`<div class="ob-minei"><div class="ob-mt"><b>${v.brandMd ? 'Your studio has its own brand notes' : 'Your brand notes'}</b>
-      <span class="sub">${v.brandMd ? `<span class="mono">${esc(v.brandMd)}</span>, which every chat in your studio reads${have.length ? `: ${esc(have.join(', '))}` : ''}.` : 'BRAND.md is written into your studio when you save your answers or add a brand file.'}
-      ${v.styleMd ? ` Style guide: <span class="mono">${esc(v.styleMd)}</span>.` : ' “Write my style” asks the Video Octopus assistant for a fuller style guide (STYLE.md).'}</span></div>
-      <button type="button" class="btn small accent" id="writeStyle"${v.brandMd ? '' : ' disabled'} title="The Video Octopus assistant drafts a fuller style guide (STYLE.md) from BRAND.md, your brand files and the examples you like">${v.styleMd ? 'Update my style' : 'Write my style'}</button></div>`));
-    $('#writeStyle', box).onclick = async () => {
-      try { await panel.send(WRITE_STYLE); toast('The Video Octopus assistant is on it, on the right: it shows its plan and asks before writing STYLE.md.'); }
-      catch (e) { toast(e.message); }
-    };
-  }
-
-  const answers = () => about.values();
-  const saveQ = async () => {
-    try {
-      await saveAnswers(answers());
-      const s = $('#saved', el); s.textContent = 'Saved'; s.classList.add('on'); setTimeout(() => s.classList.remove('on'), 1600);
-      drawMine();
-      return true;
-    } catch (e) { toast(e.message); return false; }
-  };
-  $('#saveQ', el).onclick = async () => { if (!about.any() || await saveQ()) show('brand'); };
-  $('#fromStudio', el).onclick = async () => {
-    fromStudio = true;
-    try { await panel.send(FROM_STUDIO); } catch (e) { fromStudio = false; toast(e.message); }
+  // Profile onboarding uses the same database-backed, reviewable flow as Settings.
+  let profilePanel=null, studioThere=null;
+  const drawSteps=(there)=>{
+    if(there===studioThere)return;studioThere=there;profilePanel?.teardown?.();
+    const steps=el.querySelector('.ob-steps');
+    steps.replaceChildren(h('<h2>Brand profiles</h2><p>Create a profile and enter your brand or research its website. Review the proposal before saving. You can skip this and return in Settings → Brand profiles.</p>'));
+    if(there){profilePanel=profileSettings({makeChat:ctx.makeChat});steps.append(profilePanel);}
+    else steps.append(h('<p>Create or choose your studio first, then add a brand profile here.</p>'));
   };
 
   // ---- two screens: the scan, then "Make it yours" (both skippable), then the app ----
@@ -486,11 +411,11 @@ export async function setupPage(ctx, { back = '#/', assistantPanel }) {
   $('#scanNext', el).onclick = async () => { try { await api('/api/app/setup', { done: true }); } catch (e) { toast(e.message); } view('you'); };
   $('#scanSkip', el).onclick = () => { try { sessionStorage.setItem('studio.setupSkipped', '1'); } catch {} view('you'); };
   $('#youBack', el).onclick = () => view('scan');
-  $('#finish', el).onclick = async () => { if (about.any()) await saveQ(); leave(); };
+  $('#finish', el).onclick = leave;
   $('#skip', el).onclick = leave;
 
   for (const id of rows.keys()) drawRow(id);
   count();
   checkAll();
-  return { teardown: () => { live = false; Object.values(polls).forEach(clearTimeout); panel.destroy(); document.body.classList.remove('in-home', 'in-app-page'); } };
+  return { teardown: () => { live = false; Object.values(polls).forEach(clearTimeout); panel.destroy(); profilePanel?.teardown?.(); document.body.classList.remove('in-home', 'in-app-page'); } };
 }

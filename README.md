@@ -16,7 +16,7 @@ A local video editor with an AI assistant. Record or import footage, edit from t
 | Exports | MP4; WAV, M4A/AAC and MP3; transcript text/Markdown; SRT/VTT and burned captions; layer exports and timeline XML. Tested platform coverage and limitations are listed below. |
 | Project formats | YouTube tutorial, faceless explainer, Short and product explainer. |
 
-> **v0.1.0-beta.1 — source prerelease.** Managed skill updates, generated-visual isolation and Windows export repairs are included. Read the [release notes](docs/release-notes.md) and [verification limits](docs/managed-skills-verification.md) before relying on an untested workflow.
+> **v0.1.0-beta.2 — source update.** Learning, SQLite-backed skills and instructions, brand profiles, and automatic New video context are included. Read the [release notes](docs/release-notes.md) and [verification limits](docs/managed-skills-verification.md) before relying on an untested workflow.
 
 ### Six bundled starter skills
 
@@ -40,7 +40,7 @@ Motion-graphics infrastructure is built in, but a specialized motion-design skil
 Have these ready:
 
 - Git (and repository access for private copies).
-- Node.js **22.2 or newer**. Use a current Node 22 LTS or Node 24 release; verification used 22.23.3 and 24.21.0. The launchers check the minimum before opening the app.
+- Node.js **22.13 or newer**. Use a current Node 22 LTS or Node 24 release (Node 23.0–23.3 is unsupported). This SQLite workflow was tested on Node 24.21.0. The launchers check the minimum before opening the app.
 - Chrome or Edge for the browser UI and recording.
 - For AI work, a separately installed agent and a usable model/provider. You can enter the editor without one.
 
@@ -64,7 +64,7 @@ If a browser does not open, go to <http://127.0.0.1:4800>. There is no applicati
 
 ### First launch and dependencies
 
-The app creates a studio outside the application checkout: `~/Video Octopus` on Mac or `%USERPROFILE%\Video Octopus` on Windows. It contains starter instructions, skills, tools, library folders, projects and recordings.
+The app creates a studio in local application storage by default (for example, `~/Library/Application Support/Video Octopus/Studio` on Mac). Existing studios stay in place. The studio contains the SQLite skill/learning/profile database, project files, recordings and library assets. Skill folders are generated working copies for agents; manage accepted content and versions in Skills. See [storage details](docs/learning-and-storage.md).
 
 Setup scans Claude Code, Codex, LM Studio, Ollama and Pi, and checks tools such as FFmpeg and Python. **Continue works even when dependencies or agents are missing**; this does not make their dependent features ready.
 
@@ -95,8 +95,8 @@ Application checkout/                 App-owned, updated together
   starter/.claude/skills/              Core instructions and supporting files
 
 Your studio/                          Creator-owned
-  preferences/skills.json             Supported editing and presentation options
-  BRAND.md, STYLE.md, memory/          Broader creative preferences and notes
+  preferences/skills.json             Generated supported preference document
+  .studio/studio.sqlite               Accepted skills, instructions, brands and learning
   skills/overrides/<stable-id>/        Saved custom versions of core skills
   skills/custom/<unique-name>/         Independent skills you add yourself
   .claude/skills/                      Active copies prepared for the agents
@@ -106,7 +106,7 @@ Your studio/                          Creator-owned
 
 ### Personalize the result with preferences
 
-For everyday changes, ask the assistant to update your studio preferences. The supported options in `preferences/skills.json` cover tone, pacing, captions, transcription hints, rough-cut pauses/fillers, review detail, B-roll density, zooms and object-separation preview colour. For example:
+For everyday changes, save your shared preferences in Settings → Instructions and your brand in Settings → Brand profiles. Assistant-written file edits require an explicit import. The supported options in `preferences/skills.json` cover tone, pacing, captions, transcription hints, rough-cut pauses/fillers, review detail, B-roll density, zooms and object-separation preview colour. For example:
 
 ```json
 {
@@ -124,7 +124,7 @@ For everyday changes, ask the assistant to update your studio preferences. The s
 
 See [supported preferences](docs/skill-preferences.md) for allowed values and precedence. Omitted options use core defaults. Existing studios do not need a new file until they customize an option; new studios receive an empty template. App updates and **Update starter files** never replace, recreate or stage replacements for your preferences, memory, `BRAND.md` or `STYLE.md`.
 
-All three agents receive validated options and bounded creative notes at startup. Each turn rereads the files and supplies changed context, including in resumed conversations. Invalid options are reported in Settings → Updates and agent context, without rewriting the file. Preferences customize supported choices; they cannot redefine commands, project schemas, timeline units or permissions. These are agent instructions, not a sandbox or a guarantee of the model's output.
+All three agents receive validated options. New videos pin the chosen profile's brand, shared instructions, learned format and selected skill versions; later edits apply to new videos. Legacy projects retain their previous behaviour. Invalid options are reported without rewriting the document. Preferences cannot redefine commands, schemas, timeline units or permissions. Agent instructions are not a sandbox or a guarantee of the model's output.
 
 ### Keep custom workflows separate
 
@@ -213,3 +213,7 @@ Other limitations: layer exports do not preserve every MP4 transition or animate
 No top-level application licence has been selected. [Asset provenance](docs/asset-provenance.md) records the synthetic appearance previews and bundled font notices under `web/fonts/`; third-party models, dependencies and optional skills have separate terms. Do not infer that the whole application or every included asset has the same licence.
 
 Automatic publishing, a managed cloud rendering service and a complete packaged installer are not shipped features.
+
+## Learning and local skill storage (unreleased)
+
+Profiles now have versioned brands and optional website research with review before saving. Shared instructions live in SQLite. New video automatically loads the selected brand, approved format and relevant skills. Profiles and formats can learn from references, with evidence-backed proposals for your review. Approved versions stay pinned to their projects. Skills now live in a local SQLite database with Core, Customized core and Personal views, in-app editing, retained history and recovery. Agents receive generated skill files; video and audio stay as ordinary files. New studios default to local application storage, and existing studios stay in place. See [learning and storage](docs/learning-and-storage.md) for the workflow, migration and backup boundaries.

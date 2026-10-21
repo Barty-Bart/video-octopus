@@ -226,7 +226,7 @@ export function skillsPicker({ repo = null, onInstalled, compact = false } = {})
   let R = null;
   const draw = () => {
     if (R.studio === false) {
-      el.replaceChildren(h(`<div class="ob-none"><b>Create your studio first</b><span class="sub">Skills go into its .claude/skills folder. Create it in Setup’s “Your studio and projects folders” row (or Settings → Folders).</span></div>`));
+      el.replaceChildren(h(`<div class="ob-none"><b>Create your studio first</b><span class="sub">Skills are stored in its local database and published for agents. Create it in Setup’s “Your studio and projects folders” row (or Settings → Folders).</span></div>`));
       return;
     }
     const fresh = R.skills.filter((s) => !s.installed);
@@ -236,7 +236,7 @@ export function skillsPicker({ repo = null, onInstalled, compact = false } = {})
       h(`<div class="ob-sklist" role="group" aria-label="Skills in ${esc(R.repo)}">${R.skills.map((s) => `<label class="ob-sk${s.installed ? ' have' : ''}">
         <input type="checkbox" value="${esc(s.name)}"${s.installed ? ' disabled' : ' checked'}><span class="ob-skt"><b>${esc(s.name)}</b><small>${esc(s.description || '')}</small></span>
         ${s.installed ? '<span class="badge">In your studio</span>' : ''}</label>`).join('')}</div>`),
-      h(`<div class="ob-skact"><span class="sub" data-r="msg">${R.skills.length ? `Video Octopus copies them into your studio's .claude/skills. A skill you already have is never replaced.` : 'No skills found in this repo (Video Octopus looks for folders with a SKILL.md).'}</span><span class="gap"></span>
+      h(`<div class="ob-skact"><span class="sub" data-r="msg">${R.skills.length ? `Video Octopus saves them in your local skill database. A skill you already have is never replaced.` : 'No skills found in this repo (Video Octopus looks for folders with a SKILL.md).'}</span><span class="gap"></span>
         <button type="button" class="btn small dark" data-a="go"${fresh.length ? '' : ' disabled'}>${fresh.length ? `Install ${fresh.length === R.skills.length && fresh.length > 1 ? 'all ' : ''}${fresh.length} skill${fresh.length > 1 ? 's' : ''}` : 'All installed'}</button></div>`));
     const go = $('[data-a=go]', el), msg = $('[data-r=msg]', el);
     const count = () => { const n = el.querySelectorAll('.ob-sk input:checked:not(:disabled)').length; go.disabled = !n; go.textContent = n ? `Install ${n} skill${n > 1 ? 's' : ''}` : fresh.length ? 'Pick a skill' : 'All installed'; };
@@ -306,7 +306,7 @@ export function brandSettings({ formats, ask }) {
     if (v?.studio) {
       const write = h(`<button type="button" class="btn small">Update BRAND.md</button>`);
       write.onclick = async () => { try { const r = await api('/api/app/brand/write', {}); drawNotes(r.view); toast(`BRAND.md ${r.created ? 'written' : 'updated'}: ${r.shown}`); } catch (e) { toast(e.message); } };
-      const style = h(`<button type="button" class="btn small accent">Write my style</button>`);
+      const style = h(`<button type="button" class="btn small accent">Draft shared style notes</button>`);
       style.onclick = async () => { try { await ask(WRITE_STYLE); toast('Asked the Video Octopus assistant: it shows its plan and asks before writing STYLE.md.'); } catch (e) { toast(e.message); } };
       row.append(write, style);
     }
@@ -320,9 +320,10 @@ export function brandSettings({ formats, ask }) {
   act.append(saved, save);
   const kit = brandKit({ onChange: (v) => drawNotes(v) });
   wrap.append(
+    sec('Brand library and Learning', 'Keep shared identity here. Learn pacing, captions and visual rules for a particular format in Learning. Approved formats do not overwrite these files or switch brand kits automatically.', h('<a class="btn small" href="#/learning">Open Learning</a>')),
     sec('About you', 'Your answers from Setup. They go into BRAND.md, which every chat in your studio reads.', about.el, act),
     sec('Brand files', 'Logos, photos of you, product images, fonts and examples you like, kept in your studio’s library (brand/).', kit.el),
-    sec('Your style notes', '', notes),
+    sec('Shared style notes', 'Optional studio-wide notes. For versioned, reviewed learning from references, use Learning above.', notes),
     sec('Motion-graphics skills', 'Skills Claude uses to build your graphics. More from any GitHub repo: Home → Skills → Add skills from GitHub.', skillsPicker({ compact: true }).el));
   api('/api/app/profile').then((p) => about.fill(p || {})).catch(() => {});
   api('/api/app/brand').then(drawNotes).catch(() => drawNotes(null));

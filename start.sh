@@ -14,7 +14,7 @@ for p in "$HOME/.local/opt/node/bin/node" /opt/homebrew/bin/node /usr/local/bin/
   [ -z "$NODE" ] && [ -x "$p" ] && NODE="$p"
 done
 if [ -z "$NODE" ]; then
-  echo "Video Octopus needs Node.js 22.2 or newer: https://nodejs.org" >&2
+  echo "Video Octopus needs Node.js 22.13 or newer: https://nodejs.org" >&2
   exit 1
 fi
 "$NODE" server/runtime-check.cjs || exit 1

@@ -16,9 +16,11 @@ const SKIP = new Set(['.DS_Store', '__pycache__', 'Thumbs.db', 'desktop.ini']);
 
 export const starterVersion = () => { try { return readFileSync(join(STARTER_DIR, 'VERSION'), 'utf8').trim() || '1'; } catch { return '1'; } };
 
-// The suggested place: a "Video Octopus" folder in the home folder (~/Video Octopus on a Mac, C:\Users\<name>\Video Octopus on Windows).
-// Not Desktop or Documents (iCloud's "Desktop & Documents" syncs them) and not Videos (OneDrive's folder backup).
-export const defaultStudioPath = () => join(homedir(), 'Video Octopus');
+// New installations use application-managed local storage. Existing studios stay in place.
+export const defaultStudioPath = () => IS_MAC
+  ? join(homedir(), 'Library', 'Application Support', 'Video Octopus', 'Studio')
+  : IS_WIN ? join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'Video Octopus', 'Studio')
+  : join(process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share'), 'video-octopus', 'studio');
 
 // A cloud-synced folder uploads every take and render, and can swap files for online-only placeholders mid-render.
 export function syncWarning(p) {

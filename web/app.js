@@ -33,6 +33,7 @@ import * as rec from './recorder.js';
 import { HOTKEY } from './recorder.js';
 import { applyLook, lookProject, onLook, cutLookParams } from './appearance.js';
 import { addSkillsDialog } from './brand.js';
+import { renderLearning, renderSkillDatabase, renderDatabaseRecovery, projectLearningPanel } from './learning.js';
 import { stageExtras } from './stagefx.js';
 import { exportLooks, sceneKey, shotsSummary } from './exportshots.js';
 
@@ -90,12 +91,14 @@ const router = makeRouter(async (nav) => {
   if (page) return page;
   const m = /^#\/p\/(.+)$/.exec(location.hash);
   if (m) return openProject(decodeURIComponent(m[1]));
-  return home(location.hash === '#/dashboard' ? 'dashboard' : location.hash === '#/scheduled' ? 'scheduled' : location.hash === '#/recordings' ? 'recordings' : location.hash === '#/skills' ? 'skills' : location.hash.startsWith('#/library') ? 'library' : 'projects', nav);
+  return home(location.hash === '#/storage' ? 'storage' : location.hash.startsWith('#/learning') ? 'learning' : location.hash === '#/dashboard' ? 'dashboard' : location.hash === '#/scheduled' ? 'scheduled' : location.hash === '#/recordings' ? 'recordings' : location.hash === '#/skills' ? 'skills' : location.hash.startsWith('#/library') ? 'library' : 'projects', nav);
 });
 window.addEventListener('hashchange', router);
 
 // ---------- home: a sidebar (projects, recordings, skills, Claude Code), the project you were on, all projects ----------
 const HOME_ICON = {
+  learning: '<span aria-hidden="true">◎</span>',
+  storage: '<span aria-hidden="true">▤</span>',
   projects: '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2" width="5" height="5" rx="1.2"/><rect x="9" y="2" width="5" height="5" rx="1.2"/><rect x="2" y="9" width="5" height="5" rx="1.2"/><rect x="9" y="9" width="5" height="5" rx="1.2"/></svg>',
   dashboard: '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 13.5h11"/><rect x="3" y="8" width="2.4" height="4" rx=".6"/><rect x="6.8" y="4.5" width="2.4" height="7.5" rx=".6"/><rect x="10.6" y="6.5" width="2.4" height="5.5" rx=".6"/></svg>',
   scheduled: '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8.5" r="5.5"/><path d="M8 5.5v3l2 1.5M6 1.5h4"/></svg>',
@@ -121,7 +124,7 @@ async function home(view = 'projects', route = null) { // route: { signal, alive
   $('#crumbs').innerHTML = '';
   clearBar();
   document.body.classList.add('in-home');
-  document.title = view === 'projects' ? 'Video Octopus' : `${{ dashboard: 'Dashboard', scheduled: 'Scheduled', recordings: 'Recordings', skills: 'Skills', library: 'Library' }[view]} · Video Octopus`;
+  document.title = view === 'projects' ? 'Video Octopus' : `${{ dashboard: 'Dashboard', scheduled: 'Scheduled', recordings: 'Recordings', skills: 'Skills', library: 'Library', learning: 'Learning', storage: 'Storage' }[view]} · Video Octopus`;
   await loadStatus();
   if (!STATUS.studioOk) return setupScreen();
   const [projects, takes, skills, counts] = await Promise.all([api('/api/projects'), api('/api/takes'), view === 'skills' ? api('/api/skills') : null, api('/api/app/counts').catch(() => ({}))]);
@@ -140,7 +143,7 @@ async function home(view = 'projects', route = null) { // route: { signal, alive
   const el = h(`<div class="home">
     <nav class="side-nav" aria-label="Video Octopus">
       <a class="brand" href="#/"><span class="logo" aria-hidden="true"><i></i></span>Video Octopus</a>
-      ${nav('projects', 'Projects', projects.length)}${nav('dashboard', 'Dashboard')}${nav('scheduled', 'Scheduled', counts.schedules || null)}${nav('recordings', 'Recordings', takes.length)}${nav('library', 'Library', counts.inbox || null, counts.inbox ? `${counts.inbox} waiting in the inbox` : '')}${nav('skills', 'Skills')}${homeNav(counts)}
+      ${nav('projects', 'Projects', projects.length)}${nav('dashboard', 'Dashboard')}${nav('scheduled', 'Scheduled', counts.schedules || null)}${nav('recordings', 'Recordings', takes.length)}${nav('library', 'Library', counts.inbox || null, counts.inbox ? `${counts.inbox} waiting in the inbox` : '')}${nav('learning', 'Learning')}${nav('skills', 'Skills')}${nav('storage', 'Storage')}${homeNav(counts)}
       <span class="gap"></span>${claudeCard}
     </nav>
     <div class="home-main" id="homeMain"></div>
@@ -152,9 +155,11 @@ async function home(view = 'projects', route = null) { // route: { signal, alive
   if (view === 'dashboard') renderDashboard(main, { recordingsDir: tilde(STATUS.recordingsDir || '') });
   const sched = view === 'scheduled' ? await renderSchedules(main, route).catch((e) => { main.replaceChildren(h(`<div class="home-wrap"><div class="notice">${esc(e.message)}</div></div>`)); return null; }) : null;
   if (view === 'recordings') renderRecordings(main, takes);
-  if (view === 'skills') renderSkills(main, skills || []);
+  if (view === 'skills') await renderSkillDatabase(main);
+  if (view === 'storage') await renderDatabaseRecovery(main);
+  const learning = view === 'learning' ? await renderLearning(main, {makeChat}) : null;
   const lib = view === 'library' ? renderLibrary(main, $('#libSide', el)) : null;
-  return { teardown: () => { lib?.teardown(); sched?.teardown(); document.body.classList.remove('in-home'); } };
+  return { teardown: () => { lib?.teardown(); sched?.teardown(); learning?.teardown(); document.body.classList.remove('in-home'); } };
 }
 
 // Projects (layout H1, 17 Oct 2026): the page uses the whole width. One band to carry on (the last project, its
@@ -176,7 +181,7 @@ function renderProjects(main, projects, takes, claudeNote) {
       <div class="hh-title"><h1>Projects</h1><div class="sub mono">${esc(tilde(STATUS.studio))}/${esc(STATUS.projectsDir)}</div></div>
       <label class="search wide">${HOME_ICON.search}<span class="vh">Search projects</span><input id="q" type="search" placeholder="Search projects" autocomplete="off"></label>
       <button class="btn rec" id="recBtn" title="Make a project and record a take into it"><span class="rec-dot"></span>Record</button>
-      <button class="btn primary" id="newBtn">+ New project</button>
+      <button class="btn primary" id="newBtn">+ New video</button>
     </div>
     <div id="band"></div>
     <div class="take-banners" id="takeBanner"></div>
@@ -221,7 +226,7 @@ function renderProjects(main, projects, takes, claudeNote) {
       if (box && bits.length) { box.textContent = bits.join(' · '); box.title = m.cut ? 'Length of the locked cut' : 'Length of the take (no locked cut yet)'; }
     }).catch(() => {});
   } else {
-    band.append(h(`<section class="band band-first"><div><b>Start your first video</b><span class="sub">Record a take, or start from one you've already recorded.</span></div><span class="gap"></span><button class="btn primary" data-a="new">+ New project</button></section>`));
+    band.append(h(`<section class="band band-first"><div><b>Start your first video</b><span class="sub">Record a take, or start from one you've already recorded.</span></div><span class="gap"></span><button class="btn primary" data-a="new">+ New video</button></section>`));
     $('[data-a=new]', band).onclick = () => newProjectDialog(null, takes);
   }
 
@@ -342,7 +347,7 @@ function setupScreen() {
 // New project: a name, the type (which picks the steps and the frame shape) and where the recording comes
 // from: record a new take now, an earlier take, or later. pick = 'record', a take id, or null.
 async function newProjectDialog(pick, takes) {
-  const [list, projects] = await Promise.all([takes || api('/api/takes'), api('/api/projects').catch(() => [])]);
+  const [list, projects, profiles] = await Promise.all([takes || api('/api/takes'), api('/api/projects').catch(() => []), api('/api/profiles')]);
   const canRecord = true; // the recorder is in Video Octopus itself (its panel says when this browser can't record)
   const modal = $('#modal');
   const types = Object.entries(STATUS.formats);
@@ -365,12 +370,14 @@ async function newProjectDialog(pick, takes) {
   const takeSub = (t) => [takeWhat(t), t.duration ? mmss(t.duration) : null, gb(t.bytes),
     t.projects?.length ? `in ${t.projects.map((n) => `“${n}”`).join(', ')}` : t.used ? 'in a project' : 'not in a project yet'].filter(Boolean).join(' · ');
   const d = h(`<div class="dialog np" role="dialog" aria-modal="true" aria-labelledby="npTitle">
-    <div class="np-head"><div><h3 id="npTitle">New project</h3><div class="sub">A folder in your studio. The type picks the steps and the frame shape.</div></div>
+    <div class="np-head"><div><h3 id="npTitle">New video</h3><div class="sub">A folder in your studio. The type picks the steps and the frame shape.</div></div>
       <button class="btn ghost small np-x" id="cancelX" aria-label="Close">${HOME_ICON.close}</button></div>
     <label class="fl" for="pname">What's the video about?</label>
     <input class="field big" id="pname" placeholder="e.g. Cut Editor walkthrough" autocomplete="off" aria-describedby="npErr">
     <div class="np-err" id="npErr" role="alert" hidden>Give the video a name first. It becomes the project's folder.</div>
     <div class="sub np-folder" id="npFolder"></div>
+    <div class="learn-toolbar"><label>Brand profile<select id="npProfile"><option value="">No brand</option>${profiles.profiles.map(p=>`<option value="${p.id}">${esc(p.name)}${p.brand?'':' · brand not saved'}</option>`).join('')}</select></label><label>Learned format<select id="npFormat"><option value="">No learned format</option></select></label></div>
+    <p class="sub" id="npContext">Enabled core workflows and current studio instructions will be included.</p>
     <div class="fl" id="typeLabel">Type</div>
     <div class="types" role="radiogroup" aria-labelledby="typeLabel">${types.map(([k, v]) => `<button type="button" class="type" role="radio" data-k="${k}"><span class="ty-shape ${info[k]?.aspect === '9:16' ? 'tall' : 'wide'}${info[k]?.camera === false ? ' nocam' : ''}" aria-hidden="true"></span><b>${esc(v)}</b><small>${esc(info[k]?.hint || '')}</small>
       ${info[k]?.blocks?.length ? `<span class="ty-blocks" aria-label="Starts with: ${esc(info[k].blocks.map((b) => b.label).join(', '))}">${info[k].blocks.map((b) => `<i class="t-${esc(b.type)}${b.optional ? ' opt' : ''}">${esc(b.label)}</i>`).join('')}</span>` : ''}
@@ -387,7 +394,13 @@ async function newProjectDialog(pick, takes) {
     </div>
     <div class="actions"><span class="np-chain" id="npChain"></span><button class="btn ghost" id="cancel">Cancel</button><button class="btn primary" id="create">Create</button></div></div>`);
   modal.replaceChildren(d); modal.hidden = false;
+  let contextToken=0, selectedContext=null;
+  const contextPreview=async()=>{const token=++contextToken;selectedContext=null;const f=profiles.formats.find(f=>f.id===$('#npFormat',d).value);try{const x=await api('/api/video-context',{profileId:$('#npProfile',d).value||null,formatId:f?.id||null,type});if(token!==contextToken)return;selectedContext=x;$('#npContext',d).textContent=`${x.profileName||'No brand'} · ${x.brandVersion?'approved brand · ':''}${x.versionId?'approved learned format · ':''}${x.skills.length} skills: ${x.skills.map(s=>s.name).join(', ')}. This setup is saved for this video.`;}catch(e){if(token===contextToken)$('#npContext',d).textContent=e.message;}};
+  const formatOptions=()=>{const fs=profiles.formats.filter(f=>f.profileId===$('#npProfile',d).value&&f.activeVersion);$('#npFormat',d).innerHTML='<option value="">No learned format</option>'+fs.map(f=>`<option value="${f.id}">${esc(f.name)}</option>`).join('');};
+  $('#npProfile',d).onchange=()=>{formatOptions();sync();};
+  $('#npFormat',d).onchange=()=>{const f=profiles.formats.find(f=>f.id===$('#npFormat',d).value);if(f)type=f.type;sync();};
   const sync = () => {
+    const f=profiles.formats.find(f=>f.id===$('#npFormat',d).value);if(f&&f.type!==type)$('#npFormat',d).value='';contextPreview();
     d.querySelectorAll('.type').forEach((x) => { x.classList.toggle('on', x.dataset.k === type); x.setAttribute('aria-checked', String(x.dataset.k === type)); });
     // Shorts are one format with styles inside (talking head, long-form teaser, plus the studio's own from .studio/formats.json).
     const styles = info[type]?.styles || [];
@@ -452,9 +465,10 @@ async function newProjectDialog(pick, takes) {
     const name = $('#pname', d).value.trim();
     if (!name) return nameMissing(true);
     if (take === 'file' && !upload) return fileIn.click();
+    if(!selectedContext)return toast('Wait for the selected setup, or resolve its message before creating the video.');
     $('#create', d).disabled = true;
     try {
-      const { id } = await api('/api/projects', { name, type, style, take: take && take !== 'record' && take !== 'file' ? take : undefined });
+      const { id } = await api('/api/projects', { name, type, style, profileId:$('#npProfile',d).value||null,formatId:$('#npFormat',d).value||null,versionId:selectedContext?.versionId||null,contextExpected:selectedContext||null,take: take && take !== 'record' && take !== 'file' ? take : undefined });
       if (take === 'record') pendingRecord = id;
       if (take === 'file') {
         // The file streams into the project's source/ and becomes its take (server: importUpload).
@@ -547,6 +561,10 @@ async function openProject(id) {
     </section>
     <aside class="col inspector" aria-label="Inspector"><div id="insCanvas" class="ins"></div><div id="insKit" class="ins" hidden></div><div id="insScenes" class="ins" hidden></div><div id="insOther" class="ins" hidden></div></aside></div>`);
   app.replaceChildren(el);
+
+  const learnedPanel = h('<div></div>');
+  $('.msgs', el).before(learnedPanel);
+  projectLearningPanel(learnedPanel, id, P, {send: text => api(`/api/projects/${encodeURIComponent(id)}/chat`,{text})}).catch(e => { learnedPanel.textContent = e.message; });
 
   // tabs
   let tab = 'canvas';
@@ -1182,6 +1200,7 @@ function miniWave(cv, video, peaksUrl) {
 // Claude Code's model sources (server/claude-source.mjs), for the session list.
 const SOURCE_NAMES = { ollama: 'Ollama', lmstudio: 'LM Studio', provider: 'another provider' };
 function makeChat(root, id, ext = {}, opts = {}) {
+  const base = opts.base || `/api/projects/${encodeURIComponent(id)}`;
   const msgs = $('#msgs', root), input = $('#input', root), sendBtn = $('#sendBtn', root);
   // Quick replies: a few one-tap answers after Claude finishes a turn, from opts.chips(last
   // reply) → [{label, text} to send, or {label, run()}]. They go away as soon as anything new happens in the chat.
@@ -1248,7 +1267,7 @@ function makeChat(root, id, ext = {}, opts = {}) {
 
   // Sessions and context, in every chat (a project's and the Video Octopus assistant's): this session and earlier ones to
   // continue, a new session, how full the context is, and Compact (Claude keeps a summary and frees room).
-  const sessUrl = `/api/projects/${encodeURIComponent(id)}/chat-sessions`;
+  const sessUrl = `${base}/chat-sessions`;
   const sess = h(`<div class="chat-sess-wrap">
     <div class="chat-sess">
       <button type="button" class="btn ghost small sess-pick" aria-haspopup="menu" aria-expanded="false" title="This session, and earlier ones you can continue"><span class="sp-t">This session</span><span aria-hidden="true">▾</span></button>
@@ -1272,7 +1291,7 @@ function makeChat(root, id, ext = {}, opts = {}) {
   const sessApi = (op, extra = {}) => api(sessUrl, { op, ...extra });
   sessApi('list').then((r) => { if (r.current?.messages) setTitle(r.current.title); if (r.current?.context) showContext(r.current.context); }).catch(() => {});
   $('[data-a=new]', sess).onclick = async () => { try { await sessApi('new'); } catch (e) { toast(e.message); } };
-  $('[data-a=compact]', sess).onclick = async () => { try { await api(`/api/projects/${encodeURIComponent(id)}/chat-compact`, {}); } catch (e) { toast(e.message); } };
+  $('[data-a=compact]', sess).onclick = async () => { try { await api(`${base}/chat-compact`, {}); } catch (e) { toast(e.message); } };
   let menu = null;
   const closeMenu = () => { menu?.remove(); menu = null; $('.sess-pick', sess).setAttribute('aria-expanded', 'false'); document.removeEventListener('pointerdown', outside, true); };
   const outside = (e) => { if (menu && !menu.contains(e.target) && !e.target.closest('.sess-pick')) closeMenu(); };
@@ -1335,7 +1354,7 @@ function makeChat(root, id, ext = {}, opts = {}) {
     if (b?.dataset.c === 'unhold') { unhold(); input.focus(); }
     if (b?.dataset.c === 'stop') {
       stopping = true;
-      try { await api(`/api/projects/${encodeURIComponent(id)}/stop`, {}); } catch (err) { stopping = false; toast(err.message); }
+      try { await api(`${base}/stop`, {}); } catch (err) { stopping = false; toast(err.message); }
     }
   });
   // What was waiting, back in the box (before anything typed since).
@@ -1359,10 +1378,10 @@ function makeChat(root, id, ext = {}, opts = {}) {
 
   async function send(text) {
     if (!text.trim()) return;
-    try { await api(`/api/projects/${encodeURIComponent(id)}/chat`, { text }); } catch (e) { toast(e.message); }
+    try { await api(`${base}/chat`, { text }); } catch (e) { toast(e.message); }
   }
   sendBtn.onclick = async () => {
-    if (busy && !stepMode()) { await api(`/api/projects/${encodeURIComponent(id)}/stop`, {}); return; }
+    if (busy && !stepMode()) { await api(`${base}/stop`, {}); return; }
     const t = input.value;
     if (!t.trim()) return;
     input.value = ''; autosize();
@@ -1386,14 +1405,17 @@ function makeChat(root, id, ext = {}, opts = {}) {
     n.querySelectorAll('[data-p]').forEach((b) => { b.disabled = !left; b.hidden = !left && b.dataset.p !== 'show'; });
   }
   function answer(cardId, payload, card) {
-    api(`/api/projects/${encodeURIComponent(id)}/answer`, { id: cardId, ...payload })
+    api(`${base}/answer`, { id: cardId, ...payload })
       .catch((e) => { toast(e.message); closeCard(card, 'No longer waiting'); });
   }
   function closeCard(card, label) {
-    if (!card || card.classList.contains('closed')) return;
+    if (!card) return;
     card.classList.add('closed');
     card.querySelectorAll('.row').forEach((r) => r.remove());
-    card.append(h(`<div class="sub" style="margin-top:6px">${esc(label)}</div>`));
+    // Replay may mark a card expired before its recorded answer arrives.
+    const status = card.querySelector('.permission-outcome');
+    if (status) status.textContent = label;
+    else card.append(h(`<div class="sub permission-outcome" style="margin-top:6px">${esc(label)}</div>`));
   }
 
   // The local model server under this chat isn't answering (server/engines.mjs localDown): a banner over the message box,

@@ -12,6 +12,7 @@ import { logUse, setPlanUsage } from './usage.mjs';
 import { childEnv, settingsBrief, section } from './settings.mjs';
 import { ccSource, claudeLaunchNow, sourceBrief, CC_SOURCES } from './claude-source.mjs';
 import { activeSkillRoot, skillSelectionBrief } from './managed-skills.mjs';
+import { sharedInstructionContext } from './profile-store.mjs';
 import { skillPreferencesBrief } from './skill-preferences.mjs';
 import { assertNotUpdating } from './maintenance.mjs';
 
@@ -142,7 +143,7 @@ export class ChatSession {
 
   async start() {
     assertNotUpdating();
-    activeSkillRoot({ studio: settings().studio });
+    this.skillRoot();
     const info = await claudeInfo();
     if (!info.installed) throw new Error(info.error || 'Claude Code is not installed on this computer.');
     const s = settings();
@@ -158,7 +159,7 @@ export class ChatSession {
     const mode = this.mode?.() || s.permissionMode || 'manual';
     const args = ['--print', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
       '--permission-prompt-tool', 'stdio', '--permission-mode', mode,
-      '--append-system-prompt', [this.currentContext(), settingsBrief(extra), sourceBrief(launch.src)].filter(Boolean).join('\n'),
+      '--append-system-prompt', [this.currentContext(), settingsBrief(extra,{profileScoped:Boolean(this.profileScoped||this.projectScope?.())}), sourceBrief(launch.src)].filter(Boolean).join('\n'),
       '--disallowedTools', NOT_IN_CHAT.join(',')];
     if (sessionId) args.push('--resume', sessionId);
     this.resumed = Boolean(sessionId);
@@ -392,7 +393,7 @@ export class ChatSession {
   // one compact line ("▶ Clean up") with the text folded away, and names the session after it.
   async send(text, { echo = true, brief = null } = {}) {
     assertNotUpdating();
-    activeSkillRoot({ studio: settings().studio });
+    this.skillRoot();
     this.lastSend = text;
     this.setBusy(true); // startup/auth discovery also counts as work; updates must not interrupt it
     try { if (!this.proc) await this.start(); } catch (e) { this.setBusy(false); throw e; }
@@ -403,9 +404,12 @@ export class ChatSession {
 
   // All harnesses use the same current technical availability and creator preferences.
   // Read on demand: edits and deletions are picked up next turn, without a restart.
+  skillRoot() { return this.projectScope?.()?.skillRoot || activeSkillRoot({studio:settings().studio}); }
+
   currentContext() {
     const studio = settings().studio;
-    return [this.context(), skillSelectionBrief({ studio }), skillPreferencesBrief({ studio })].filter(Boolean).join('\n\n');
+    const scoped=this.projectScope?.();
+    return [this.context(), scoped ? scoped.text : this.profileScoped ? '' : sharedInstructionContext(studio), scoped ? '' : skillSelectionBrief({ studio }), skillPreferencesBrief({ studio:scoped?.instructionRoot||studio, includeProse:!scoped&&!this.profileScoped&&!existsSync(join(studio||'','.studio/profile-storage.json')) })].filter(Boolean).join('\n\n');
   }
 
   // Claude Code keeps a resumed chat's first system prompt (a new --append-system-prompt isn't applied on
