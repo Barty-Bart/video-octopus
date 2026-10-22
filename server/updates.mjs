@@ -250,5 +250,5 @@ export async function updatesRoute(req, res, url, { send, body, restart }) {
       return send(res, 200, await setLogin(b.on)), true;
     }
     return send(res, 404, { error: 'Unknown updates action.' }), true;
-  } catch (e) { return send(res, 400, { error: e.message }), true; }
+  } catch (e) { return send(res, e.status || 400, { error: e.message }), true; }
 }

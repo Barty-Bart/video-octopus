@@ -1,5 +1,7 @@
 // Shared helpers: settings, paths, small file utilities.
-import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync, readdirSync, realpathSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync, readdirSync, realpathSync, renameSync, copyFileSync, rmSync,
+  openSync, closeSync, fsyncSync, constants as fsConstants } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join, dirname, basename, resolve, sep, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,13 +24,95 @@ export const expandHome = (p) => (p && p.startsWith('~') ? join(homedir(), p.sli
 // else HF_HOME/hub, else ~/.cache/huggingface/hub (the same on Windows, under the user's folder).
 export const hfHub = () => resolve(expandHome(process.env.HF_HUB_CACHE || join(process.env.HF_HOME || join(homedir(), '.cache', 'huggingface'), 'hub')));
 
+// A JSON file anyone may write (a project's project.json and work/*.json, which agents edit too): missing, half-written
+// or unreadable is the fallback, and the file is left alone. For the app's own files, see readOwnJSON below.
 export function readJSON(path, fallback = null) {
   try { return JSON.parse(readFileSync(path, 'utf8')); } catch { return fallback; }
 }
 
+// A JSON file this app owns and rewrites (local/settings.json, state.json, schedules.json, the saved layouts): a missing
+// file is the fallback. One that's there but isn't a JSON object (cut short by a crash, edited by hand) is moved aside
+// to <name>.corrupt-<time> first, so nothing is lost and the next save can't write defaults over it. Any other read
+// error (no permission, locked on Windows) throws: a save never replaces a file it couldn't read.
+export function readOwnJSON(path, fallback = null) {
+  let text;
+  try { text = readFileSync(path, 'utf8'); }
+  catch (e) { if (e.code === 'ENOENT') return fallback; throw e; }
+  let data, problem = null;
+  try { data = JSON.parse(text); } catch (e) { problem = e.message; }
+  if (!problem && (!data || typeof data !== 'object' || Array.isArray(data))) problem = 'not a JSON object';
+  if (!problem) return data;
+  const kept = keepAside(path, 'corrupt');
+  console.warn(`${basename(path)} couldn't be read (${problem}). It was kept as ${kept}; Video Octopus uses the defaults until it's fixed.`);
+  return fallback;
+}
+
+// Move a file out of the way as <path>.<why>-<time>, without overwriting an earlier one. A file that can't be moved
+// (open in another program on Windows) is copied instead; if neither works this throws, and the file stays where it is.
+function keepAside(path, why) {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  let aside = `${path}.${why}-${stamp}`;
+  for (let n = 2; existsSync(aside); n++) aside = `${path}.${why}-${stamp}-${n}`;
+  try { renameSync(path, aside); } catch { copyFileSync(path, aside, fsConstants.COPYFILE_EXCL); }
+  return aside;
+}
+
+// Write a JSON file so a crash or power cut can't leave it half-written: the text goes into a temporary file next to it,
+// is flushed to the disk, then replaces the old file in one rename (a reader sees the old file or the new one, never a
+// mix). If the write fails, the temporary file is removed and the old file is as it was.
 export function writeJSON(path, data) {
+  writeFileAtomic(path, JSON.stringify(data, null, 2) + '\n');
+}
+
+export function writeFileAtomic(path, text) {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(data, null, 2) + '\n');
+  // A dot file in the same folder: the rename stays on one disk, and folder listings and globs skip it.
+  const tmp = join(dirname(path), `.${basename(path)}.${process.pid}-${randomBytes(4).toString('hex')}.tmp`);
+  try {
+    const fd = openSync(tmp, 'wx');
+    try { writeFileSync(fd, text); fsyncSync(fd); } finally { closeSync(fd); }
+    replaceWith(tmp, path, text);
+  } finally {
+    rmSync(tmp, { force: true }); // gone already after a rename; a failed write leaves no stray file
+  }
+}
+
+// Windows can refuse to rename over a file another program has open (an editor, a virus scanner, a backup tool):
+// EPERM, EACCES or EBUSY, usually for a moment. Try again a few times (about a third of a second in all), then write
+// the file in place: not atomic, but better than losing the save. If that fails too, the caller gets the error.
+const LOCKED = new Set(['EPERM', 'EACCES', 'EBUSY']);
+function replaceWith(tmp, path, text) {
+  for (let wait = 10; ; wait *= 2) {
+    try { return renameSync(tmp, path); }
+    catch (e) {
+      if (!LOCKED.has(e.code)) throw e;
+      if (wait > 160) break;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, wait); // a short synchronous pause
+    }
+  }
+  writeFileSync(path, text);
+}
+
+// ---- request bodies ----
+// An error a route answers with its own HTTP status: the routes' catches send `e.status || 400` (or 500).
+export const httpError = (status, message) => Object.assign(new Error(message), { status });
+
+// A request's JSON body. The chunks are joined before decoding, so a character split between two network chunks
+// (Polish letters, emoji, curly quotes) stays whole. An empty body is {} (many routes take that as "no options").
+// A body over `limit` bytes is a 413 and one that isn't JSON a 400, never an empty save. The rest of an oversized
+// body is still read (and dropped), so the browser gets the answer instead of a reset connection.
+export async function readJSONBody(req, limit = 1e6) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size <= limit) chunks.push(chunk);
+  }
+  if (size > limit) throw httpError(413, `That request is too large (more than ${limit >= 1e6 ? `${Math.round(limit / 1e6)} MB` : `${Math.round(limit / 1e3)} KB`}).`);
+  const text = Buffer.concat(chunks).toString('utf8');
+  if (!text.trim()) return {};
+  try { return JSON.parse(text); }
+  catch { throw httpError(400, "The request wasn't valid JSON, so nothing was saved."); }
 }
 
 // ---- settings (local/settings.json, never committed) ----
@@ -42,8 +126,20 @@ const DEFAULTS = {
   model: '',                        // empty = Claude Code's own default
 };
 
+// Reading for display and for the rest of the app: a settings or state file that can't be read right now (locked, no
+// permission) gives the defaults with a warning instead of stopping every request. Saves read with readOwnJSON
+// directly, so they fail instead of writing defaults over it.
+const warned = new Set();
+function readOrDefault(path, fallback) {
+  try { return readOwnJSON(path, fallback); }
+  catch (e) {
+    if (!warned.has(e.message)) { warned.add(e.message); console.warn(`${basename(path)} couldn't be read (${e.message}); using the defaults for now.`); }
+    return fallback;
+  }
+}
+
 export function settings() {
-  const s = { ...DEFAULTS, ...readJSON(SETTINGS_PATH, {}) };
+  const s = { ...DEFAULTS, ...readOrDefault(SETTINGS_PATH, {}) };
   s.studio = expandHome(s.studio);
   // Takes go in <studio>/recordings (Create my studio sets it too); before there's a studio, in the user's videos
   // folder. A folder set in Settings → Recording stays as it is.
@@ -52,22 +148,25 @@ export function settings() {
   return s;
 }
 
+// A broken settings.json was moved aside by readOwnJSON before this writes, so the save starts from the defaults
+// and the creator's old file is still there to recover.
 export function saveSettings(patch) {
-  const current = readJSON(SETTINGS_PATH, {});
+  const current = readOwnJSON(SETTINGS_PATH, {});
   writeJSON(SETTINGS_PATH, { ...current, ...patch });
   return settings();
 }
 
 // ---- app state (session ids per project) ----
 const STATE_PATH = join(LOCAL_DIR, 'state.json');
-export const state = () => readJSON(STATE_PATH, { projects: {} });
+const withProjects = (s) => ({ ...s, projects: s.projects && typeof s.projects === 'object' ? s.projects : {} });
+export const state = () => withProjects(readOrDefault(STATE_PATH, {}));
 export function patchState(patch) {
-  const s = state();
+  const s = withProjects(readOwnJSON(STATE_PATH, {}));
   for (const [k, v] of Object.entries(patch)) { if (v === undefined) delete s[k]; else s[k] = v; }
   writeJSON(STATE_PATH, s);
 }
 export function setProjectState(id, patch) {
-  const s = state();
+  const s = withProjects(readOwnJSON(STATE_PATH, {}));
   s.projects[id] = { ...(s.projects[id] || {}), ...patch };
   writeJSON(STATE_PATH, s);
 }

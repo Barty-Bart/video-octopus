@@ -6,7 +6,7 @@
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
-import { settings, readJSON, writeJSON } from './util.mjs';
+import { settings, readOwnJSON, writeJSON } from './util.mjs';
 import { normalize, withPreset } from '../web/layout.js';
 import { listBackgrounds, saveToLibrary, useLibraryBackground, libraryFile } from './backgrounds.mjs';
 import { projectDir, projectMeta } from './studio.mjs';
@@ -17,7 +17,7 @@ const look = (l) => ({ aspect: l.aspect, ...Object.fromEntries(LOOK.map((k) => [
 const MAX = 24;
 
 export function savedLayouts() {
-  const d = readJSON(FILE(), null);
+  const d = readOwnJSON(FILE(), null); // a broken file is kept aside, not overwritten by the next save
   return (Array.isArray(d?.layouts) ? d.layouts : []).filter((x) => x && typeof x.id === 'string' && typeof x.name === 'string' && x.layout)
     .map((x) => ({ id: x.id, name: x.name, at: x.at || null, bgLibrary: x.bgLibrary || null, layout: look(normalize(x.layout)) }));
 }

@@ -1,0 +1,52 @@
+name: Unit tests
+# node --test test/*.test.mjs on every push and pull request, on the two systems Video Octopus supports, with the
+# oldest Node it supports (package.json engines: >=22.13.0 <23 || >=23.4.0) and the current LTS line.
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: unit-tests-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  unit-tests:
+    name: ${{ matrix.os }} · Node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-2025]
+        node: ['22.13.0', '24.x']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      # test/windows-export.test.mjs runs real FFmpeg and ffprobe (it skips, visibly, without them). Neither runner
+      # image ships them, so install them: the export regression should run, not skip.
+      - name: Install FFmpeg (macOS)
+        if: runner.os == 'macOS'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+          HOMEBREW_NO_INSTALL_CLEANUP: '1'
+        run: command -v ffmpeg || brew install ffmpeg
+      - name: Install FFmpeg (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: command -v ffmpeg || choco install ffmpeg --no-progress -y
+      - name: Show tool versions
+        shell: bash
+        run: |
+          node --version
+          ffmpeg -version | head -n 1
+      # The tests make their own disposable folders; STUDIO_LOCAL_DIR keeps any module that reads the app's local
+      # settings out of the checkout as well.
+      - name: Run unit tests
+        shell: bash
+        env:
+          STUDIO_LOCAL_DIR: ${{ runner.temp }}/octopus-local
+        run: node --test test/*.test.mjs

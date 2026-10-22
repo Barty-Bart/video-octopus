@@ -190,6 +190,6 @@ export async function textRoute(req, res, { id, dir, action, url, send, body }) 
       const b = await body(req);
       send(res, 200, saveText(id, dir, KINDS[b.kind] ? b.kind : 'transcript', b));
     }
-  } catch (e) { send(res, 400, { error: e.message }); }
+  } catch (e) { send(res, e.status || 400, { error: e.message }); }
   return true;
 }

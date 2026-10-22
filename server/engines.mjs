@@ -62,6 +62,30 @@ export async function enginesView(refresh = false, { models = false, source = fa
     ...(source ? { ccCheck: await sourceCheck(src) } : {}),
     ...(models && pi.installed ? { piModels: await piModels() } : {}) };
 }
+// For /api/status: the agent that runs the chats now, as the top bar's chip, Home's sidebar card and the Projects notice
+// describe it (web/app.js agentView). name and version; installed, else install (the command) or error (a wrong path
+// in settings); signedIn true or false where a sign-in is needed, null where it isn't (pi, a local model); login, the
+// command that signs in; source, where the model comes from, and model, the one picked ('' = the agent's default);
+// planUsage, whether it reports plan usage for the meter (only Claude Code on the Claude plan does).
+const CODEX_SOURCES = { chatgpt: 'ChatGPT plan', lmstudio: 'LM Studio (local)', ollama: 'Ollama (local)' };
+export async function agentStatus(refresh = false) {
+  const engine = engineName(), c = section('claude');
+  const found = (x) => ({ installed: Boolean(x.installed), version: x.version || '', install: x.install || '', error: x.error || '' });
+  if (engine === 'codex') {
+    const x = await codexInfo(refresh), local = c.codexProvider !== 'chatgpt';
+    return { engine, name: ENGINES.codex, ...found(x), signedIn: local ? null : Boolean(x.signedIn), login: 'codex login',
+      plan: x.plan || null, source: CODEX_SOURCES[c.codexProvider] || c.codexProvider, model: c.codexModel || '', needsModel: false, planUsage: false };
+  }
+  if (engine === 'pi') {
+    const x = await piInfo(refresh), endpoint = c.piSource === 'endpoint';
+    return { engine, name: ENGINES.pi, ...found(x), signedIn: null, login: '', plan: null,
+      source: endpoint ? 'OpenAI-compatible endpoint' : "pi's own providers", model: c.piModel || '', needsModel: endpoint, planUsage: false };
+  }
+  const x = await claudeInfo(refresh), ms = modelSourceView();
+  return { engine, name: ENGINES.claude, ...found(x), signedIn: ms ? null : Boolean(x.signedIn), login: 'claude', plan: x.plan || null,
+    source: ms ? ms.label : CC_SOURCES.plan.label, model: ms?.model || '', needsModel: Boolean(ms), planUsage: !ms };
+}
+
 // For /api/status and the top bar: Claude Code on something other than the plan ({ id, label, model }), else null.
 export function modelSourceView() {
   if (engineName() !== 'claude') return null;

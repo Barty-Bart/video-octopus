@@ -30,6 +30,6 @@ export async function memoryRoute(req, res, url, { studio, body, send, logRoot }
       throw Error('Unknown memory action.');
     });
     send(res, 200, result);
-  } catch (e) { send(res, 400, { error: e.message }); }
+  } catch (e) { send(res, e.status || 400, { error: e.message }); }
   return true;
 }

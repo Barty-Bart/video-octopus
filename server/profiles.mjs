@@ -59,7 +59,7 @@ export async function profileRoute(req,res,url,{send,body,serveFile}){
    if(['run','chat'].includes(action)){if(c.busy)throw Error('Wait for the research turn to finish.');const r=use(s=>{const r=s.researchGet(id);return s.researchChange(id,b.revision??r.revision,{status:'running',error:null});});try{await c.send(action==='run'?'Research the provided brand website and write the evidence-backed brand proposal for review.':String(b.text||'').slice(0,40000),{brief:b.memoryReview===true?{name:'Review lessons'}:action==='run'?{name:'Research brief'}:null});}catch(e){use(s=>{const x=s.researchGet(id);s.researchChange(id,x.revision,{status:'failed',error:e.message});});throw e;}return reply({ok:true,revision:r.revision});}
   }
   return reply({error:'Unknown profile action.'},404);
- }catch(e){return reply({error:e.message},400);}
+ }catch(e){return reply({error:e.message},e.status||400);}
 }
 
 export function profilePalette(id){if(!settings().studio||!existsSync(join(settings().studio,'.studio/profile-storage.json')))return null;return use(s=>{const b=s.projectBundle(id);return b?(b.brandVersion?s.brand(b.profileId,b.brandVersion)?.brand.colors||[]:[]):null;});}

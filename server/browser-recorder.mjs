@@ -352,6 +352,6 @@ export async function recRoute(req, res, { id, action, url, send, body, emit, re
       saveTake(b.take, { ...t, dismissed: Date.now() }); // the parts stay in the take folder
       return send(res, 200, { ok: true }), true;
     }
-  } catch (e) { return send(res, 400, { error: e.message }), true; }
+  } catch (e) { return send(res, e.status || 400, { error: e.message }), true; }
   return send(res, 404, { error: 'Unknown action' }), true;
 }

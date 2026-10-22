@@ -353,6 +353,6 @@ export async function cutReviewRoute(req, res, { dir, action, send, body }) {
   try {
     if (req.method === 'POST') decide(dir, (await body(req)).decisions);
     send(res, 200, cutReview(dir));
-  } catch (e) { send(res, 400, { error: e.message }); }
+  } catch (e) { send(res, e.status || 400, { error: e.message }); }
   return true;
 }

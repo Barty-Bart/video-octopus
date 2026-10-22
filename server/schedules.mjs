@@ -8,7 +8,7 @@
 import { existsSync, mkdirSync, readdirSync, statSync, readFileSync } from 'node:fs';
 import { join, relative, resolve, isAbsolute } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { LOCAL_DIR, readJSON, writeJSON, settings, saveSettings, setProjectState, slugify, inside } from './util.mjs';
+import { LOCAL_DIR, readJSON, readOwnJSON, writeJSON, settings, saveSettings, setProjectState, slugify, inside } from './util.mjs';
 import { makeChat } from './engines.mjs';
 import { EDIT_TOOLS, editPaths } from './claude.mjs';
 import { logUse } from './usage.mjs';
@@ -104,7 +104,8 @@ const MODES = { report: 'Report only', ask: 'Ask before changes', change: 'Make 
 // makes projects by itself.
 const SCOPES = { changed: 'Projects changed since the last run', all: 'All projects', untranscribed: 'Projects with a recording and no transcript',
   'new-takes': 'New recordings: in no project yet, or in a project with no transcript', studio: 'The studio folder' };
-export const readSchedules = () => (readJSON(FILE, null)?.schedules || []).filter((x) => x && x.id);
+// readOwnJSON: a broken schedules.json is kept aside, never replaced by the next save's shorter list.
+export const readSchedules = () => (readOwnJSON(FILE, null)?.schedules || []).filter((x) => x && x.id);
 const writeSchedules = (list) => writeJSON(FILE, { v: 1, schedules: list });
 
 // Templates, from pieces Video Octopus already has: the per-project "Learn from this project" step and the starter skills.
@@ -428,5 +429,5 @@ export async function schedulesRoute(req, res, url, { send, body }) {
       throw new Error('Unknown operation.');
     }
     return send(res, 405, { error: 'GET or POST' }), true;
-  } catch (e) { return send(res, 400, { error: e.message }), true; }
+  } catch (e) { return send(res, e.status || 400, { error: e.message }), true; }
 }

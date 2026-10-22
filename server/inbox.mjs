@@ -97,5 +97,5 @@ export async function inboxRoute(req, res, url, { send, body }) {
     if (p === '/api/library/inbox/accept') return send(res, 200, acceptItem(b.id, b.kind, b.note)), true;
     if (p === '/api/library/inbox/aside') return send(res, 200, asideItem(b.id)), true;
     return send(res, 404, { error: 'Unknown inbox action' }), true;
-  } catch (e) { return send(res, 400, { error: e.message }), true; }
+  } catch (e) { return send(res, e.status || 400, { error: e.message }), true; }
 }

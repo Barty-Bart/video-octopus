@@ -4,9 +4,9 @@ import { createReadStream, existsSync, statSync, readdirSync, watch, renameSync,
 import { homedir } from 'node:os';
 import { join, extname, relative, basename, dirname } from 'node:path';
 import { createSceneSandbox, sandboxOrigin } from './generated-sandbox.mjs';
-import { settings, saveSettings, inside, readJSON, writeJSON, expandHome, reveal, state, patchState, setProjectState, mtime, APP_DIR, LOCAL_DIR } from './util.mjs';
+import { settings, saveSettings, inside, readJSON, writeJSON, readJSONBody, expandHome, reveal, state, patchState, setProjectState, mtime, APP_DIR, LOCAL_DIR } from './util.mjs';
 import { claudeInfo, ChatSession, forReplay } from './claude.mjs';
-import { makeChat, staleChat, foreignSession, enginesView, modelSourceView, engineName, ENGINES } from './engines.mjs';
+import { makeChat, staleChat, foreignSession, enginesView, modelSourceView, engineName, agentStatus, ENGINES } from './engines.mjs';
 import { listProjects, createProject, projectDir, projectMeta, saveProjectMeta, listTakes, importTake, importTakeFrom, makeProxies,
   pipelineStatus, stepPrompt, formats, listSkills, roles, proxyName, sources, projectsRoot, probe, probeFile, formatId, formatInfo, isAudio, isTakeFile,
   importUpload, lockedCut, appendWorklog, setSkipped, takeDuration } from './studio.mjs';
@@ -276,11 +276,9 @@ function send(res, code, body, type = 'application/json') {
   res.end(type === 'application/json' ? JSON.stringify(body) : body);
 }
 
-async function body(req, limit = 1e6) {
-  let raw = '';
-  for await (const chunk of req) { raw += chunk; if (raw.length > limit) break; }
-  try { return JSON.parse(raw || '{}'); } catch { return {}; }
-}
+// A request's JSON body (util.mjs): {} when empty; too large or not JSON throws an error with status 413 or 400, which
+// the route's catch (or the server's, below) sends as it is. Every route module gets this same reader as `body`.
+const body = (req, limit = 1e6) => readJSONBody(req, limit);
 
 async function serveFile(req, res, file, { trusted = false, root = file && dirname(file) } = {}) {
   if (!file || !existsSync(file) || !statSync(file).isFile()) return send(res, 404, { error: 'Not found' });
@@ -457,6 +455,9 @@ async function route(req, res) {
       studio: s.studio, studioOk, projectsDir: s.projectsDir, recordingsDir: s.recordingsDir,
       permissionMode: s.permissionMode, model: s.model,
       claude: await claudeInfo(url.searchParams.has('refresh')),
+      // The selected agent (Claude Code, Codex or pi), for the top bar's chip, Home's sidebar card and the install notice
+      // (Claude Code's own check, just above, already refreshed it).
+      agent: await agentStatus(url.searchParams.has('refresh') && engineName() !== 'claude'),
       // modelSource: Claude Code on another model than the plan (then there are no plan limits to show).
       formats: formats(), formatInfo: formatInfo(), usage: modelSourceView() ? null : getPlanUsage(engineName()), modelSource: modelSourceView(), engine: engineName(), engineLabel: ENGINES[engineName()],
       appearance: section('appearance', s), // Settings → Appearance: how Video Octopus looks (web/appearance.js applies it)
@@ -861,10 +862,12 @@ activateStudioSkills(); // recover interrupted transactions and publish matching
 
 const server = createServer((req, res) => {
   const pathname = req.url?.split('?')[0];
+  // Routes that rebuild skills take the maintenance lock themselves (a counted write would block it).
   const write = pathname?.startsWith('/api/') && !pathname.startsWith('/api/app/updates') &&
-    pathname !== '/api/app/skills/install' && pathname !== '/api/instructions' && !/^\/api\/learning\/(skills(?:\/|$)|backups\/[^/]+\/restore$|sessions\/[^/]+\/(approve|publish)$)/.test(pathname) && !['GET', 'HEAD'].includes(req.method);
+    pathname !== '/api/app/skills/install' && pathname !== '/api/instructions' && !/^\/api\/learning\/(skills(?:\/|$)|backups\/[^/]+\/restore$|sessions\/[^/]+\/(approve|publish)$|formats\/[^/]+\/(activate|copy|update|archive|unarchive|skill)$|profiles\/[^/]+\/(update|archive|unarchive)$)/.test(pathname) && !['GET', 'HEAD'].includes(req.method);
   const finish = write ? beginWrite() : () => {};
-  route(req, res).catch((e) => { console.error(e); try { send(res, 500, { error: e.message }); } catch {} }).finally(finish);
+  // An error with a status (a request body too large or not JSON, util.mjs) is answered with it; anything else is a 500.
+  route(req, res).catch((e) => { if (!e.status || e.status >= 500) console.error(e); try { send(res, e.status || 500, { error: e.message }); } catch {} }).finally(finish);
 });
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`Video Octopus is running: http://127.0.0.1:${PORT}`);

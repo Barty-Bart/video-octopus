@@ -57,17 +57,36 @@ async function loadStatus(refresh = false) {
   applyLook(STATUS.appearance); // Settings → Appearance (web/appearance.js)
   window.STUDIO_ENGINE = STATUS.engine; // the other pages' chats say which agent is answering
   window.STUDIO_AGENT = { codex: 'Codex', pi: 'pi' }[STATUS.engine] || 'Claude';
-  const c = STATUS.claude, chip = $('#claudeChip'), ms = STATUS.modelSource;
+  const a = agentView(STATUS), chip = $('#claudeChip');
   chip.className = 'chip';
-  if (!c.installed) { chip.textContent = 'Claude Code not installed'; chip.classList.add('bad'); }
-  // Claude Code on another model (Settings → Agent & model → Model source): no Claude sign-in needed, no plan limits.
-  else if (ms) { chip.textContent = `Claude Code ${c.version} · ${ms.label}${ms.model ? ` · ${ms.model}` : ''}`; chip.classList.add(ms.model ? 'ok' : 'bad'); }
-  if (ms) { const u = $('#usage'); if (u) u.hidden = true; } // the plan's meter means nothing while another model runs
-  else if (!c.signedIn) { chip.textContent = 'Claude Code: not signed in'; chip.classList.add('bad'); }
-  else { chip.textContent = `Claude Code ${c.version}${c.plan ? ' · ' + c.plan : ''}`; chip.classList.add('ok'); }
-  // A recent provider-tagged snapshot; the display expires it independently.
-  showUsage(ms ? null : STATUS.usage);
+  chip.textContent = a.chip;
+  chip.classList.add(a.ok ? 'ok' : 'bad');
+  // A recent provider-tagged snapshot; the display expires it independently. Only Claude Code on the Claude plan
+  // reports plan usage: for another model source, Codex or pi the meter stays hidden.
+  showUsage(STATUS.agent.planUsage ? STATUS.usage : null);
   return STATUS;
+}
+// The agent that runs the chats (Settings → Agent & model), as the top bar's chip, Home's sidebar card and the Projects
+// notice describe it: Claude Code, Codex or pi (STATUS.agent, from server/engines.mjs agentStatus). ok: the chip and the
+// card's dot are green. chip and sub are plain text; note is HTML (empty when there's nothing to do).
+function agentView(st) {
+  const a = st.agent, v = a.version ? ` ${a.version}` : '', model = a.model ? ` · ${a.model}` : '';
+  if (!a.installed) {
+    const how = `Install it in a terminal with <code>${esc(a.install)}</code>${a.login ? `, run <code>${esc(a.login)}</code> once to sign in` : ''}, then reload.`;
+    return { ok: false, chip: `${a.name} not installed`, sub: 'Not installed',
+      note: `<div class="notice">${a.error ? esc(a.error) : `${esc(a.name)} isn't on this computer yet. ${how}`}</div>` };
+  }
+  if (a.signedIn === false) {
+    const account = { claude: 'Claude account', codex: 'ChatGPT account' }[a.engine] || 'account';
+    return { ok: false, chip: `${a.name}: not signed in`, sub: 'Not signed in',
+      note: `<div class="notice">${esc(a.name)} is installed but not signed in. Open Terminal, run <code>${esc(a.login)}</code> and sign in with your ${account}, then reload. Video Octopus uses that sign-in; it never asks for your password.</div>` };
+  }
+  // Signed in to a plan (Claude's, ChatGPT's).
+  if (a.signedIn) return { ok: true, chip: `${a.name}${v}${a.plan ? ` · ${a.plan}` : ''}${model}`, sub: `Signed in${a.plan ? ` · ${a.plan}` : ''}${model}`, note: '' };
+  // No sign-in needed: Claude Code on another model source, Codex on a local model, pi. Some need a model picked first.
+  const missing = a.needsModel && !a.model;
+  return { ok: !missing, chip: `${a.name}${v} · ${a.source}${model}`, note: '',
+    sub: `${a.source}${missing ? ': pick a model' : model}${a.engine === 'claude' ? ' · not your Claude plan' : ''}` };
 }
 function usageMarkup(snapshot) {
   const v = usageView(snapshot, 'claude');
@@ -146,15 +165,13 @@ async function home(view = 'projects', route = null) { // route: { signal, alive
   await loadStatus();
   if (!STATUS.studioOk) return setupScreen();
   const [projects, takes, skills, counts] = await Promise.all([api('/api/projects'), api('/api/takes'), view === 'skills' ? api('/api/skills') : null, api('/api/app/counts').catch(() => ({}))]);
-  const claude = STATUS.claude;
-  const claudeNote = !claude.installed
-    ? `<div class="notice">Claude Code isn't on this computer yet. Install it in a terminal with <code>${esc(claude.install)}</code>, run <code>claude</code> once to sign in, then reload.</div>`
-    : !claude.signedIn && !STATUS.modelSource ? `<div class="notice">Claude Code is installed but not signed in. Open Terminal, run <code>claude</code> and sign in with your Claude account, then reload. Video Octopus uses that sign-in; it never asks for your password.</div>` : '';
+  const agent = agentView(STATUS), name = STATUS.agent.name + (STATUS.agent.version ? ` ${STATUS.agent.version}` : '');
+  const claudeNote = agent.note;
   const u = STATUS.usage;
   const claudeCard = `<div class="cc">
-      <div class="cc-top"><span class="dot ${claude.installed && claude.signedIn ? 'ok' : 'bad'}"></span><b>Claude Code${claude.version ? ` ${esc(claude.version)}` : ''}</b></div>
-      <div class="sub">${!claude.installed ? 'Not installed' : STATUS.modelSource ? `${esc(STATUS.modelSource.label)}${STATUS.modelSource.model ? ` · ${esc(STATUS.modelSource.model)}` : ': pick a model'} · not your Claude plan` : !claude.signedIn ? 'Not signed in' : `Signed in${claude.plan ? ` · ${esc(claude.plan)}` : ''}`}</div>
-      ${STATUS.engine==='claude'&&!STATUS.modelSource?`<div class="cc-uses" id="claudeUsage">${usageMarkup(u)}</div>`:''}
+      <div class="cc-top"><span class="dot ${agent.ok ? 'ok' : 'bad'}"></span><b>${esc(name)}</b></div>
+      <div class="sub">${esc(agent.sub)}</div>
+      ${STATUS.agent.planUsage ? `<div class="cc-uses" id="claudeUsage">${usageMarkup(u)}</div>` : ''}
     </div>`;
   const nav = (k, label, n, wait) => `<a class="nav-i${view === k ? ' on' : ''}" href="${k === 'projects' ? '#/' : `#/${k}`}"${view === k ? ' aria-current="page"' : ''}>${HOME_ICON[k] || LIB_ICON[k]}<span>${label}</span>${n != null ? `<span class="n${wait ? ' wait' : ''}"${wait ? ` title="${esc(wait)}"` : ''}>${n}</span>` : ''}</a>`;
   const el = h(`<div class="home">

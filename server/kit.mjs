@@ -84,7 +84,7 @@ export async function kitRoute(action, req, res, url, ctx) {
       if (!src) throw new Error('Bad file');
       return send(res, 200, saveToLibrary(kind, src, { name: b.name, note }));
     }
-  } catch (e) { return send(res, 400, { error: e.message }); }
+  } catch (e) { return send(res, e.status || 400, { error: e.message }); }
   return send(res, 404, { error: 'Unknown action' });
 }
 
@@ -138,5 +138,5 @@ async function libraryRouteInner(req, res, url, { send, body, serveFile }) {
       return send(res, 200, { ok: true });
     }
     return false;
-  } catch (e) { return send(res, 400, { error: e.message }); }
+  } catch (e) { return send(res, e.status || 400, { error: e.message }); }
 }
