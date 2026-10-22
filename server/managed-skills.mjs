@@ -30,6 +30,15 @@ const manager = (studio) => join(studio, '.studio', 'skill-manager');
 const statePath = (studio) => join(manager(studio), 'state.json');
 const stamp = () => new Date().toISOString();
 const clone = (v) => JSON.parse(JSON.stringify(v));
+// Generated skills (one per Video format) are projections of other SQLite data. They are published like any skill,
+// but have no source folder: never in skills/custom or skills/overrides, never imported from edited copies, and
+// rebuilt from their generator. Their names are protected from personal skills.
+const GENERATED_ID = /^format\.[a-f0-9-]{36}$/;
+const GENERATED_NAME = /^format-[a-f0-9]{8}$/;
+let generatedSource = null;
+// The app registers the generator once (server/learning.mjs). Without it, existing generated publications are kept.
+export function registerGeneratedSkills(fn) { generatedSource = typeof fn === 'function' ? fn : null; }
+const kindOf = (e) => e.mode === 'generated' ? 'format' : e.mode === 'custom' ? 'personal' : e.mode === 'override' ? 'customized-core' : 'core';
 const present = (p) => { try { return lstatSync(p); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } };
 
 // No links (including ancestors), special files or traversal in a managed write path. Fail before touching content.
@@ -149,7 +158,7 @@ function forkMetadata(e, published = null) {
 function validateState(s) {
   if (s && (s.schema !== SCHEMA || !s.entries || typeof s.entries !== 'object' || Array.isArray(s.entries))) throw new Error('Unsupported skill-state schema. Nothing was replaced.');
   for (const [id, e] of Object.entries(s?.entries || {})) {
-    if (!ID.test(id) || e.id !== id || !['default', 'override', 'custom'].includes(e.mode) || !NAME.test(e.name || '') ||
+    if (!ID.test(id) || e.id !== id || !['default', 'override', 'custom', 'generated'].includes(e.mode) || !NAME.test(e.name || '') ||
       (e.folder && !NAME.test(e.folder)) || (e.published?.folder && !NAME.test(e.published.folder))) throw new Error('Invalid skill-state entry. Nothing was replaced.');
     if ((e.forkName && !NAME.test(e.forkName)) ||
       (e.forkVersion != null && !VERSION.test(e.forkVersion)) ||
@@ -237,11 +246,41 @@ function provenUnmodified(found, legacy) {
   return recorded.every((p) => existsSync(join(found.dir, p.slice(prefix.length))) &&
     hash(readFileSync(join(found.dir, p.slice(prefix.length))), 'sha1') === legacy.files[p]);
 }
+// Apply the generated list (explicit, or from the registered generator) to the skill entries.
+// Returns [id, rendered folder] pairs to publish. Generated entries the list no longer names are dropped,
+// except those the generator could not rebuild this time (keep), which retain their current publication.
+function reconcileGenerated(studio, stage, entries, explicit) {
+  let list = explicit, keep = [];
+  if (list === undefined && generatedSource) {
+    try {
+      const result = generatedSource(studio, join(stage, 'generated'));
+      list = result.items; keep = result.keep || [];
+      if (result.problems?.length) console.error('format skills:', result.problems.join(' '));
+    } catch (e) { console.error('format skills:', e.message); return []; }
+  }
+  if (!Array.isArray(list)) return [];
+  const wanted = new Map();
+  for (const g of list) {
+    if (!GENERATED_ID.test(g?.id || '') || !GENERATED_NAME.test(g.name || '') || !g.dir || skillName(g.dir, g.name) !== g.name)
+      throw new Error('Invalid generated skill. Nothing was replaced.');
+    wanted.set(g.id, g);
+  }
+  for (const e of Object.values(entries)) if (e.mode === 'generated' && !wanted.has(e.id) && !keep.includes(e.id)) delete entries[e.id];
+  for (const g of wanted.values()) {
+    const prior = entries[g.id];
+    if (prior && prior.mode !== 'generated') throw new Error(`Skill identity ${g.id} is not a generated skill. Nothing was replaced.`);
+    entries[g.id] = { ...(prior || {}), id: g.id, name: g.name, mode: 'generated', generator: 'format', formatId: g.formatId || null,
+      versionId: g.versionId || null, disabled: false, deleted: false, summary: String(g.summary || '').slice(0, 320) || 'Generated format skill.', summaryCustom: false };
+  }
+  return [...wanted.values()].map((g) => [g.id, g.dir]);
+}
 function requireRevision(old, action) {
   if (action && action.action !== 'refresh' && action.revision !== old?.revision) throw new Error('The skill list changed. Refresh and review the latest choices before applying.');
 }
 
-export function syncSkills({ studio, appRoot = APP, fresh = false, action = null, fault } = {}) {
+// generated: [{ id, name, dir, summary, formatId, versionId }] replaces every generated skill (omit to use the
+// registered generator, or to keep current generated publications when none is registered).
+export function syncSkills({ studio, appRoot = APP, fresh = false, action = null, fault, generated, reason } = {}) {
   if (!studio || !existsSync(studio)) throw new Error('Choose a studio before updating skills.');
   safe(studio, '.');
   const catalog = loadSkillCatalog(appRoot);
@@ -290,6 +329,11 @@ export function syncSkills({ studio, appRoot = APP, fresh = false, action = null
         ...directories(staged[2]).map((s) => ({ ...s, mode: 'custom' }))];
       const sourceIds = new Set();
       for (const s of sourceDirs) {
+        if (s.id && (GENERATED_ID.test(s.id) || entries[s.id]?.mode === 'generated')) {
+          // A copied generated folder is the creator's own skill now; it gets its own identity.
+          if (s.mode === 'override') throw new Error(`${s.folder} is a copy of a generated format skill; move it to skills/custom to keep it.`);
+          s.id = null;
+        }
         if (s.mode === 'custom' && s.id && bundled.has(s.id)) throw new Error(`The identity of ${s.folder} belongs to a bundled skill; use skills/overrides.`);
         if (s.id && sourceIds.has(s.id)) throw new Error(`Two personal skill folders claim ${s.id}. Both were kept.`);
         if (s.id) sourceIds.add(s.id);
@@ -322,6 +366,11 @@ export function syncSkills({ studio, appRoot = APP, fresh = false, action = null
         }
         if (importedIds.has(id)) throw new Error(`Two active folders resolve to skill ${id}; both were kept. Resolve their identity before updating.`);
         importedIds.add(id);
+        if (GENERATED_ID.test(id) || entries[id]?.mode === 'generated') {
+          // Generated publications are rebuilt, never imported. An edited copy stays in this update's backup.
+          s.id = id;
+          continue;
+        }
         let e = entries[id];
         if (!e) {
           const b = bundled.get(id), managed = b && provenUnmodified(s, legacy);
@@ -351,6 +400,7 @@ export function syncSkills({ studio, appRoot = APP, fresh = false, action = null
         s.id = id;
       }
       for (const e of Object.values(entries)) {
+        if (e.mode === 'generated') continue;
         const found = active.find((s) => s.id === e.id);
         if (e.published && !found && !e.disabled) { e.disabled = true; e.deleted = true; }
         if (e.mode !== 'default' || e.forkAvailable) {
@@ -388,7 +438,7 @@ export function syncSkills({ studio, appRoot = APP, fresh = false, action = null
         e.removed = false;
       }
       for (const e of Object.values(entries)) {
-        if (e.mode !== 'custom' && !bundled.has(e.id)) {
+        if (e.mode !== 'custom' && e.mode !== 'generated' && !bundled.has(e.id)) {
           e.removed = true;
           if (e.mode === 'default') e.disabled = true; // never erase a creator's override or its recovery copy
         }
@@ -430,9 +480,11 @@ export function syncSkills({ studio, appRoot = APP, fresh = false, action = null
         }
       } else {
         if (a === 'refresh' && next.held) next.held = false;
+        const rebuilt = reconcileGenerated(studio, stage, entries, generated);
         if (a && a !== 'refresh' && a !== 'create') {
           const e = entries[action.id], b = bundled.get(action.id);
           if (!e) throw new Error('No such skill.');
+          if (e.mode === 'generated') throw new Error('Format skills are generated from Video formats. Change the format there; each change is reviewed and saved as a new version.');
           if (a === 'describe' || (a === 'edit' && Object.hasOwn(action, 'summary'))) { e.summary = validateSkillSummary(action.summary); e.summaryCustom = true; }
           if (a === 'keep') { e.reviewedHash = b?.hash || 'removed'; e.requirementsNotice = false; e.rollbackNotice = false; e.returned = false; }
           if (a === 'disable') { e.disabled = true; e.deleted = false; }
@@ -477,13 +529,30 @@ export function syncSkills({ studio, appRoot = APP, fresh = false, action = null
         }
         // One path/name per active identity. New custom skills cannot claim core names;
         // preserve an already-selected legacy collision explicitly instead of merging folders.
+        // Generated skills that were not rebuilt keep their current, unmodified publication.
+        const generatedSources = new Map(rebuilt);
+        for (const e of Object.values(entries)) {
+          if (e.mode !== 'generated' || generatedSources.has(e.id) || !e.published) continue;
+          const current = join(staged[0], e.published.folder), kept = join(stage, 'generated-kept', e.id);
+          if (existsSync(join(current, 'SKILL.md')) && digest(current) === e.published.hash) { copy(current, kept); generatedSources.set(e.id, kept); }
+        }
         for (const s of active) rmSync(join(staged[0], s.folder), { recursive: true, force: true });
         const occupied = new Map();
-        const order = Object.values(entries).sort((a, b) => Number(a.mode === 'default') - Number(b.mode === 'default') || a.id.localeCompare(b.id));
+        const rank = (e) => e.mode === 'generated' ? 0 : e.mode === 'default' ? 2 : 1;
+        const order = Object.values(entries).sort((a, b) => rank(a) - rank(b) || a.id.localeCompare(b.id));
         for (const e of order) {
           e.collision = null; e.published = null;
           if (e.disabled || (e.removed && e.mode === 'default')) continue;
           if (e.mode === 'override' && forkProblem(e, catalog.apiVersion)) continue;
+          if (e.mode === 'generated') {
+            const src = generatedSources.get(e.id), key = e.name.toLowerCase(), to = join(staged[0], e.name);
+            const reserved = catalog.items.some((b) => [b.name, ...b.legacyNames].some((n) => n.toLowerCase() === key));
+            if (!src || !existsSync(join(src, 'SKILL.md'))) { e.collision = 'This format skill is waiting to be rebuilt from its approved version.'; continue; }
+            if (reserved || occupied.has(key) || existsSync(to)) { e.collision = `The name ${e.name} is already in use, so this format skill was not published.`; continue; }
+            copy(src, to); mark(to, e.id); occupied.set(key, e.id);
+            e.published = { folder: e.name, hash: digest(to), version: null, apiVersion: null };
+            continue;
+          }
           const src = e.mode === 'default' ? bundled.get(e.id)?.dir : sourceFor(e);
           if (!src || !existsSync(join(src, 'SKILL.md'))) continue;
           const key = e.name.toLowerCase(), to = join(staged[0], e.name);
@@ -496,6 +565,10 @@ export function syncSkills({ studio, appRoot = APP, fresh = false, action = null
             if (e.legacyCollision) e.legacyCollisionName = key;
             e.collision = `The name ${e.name} is reserved for core skill ${reserved.name}. Rename this independent skill; its files were kept.${e.legacyCollision ? ' Its existing legacy selection is preserved until then.' : ' It was not activated.'}`;
             if (!e.legacyCollision) continue;
+          }
+          if (occupied.has(key) && entries[occupied.get(key)]?.mode === 'generated') {
+            e.collision = `The name ${e.name} belongs to a generated format skill. Rename this skill; its files were kept and it was not activated.`;
+            continue;
           }
           if (occupied.has(key) || existsSync(to)) {
             if (e.mode !== 'default') throw new Error(`Two personal skills use the name ${e.name}. Both sources are preserved; rename one before continuing.`);
@@ -511,6 +584,7 @@ export function syncSkills({ studio, appRoot = APP, fresh = false, action = null
       }
       if (!['restore', 'restore-sql', 'regenerate'].includes(a)) {
         for (const e of Object.values(next.entries)) {
+          if (e.mode === 'generated') continue;
           if (createdFolder && createdFolder === e.folder && Object.hasOwn(action || {}, 'summary')) { e.summary = validateSkillSummary(action.summary); e.summaryCustom = true; }
           if (!e.summaryCustom) {
             const src = e.mode === 'default' ? bundled.get(e.id)?.dir : sourceFor(e);
@@ -521,7 +595,7 @@ export function syncSkills({ studio, appRoot = APP, fresh = false, action = null
       }
       if (recovered) next.recovery = `Recovered interrupted update ${recovered}; extra files are kept in that backup.`;
       const changed = JSON.stringify(next) !== priorSemantic || staged.some((p, i) => fingerprint(p) !== before[i]);
-      if (changed || !sqlSkillState(studio)) commit(studio, next, staged, before, a ? `Skill choice: ${a}` : old ? 'Bundled skill update' : 'Legacy skill migration', fault);
+      if (changed || !sqlSkillState(studio)) commit(studio, next, staged, before, a ? `Skill choice: ${a}` : reason || (old ? 'Bundled skill update' : 'Legacy skill migration'), fault);
       return skillsView({ studio, appRoot });
     } finally { rmSync(stage, { recursive: true, force: true }); }
   });
@@ -534,7 +608,7 @@ export function skillsView({ studio, appRoot = APP } = {}) {
     if (!s) return { ok: false, error: 'Skills have not been migrated yet. Restart the app or refresh skills.', items: [], backups: [], pending: 1 };
     const items = Object.values(s.entries).map((e) => {
       const b = catalog.items.find((v) => v.id === e.id);
-      const forkAvailable = e.mode !== 'custom' && existsSync(safe(studio, `skills/overrides/${e.folder || e.id}/SKILL.md`));
+      const forkAvailable = e.mode !== 'custom' && e.mode !== 'generated' && existsSync(safe(studio, `skills/overrides/${e.folder || e.id}/SKILL.md`));
       const compatibilityReason = forkProblem({ ...e, forkAvailable }, catalog.apiVersion);
       const compatibilityBlocked = Boolean(compatibilityReason);
       const changed = e.mode === 'override' && e.reviewedHash !== (e.removed ? 'removed' : e.upstreamHash);
@@ -544,12 +618,12 @@ export function skillsView({ studio, appRoot = APP } = {}) {
         e.rollbackNotice && 'The application returned to an older skill version.',
         e.uncertain && 'Legacy file history is missing; kept disabled until you choose.',
         e.collision, e.returned && 'This previously removed skill returned; enable it explicitly.'].filter(Boolean);
-      return { ...e, kind: e.mode === 'custom' ? 'personal' : e.mode === 'override' ? 'customized-core' : 'core', forkAvailable, forkVersion: e.forkVersion || null, forkApiVersion: e.forkApiVersion || null,
+      return { ...e, kind: kindOf(e), forkAvailable, forkVersion: e.forkVersion || null, forkApiVersion: e.forkApiVersion || null,
         activeVersion: e.published && !(e.mode === 'override' && compatibilityBlocked)
           ? e.published.version || (e.mode === 'default' ? e.version : e.forkVersion) || null : null,
         availableVersion: b?.version || null, apiVersion: catalog.apiVersion, compatibilityBlocked, compatibilityReason,
         pending: reasons.length > 0, reason: reasons.join(' '),
-        overridePath: e.mode === 'default' && !forkAvailable ? null : `skills/${e.mode === 'custom' ? 'custom' : 'overrides'}/${e.folder || e.id}`,
+        overridePath: e.mode === 'generated' || (e.mode === 'default' && !forkAvailable) ? null : `skills/${e.mode === 'custom' ? 'custom' : 'overrides'}/${e.folder || e.id}`,
         canUseLatest: Boolean(b) };
     });
     const backups = [];
@@ -568,6 +642,7 @@ export function skillsView({ studio, appRoot = APP } = {}) {
 export function compareSkill({ studio, appRoot = APP, id, revision } = {}) {
   const s = readState(studio); requireRevision(s, { revision });
   const e = s?.entries[id]; if (!e) throw new Error('No such skill.');
+  if (e.mode === 'generated') throw new Error('Format skills are generated from their approved version; compare versions in Video formats → History.');
   const b = loadSkillCatalog(appRoot).items.find((v) => v.id === id);
   const savedFork = safe(studio, `skills/overrides/${e.folder || e.id}`);
   const mine = e.mode === 'default' && !existsSync(join(savedFork, 'SKILL.md'))
@@ -617,7 +692,7 @@ export function activeSkillRoot({ studio, appRoot = APP } = {}) {
       throw new Error('Personal skill sources changed. Refresh skills in Settings → Updates before starting a chat.');
     sourceIds.add(source.id);
   }
-  for (const e of Object.values(s.entries)) if (((e.mode !== 'default' && !e.deleted) || e.forkAvailable) && !sourceIds.has(e.id))
+  for (const e of Object.values(s.entries)) if (((e.mode !== 'default' && e.mode !== 'generated' && !e.deleted) || e.forkAvailable) && !sourceIds.has(e.id))
     throw new Error('A personal skill source is missing. Refresh skills in Settings → Updates to preserve that choice.');
   // Do not let nested/unregistered SKILL.md files bypass the single-publication rule of the harnesses.
   const expected = new Set(Object.values(s.entries).filter((e) => e.published).map((e) => `${e.published.folder}/SKILL.md`));
@@ -636,7 +711,7 @@ export function skillSelectionBrief({ studio, appRoot = APP } = {}) {
     forkProblem({ ...e, forkAvailable: true }, catalog.apiVersion));
   const unavailable = new Set(blocked.map((e) => e.id));
   const active = entries.filter((e) => e.published && !e.disabled && !unavailable.has(e.id)).map((e) => ({
-    id: e.id, name: e.name, selection: e.mode === 'default' ? 'core' : e.mode === 'override' ? 'fork' : 'custom',
+    id: e.id, name: e.name, selection: e.mode === 'default' ? 'core' : e.mode === 'override' ? 'fork' : e.mode === 'generated' ? 'format' : 'custom',
     version: e.published.version || null, content: e.published.hash,
   }));
   const disabled = entries.filter((e) => e.disabled).map(({ id, name }) => ({ id, name }));

@@ -2795,13 +2795,3 @@ iframe.cut.studio { margin: 0; width: 100%; border: 0; border-radius: 0; backgro
 .su-environments .su-a { flex-wrap: wrap; }
 .su-environments .su-pick { flex-wrap: wrap; }
 .su-environments .su-pick label { min-width: 180px; }
-
-/* Saved formats remain visible across profiles; details apply to the selected card. */
-.format-catalog { margin-bottom: 24px; }
-.format-catalog h2 { margin-bottom: 8px; }
-.format-group { margin: 20px 0; }
-.format-group h3 { margin: 0 0 10px; }
-.format-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr)); gap: 12px; }
-.format-card { display: flex; flex-direction: column; gap: 8px; padding: 16px; text-align: left; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--text); font: inherit; cursor: pointer; overflow-wrap: anywhere; min-width: 0; }
-.format-card.selected { outline: 2px solid currentColor; outline-offset: -2px; }
-.format-card span, .format-card small { color: var(--muted); }

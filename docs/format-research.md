@@ -1,24 +1,42 @@
 # Format research and conversations
 
-Video formats has three entry points for the selected profile and format:
+For the selected format, Video formats offers:
 
-- **View approved guide & history** reads the reusable guide and earlier versions.
-- **Study examples** starts a study where you can supply URLs, files or notes.
-- **Research a format** starts a study with the assistant in view. Describe what
-  you want, ask for references, or discuss a channel before supplying examples.
+- **View guide & history** on the Style guide tile reads the reusable guide and
+  earlier versions (shown once a version exists).
+- **Study examples** in the Studies section starts a study where you can supply
+  URLs, files or notes. The assistant chat sits beside the study steps: describe
+  what you want, ask for references, or discuss a channel before supplying
+  examples. (The separate Research a format button was removed; the study's chat
+  covers it.)
 
-Both research and example intake belong to the same study. The assistant can use
+Research conversation and example intake belong to the same study. The assistant can use
 available web/search tools with normal permissions. It must report inaccessible
 sources or unavailable tools, not claim it inspected them. No new paid provider,
 model download or unattended channel crawl is configured by this feature.
 
-The assistant writes a shortlist to `work/suggested-examples.json`. Choose
-**Review suggested examples**, inspect the links and add the ones you want.
+The assistant writes a shortlist to `work/suggested-examples.json`. It appears
+under **Add examples** as soon as the assistant finishes; inspect the links and
+add the ones you want.
 Suggestions are not evidence until registered. Each registered example receives
 an ID used by the proposal's evidence. A channel link is a starting point, not
-proof that its videos were inspected. Study these examples requires at least
-one registered reference; discussion does not. Review and approval are still
+proof that its videos were inspected. Start study requires at least
+one added or pasted reference; discussion does not. Review and approval are still
 required before a guide becomes active for new videos.
+
+## Talking to a format after approval
+
+A conversation (study) stays open after its draft is saved as a version. In the same
+conversation the creator can add more references to study, or ask in plain words
+("use blue instead of red next time", "drop the outro hold"). The assistant turns that
+into a new draft on top of the current version: rules reusing an existing ID replace it,
+new IDs add rules, and `remove` lists rules to drop. Each such change cites the creator's
+message as `{"kind":"instruction","messageId":"…","quote":"…"}`; the app shows the
+assistant each creator message's ID and validates the ID and quote against that
+conversation's stored messages. The assistant may also record `learnings` (observations,
+not rules). Every draft is reviewed and saved as a new version; nothing is applied
+directly. Projects keep the version they started with. See
+[Format skills and continuing conversations](learning-and-storage.md#format-skills-and-continuing-conversations).
 
 ## How a thread works
 
@@ -42,8 +60,10 @@ that local directory when moving an installation. Claude Code also manages its
 own conversation persistence; the app does not create a Claude web Project.
 
 Conversation history and reusable knowledge are different. SQLite stores the
-profile brand, instructions, approved guides and skills used in future work.
-A conversation does not automatically rewrite those records. The assistant
+profile brand, instructions, approved guides and skills used in future work, plus the
+creator's own messages in format conversations (only as evidence provenance; the full
+transcript stays in the local chat files above). A conversation does not automatically
+rewrite those records: its changes are drafts the creator reviews and saves. The assistant
 receives current scoped app context; a changed context is sent on the next turn.
 Claude Code can also have its own instruction/auto-memory behavior, depending
 on CLI version and configuration. That is not the app's approved guide store

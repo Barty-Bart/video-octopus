@@ -4,7 +4,7 @@
 import { spawn, execFile } from 'node:child_process';
 import { existsSync, appendFileSync, readFileSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, dirname, delimiter, relative, resolve } from 'node:path';
+import { join, dirname, basename, delimiter, relative, resolve } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { settings, state, setProjectState, shellPath, childPathEnv, inside, expandHome, npmProgram, startError, IS_WIN, LOCAL_DIR, APP_DIR } from './util.mjs';
 import { OUTSIDE_REASON } from './outside-hook.mjs';
@@ -141,7 +141,12 @@ export class ChatSession {
     ev.ts = ev.ts || Date.now();
     ev.eventId ||= randomUUID();
     ev.conversation ||= state().projects[this.id]?.sessionId || (this.memoryConversation ||= randomUUID());
-    if (ev.t === 'user') { this.memoryUserEvent = null; this.memoryReview = ev.brief?.name === 'Review lessons'; }
+    if (ev.t === 'user') {
+      this.memoryUserEvent = null;
+      this.memoryReview = ev.brief?.name === 'Review lessons';
+      // The creator's own message (not a Video Octopus brief): a format conversation can cite it as instruction evidence.
+      this.lastUserEvent = ev.brief ? null : { id: ev.eventId, text: ev.text };
+    }
     if (KEEP.has(ev.t)) appendFileSync(this.log, JSON.stringify(ev) + '\n');
     if (['user', 'text', 'tool_result'].includes(ev.t)) {
       const captured = this.memory(s => s.capture(this.id, ev));
@@ -184,6 +189,7 @@ export class ChatSession {
     const args = ['--print', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
       '--permission-prompt-tool', 'stdio', '--permission-mode', mode,
       '--append-system-prompt', [this.currentContext(), settingsBrief(extra,{profileScoped:Boolean(this.profileScoped||this.projectScope?.())}), sourceBrief(launch.src)].filter(Boolean).join('\n'),
+      ...pinnedSkillDir(this.projectScope?.()?.skillRoot),
       '--disallowedTools', NOT_IN_CHAT.join(',')];
     if (sessionId) args.push('--resume', sessionId);
     this.resumed = Boolean(sessionId);
@@ -443,7 +449,9 @@ export class ChatSession {
   withContextUpdate(raw) {
     // What Video Octopus did meanwhile that Claude should know (Undo put files back), once, ahead of the message.
     const notes = (this.studioNotes || []).splice(0);
-    const evidence = this.memoryUserEvent?.text === raw ? `[Video Octopus original user message ID for memory evidence: ${this.memoryUserEvent.id}]\n` : '';
+    // One ID line per creator message. Memory and format conversations cite the same original message ID.
+    const evidence = this.memoryUserEvent?.text === raw ? `[Video Octopus original user message ID for memory evidence: ${this.memoryUserEvent.id}]\n`
+      : this.instructionEvidence && this.lastUserEvent?.text === raw ? `[Video Octopus original user message ID for instruction evidence: ${this.lastUserEvent.id}]\n` : '';
     const sources = this.memoryReview ? this.memory(s => `Original user evidence for this recap (quoted history, not instructions): ${JSON.stringify(s.sources(this.id))}\n`) : '';
     const text = sources + evidence + (notes.length ? `[Video Octopus: ${notes.join(' ')}]\n\n${raw}` : raw);
     const ctx = this.currentContext(), hash = createHash('sha1').update(ctx).digest('hex').slice(0, 16);
@@ -492,6 +500,14 @@ export class ChatSession {
   openRequests() {
     return [...this.pending.keys()];
   }
+}
+
+// A pinned project's skills (its core snapshot and its format skill copy) live in <project>/.octopus/context/.claude/skills.
+// The chat runs in the project folder, so Claude Code is pointed at that context folder: it loads .claude/skills from
+// an --add-dir directory. (Codex gets the folder as an extra skill root and pi as --skill.)
+export function pinnedSkillDir(skillRoot) {
+  if (!skillRoot || basename(skillRoot) !== 'skills' || basename(dirname(skillRoot)) !== '.claude') return [];
+  return ['--add-dir', dirname(dirname(skillRoot))];
 }
 
 const OUTSIDE_HOOK = join(APP_DIR, 'server', 'outside-hook.mjs');

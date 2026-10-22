@@ -43,7 +43,7 @@ export function sqlSkillContent(studio,id) {
     const path=e.mode==='custom'?`skills/custom/${e.folder}/SKILL.md`:e.forkAvailable?`skills/overrides/${e.folder||e.id}/SKILL.md`:`.claude/skills/${e.published?.folder}/SKILL.md`;
     const file=JSON.parse(row.files).find(f=>f.path===path);if(!file)throw Error('No saved skill text.');const bytes=db.prepare('SELECT bytes FROM skill_blobs WHERE hash=?').get(file.hash)?.bytes;
     if(!bytes||sha(bytes)!==file.hash)throw Error('Skill content failed integrity verification. Restore a database backup.');
-    return {id,name:e.name,kind:e.mode==='custom'?'personal':e.mode==='override'?'customized-core':'core',summary:e.summary || '',text:Buffer.from(bytes).toString('utf8'),revision:state.revision,history:sqlSkillHistory(studio)};
+    return {id,name:e.name,kind:e.mode==='generated'?'format':e.mode==='custom'?'personal':e.mode==='override'?'customized-core':'core',summary:e.summary || '',text:Buffer.from(bytes).toString('utf8'),revision:state.revision,history:sqlSkillHistory(studio)};
   }finally{db.close();}
 }
 // Materialize only into fresh staging directories; callers publish under their existing journal lock.

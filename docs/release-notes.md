@@ -1,3 +1,14 @@
+# v0.1.0-beta.9
+
+- Video formats is three panes: channels, their formats, and a format home with New video and tabs for Skill, Examples, Insights, Videos and History. Channels and formats can be renamed, have their setup changed and be archived or restored.
+- Each format has one generated skill (rules, workflow, examples with notes and key frames, assets, insights and the videos made with it), rebuilt from SQLite. New videos keep the version they started with; Claude, Codex and pi load the pinned copy.
+- Talk to this format: one conversation panel for studying new examples (paste links or drop files) and for plain-language changes such as "use blue instead of red". Conversations continue after a version is saved. Every change is a draft marked New, Changed or Removed and is saved as the next version only after review. Rules can also be edited directly.
+- Draft evidence is checked: studied examples, the creator's own chat message, or a direct edit. New per-version `learned-*` skills are no longer published; existing ones are left in place.
+- Reliability: request bodies are decoded whole (no split characters) and too-large or malformed requests return 413/400 instead of saving nothing; settings and other app state are written atomically, and a damaged file is set aside rather than replaced with defaults.
+- The status chip, sidebar card and Projects notice describe the selected agent (Claude Code, Codex or pi). Unit tests run in GitHub Actions on macOS and Windows with Node 22.13 and 24.
+
+See [formats and storage](learning-and-storage.md) and [format research](format-research.md). Verified with 232 unit tests, an isolated format-skill runtime (study → v1 → chat edit → v2 with an older project still pinned to v1) and disposable browser checks. Real-provider studies, real file drag-and-drop and Windows execution of these changes remain unverified. This is a source update on main; the downloadable tagged prerelease remains separate.
+
 # v0.1.0-beta.8
 
 - Video formats shows all saved formats grouped by profile, remembers the last selection and keeps direct links to the selected format or study.

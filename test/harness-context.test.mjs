@@ -34,7 +34,8 @@ async function fakeCLI() {
   if (argv.includes('--version')) { log({ kind: 'probe', probe: 'version' }); console.log('9.9.9 fixture'); return; }
   if (argv[0] === 'auth') { log({ kind: 'probe', probe: 'auth' }); console.log('{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"fixture"}'); return; }
   if (argv[0] === 'login') { log({ kind: 'probe', probe: 'login' }); console.log('Logged in using ChatGPT (synthetic fixture)'); return; }
-  let skillRoot = engine === 'pi' ? arg('--skill') : join(process.env.OCTOPUS_TEST_STUDIO, '.claude/skills');
+  // Claude Code loads .claude/skills from the studio it runs in, or from an --add-dir folder (a pinned project's context).
+  let skillRoot = engine === 'pi' ? arg('--skill') : engine === 'claude' && argv.includes('--add-dir') ? join(arg('--add-dir'), '.claude/skills') : join(process.env.OCTOPUS_TEST_STUDIO, '.claude/skills');
   const snapshot = () => Object.fromEntries(readdirSync(skillRoot).filter((name) => existsSync(join(skillRoot, name, 'SKILL.md')))
     .sort().map((name) => [name, createHash('sha256').update(readFileSync(join(skillRoot, name, 'SKILL.md'))).digest('hex')]));
   const resume = engine === 'claude' && argv.includes('--resume') ? arg('--resume') : engine === 'pi' && argv.includes('--session') ? arg('--session') : null;
@@ -286,6 +287,25 @@ async function worker(engine, root) {
     } finally { maintenance.endMaintenance(); }
     await send(s, 'AFTER-MAINTENANCE');
     check('chat resumes after maintenance with current core', () => assert.ok(turn().skills.transcribe));
+    // A pinned project: the adapter must hand the agent the project's own skill root (its pinned format skill copy)
+    // and the pinned context text, for every harness.
+    const pinnedRoot = join(project, '.octopus/context/.claude/skills');
+    write(join(pinnedRoot, 'format-abcdef12/SKILL.md'), '---\nname: format-abcdef12\ndescription: Pinned synthetic format v1\n---\nPINNED-FORMAT-V1\n');
+    const pinned = new Klass(`${id}-pinned`, () => 'Synthetic pinned project instructions.');
+    pinned.cwd = () => project; sessions.add(pinned);
+    pinned.projectScope = () => ({ skillRoot: pinnedRoot, instructionRoot: studio, text: 'PINNED-PROJECT-CONTEXT: format v1 is authoritative for this project.' });
+    await send(pinned, 'PINNED-PROJECT');
+    check('pinned project receives its own skill root with the pinned format skill and context', () => {
+      // Codex is given its roots after launch, so check what the agent could see during the turn.
+      if (engine !== 'codex') assert.equal(launch().skillRoot, pinnedRoot);
+      assert.equal(turn().skills['format-abcdef12'], hash(readFileSync(join(pinnedRoot, 'format-abcdef12/SKILL.md'))));
+      assert.equal(turn().skills.transcribe, undefined, 'the studio-wide publication is not this project\'s skill root');
+      assert.match(initialPrompt(), /PINNED-PROJECT-CONTEXT: format v1 is authoritative/);
+      if (engine === 'claude') assert.equal(launch().argv[launch().argv.indexOf('--add-dir') + 1], join(project, '.octopus/context'));
+      if (engine === 'codex') assert.deepEqual(wire().filter((x) => x.message?.method === 'skills/extraRoots/set').at(-1).message.params.extraRoots, [pinnedRoot]);
+      if (engine === 'pi') assert.equal(launch().argv[launch().argv.indexOf('--skill') + 1], pinnedRoot);
+    });
+    await stop(pinned);
     // Direct active-copy tampering is rejected before the agent sees another turn.
     write(join(studio, '.claude/skills/transcribe/SKILL.md'), 'unexpected tampering');
     await assert.rejects(() => s.send('MUST-NOT-USE-TAMPERED'), /Skill files changed/);
@@ -308,7 +328,8 @@ if (process.argv[2] === '--harness-worker') {
     try {
       const { stdout, stderr } = await promisify(childProcess.execFile)(process.execPath, [SELF, '--harness-worker', engine, f.root],
         { cwd: f.app, env: f.env, timeout: 35000, maxBuffer: 2 * 1024 * 1024 });
-      assert.equal(stderr, '');
+      // Node 22 (the oldest supported) still marks node:sqlite experimental and says so once on stderr; nothing else may be there.
+      assert.equal(stderr.replace(/^\(node:\d+\) ExperimentalWarning: SQLite is an experimental feature.*\n(\(Use `node --trace-warnings.*\n)?/m, ''), '');
       const result = JSON.parse(stdout.trim());
       t.diagnostic(JSON.stringify(result));
       assert.deepEqual(result.failures, [], `${engine} failed ${result.failures.length} integration checks`);

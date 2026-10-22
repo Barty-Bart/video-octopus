@@ -14,7 +14,7 @@ export function extractionStatus(studio,id){const j=jobs.get(key(studio,id));ret
 function command(j,bin,args){return new Promise((ok,no)=>{if(j.cancelled)return no(Error('Cancelled'));const child=spawn(bin,args,{stdio:['ignore','pipe','pipe'],windowsHide:true});j.child=child;let out='',err='',settled=false;const timer=setTimeout(()=>child.kill('SIGTERM'),120000);const finish=(e)=>{if(settled)return;settled=true;clearTimeout(timer);j.child=null;e?no(e):ok(out);};child.stdout.on('data',b=>{if(out.length<1000000)out+=b;});child.stderr.on('data',b=>{err=(err+b).slice(-2000);});child.on('error',finish);child.on('close',code=>finish(j.cancelled?Error('Cancelled'):code?Error(err||`Media tool exited ${code}`):null));});}
 export function startExtraction(studio,id){
  const k=key(studio,id);if(jobs.get(k)?.status==='running')throw Error('Reference extraction is already running.');
- const st=new LearningStore(studio);let session,folder;try{session=st.get('sessions',id);folder=st.sessionDir(id);if(session.status==='approved'||session.status==='running')throw Error('Finish the current study before extracting references.');}finally{st.close();}
+ const st=new LearningStore(studio);let session,folder;try{session=st.get('sessions',id);folder=st.sessionDir(id);if(session.status==='running')throw Error('Finish the current study before extracting references.');}finally{st.close();}
  const j={status:'running',completed:0,total:session.references.filter(r=>r.kind==='file'&&/\.(mp4|mov|m4v|webm)$/i.test(r.name)).length,cancelled:false};jobs.set(k,j);
  j.promise=(async()=>{
   const report=[];let remaining=2400;

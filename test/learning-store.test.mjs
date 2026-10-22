@@ -99,5 +99,7 @@ test('study settings preserve references and scope, reject stale, running and ap
  assert.throws(()=>st.configure(running.id,running.revision,{direction:'during run'}),/Stop/);
  st.change(running.id,running.revision,s=>s.status='review');approve(st,d);
  const approved=st.get('sessions',d.s.id);
- assert.throws(()=>st.configure(approved.id,approved.revision,{name:'After approval'}),/retained/);
+ // Conversations continue after approval (format skill spec, 22 October 2026): the session reopens on the new version.
+ assert.equal(approved.status,'draft');assert.equal(approved.baseVersion,approved.approvedVersion);assert.deepEqual(approved.approvedVersions,[approved.approvedVersion]);
+ assert.equal(st.configure(approved.id,approved.revision,{name:'After approval'}).name,'After approval');
 });

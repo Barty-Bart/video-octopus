@@ -20,7 +20,7 @@ Save useful preferences with **Remember this**, review proposed lessons, and reu
 | Exports | MP4; WAV, M4A/AAC and MP3; transcript text/Markdown; SRT/VTT and burned captions; layer exports and timeline XML. Tested platform coverage and limitations are listed below. |
 | Project formats | YouTube tutorial, faceless explainer, Short and product explainer. |
 
-> **v0.1.0-beta.8 — source update.** Saved formats work immediately in New video; onboarding can find and verify existing Python environments. Reviewed scoped memories, searchable chat history, format research and example studies, a SQLite sound catalog, skills and instructions, brand profiles, and automatic New video context are included. Read the [release notes](docs/release-notes.md) and [verification limits](docs/managed-skills-verification.md) before relying on an untested workflow.
+> **v0.1.0-beta.9 — source update.** Video formats is now channels › formats › a format home with its own skill, taught and changed by talking to the format; settings saves are crash-safe and the status shows the selected agent. Reviewed scoped memories, searchable chat history, format research and example studies, a SQLite sound catalog, skills and instructions, brand profiles, and automatic New video context are included. Read the [release notes](docs/release-notes.md) and [verification limits](docs/managed-skills-verification.md) before relying on an untested workflow.
 
 ### Six bundled starter skills
 
