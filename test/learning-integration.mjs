@@ -133,6 +133,18 @@ try{
  }else await appCall(`profiles/${alpha.id}/brand`,{brand:{identity:'Alpha research identity',colors:['#123456']},expected:null});
  const all=await appCall('profiles');assert.equal(all.profiles.find(x=>x.id===beta.id).brand.brand.identity,'Beta identity stays separate');
  const instructions=await appCall('instructions');await appCall('instructions',{files:{...instructions.current.files,'PROMPT.md':'Synthetic studio rule: preserve originals.'},expected:instructions.current.id});
+ // Saved formats are usable before optional brand research and style study.
+ const basicProfile=await appCall('profiles',{name:'Basic setup fixture'});
+ const basicFormat=await call('/formats',{profileId:basicProfile.id,name:'Narrated basics',type:'faceless'});
+ const basicPreview=await appCall('video-context',{profileId:basicProfile.id,formatId:basicFormat.id,type:'faceless'});
+ assert.equal(basicPreview.brandVersion,null);assert.equal(basicPreview.versionId,null);
+ const basicVideo=await appCall('projects',{name:'Basic format video',profileId:basicProfile.id,formatId:basicFormat.id,type:'faceless',contextExpected:basicPreview});
+ const basicPin=await appCall(`project-context/${basicVideo.id}`);assert.equal(basicPin.bundle.formatId,basicFormat.id);assert.equal(basicPin.bundle.formatName,'Narrated basics');assert.deepEqual(basicPin.brand,{});
+ assert.equal((await appCall(`projects/${basicVideo.id}`)).type,'faceless');
+ await appCall(`profiles/${basicProfile.id}/brand`,{brand:{identity:'Later brand',colors:['#112233']},expected:null});
+ assert.deepEqual((await appCall(`project-context/${basicVideo.id}`)).brand,{});
+ assert.deepEqual((await appCall(`projects/${basicVideo.id}`)).brandColors,[]);
+ const staleBasic=await fetch(url+'/api/projects',{method:'POST',headers:{'Content-Type':'application/json','X-Studio':'1'},body:JSON.stringify({name:'Stale basic setup',profileId:basicProfile.id,formatId:basicFormat.id,type:'faceless',contextExpected:basicPreview})});assert.equal(staleBasic.status,400);
  const previewContext=await appCall('video-context',{profileId:alpha.id,type:'short'});
  const newVideo=await appCall('projects',{name:'Profile context API check',type:'short',profileId:alpha.id,contextExpected:previewContext});
  const pinned=await appCall(`project-context/${newVideo.id}`);assert.equal(pinned.brand.identity,'Alpha research identity');assert.match(pinned.instructions['PROMPT.md'],/preserve originals/);assert.equal(pinned.bundle.skills.length,6);assert.equal((await appCall(`projects/${newVideo.id}`)).brandColors[0],'#123456');

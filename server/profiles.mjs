@@ -62,4 +62,4 @@ export async function profileRoute(req,res,url,{send,body,serveFile}){
  }catch(e){return reply({error:e.message},400);}
 }
 
-export function profilePalette(id){if(!settings().studio||!existsSync(join(settings().studio,'.studio/profile-storage.json')))return null;return use(s=>{const b=s.projectBundle(id);return b?(b.profileId?s.brand(b.profileId,b.brandVersion)?.brand.colors||[]:[]):null;});}
+export function profilePalette(id){if(!settings().studio||!existsSync(join(settings().studio,'.studio/profile-storage.json')))return null;return use(s=>{const b=s.projectBundle(id);return b?(b.brandVersion?s.brand(b.profileId,b.brandVersion)?.brand.colors||[]:[]):null;});}

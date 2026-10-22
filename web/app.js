@@ -175,7 +175,7 @@ async function home(view = 'projects', route = null) { // route: { signal, alive
   if (view === 'skills') await renderSkillDatabase(main);
   if (view === 'storage') await renderDatabaseRecovery(main);
   const memories = view === 'memories' ? await renderMemories(main) : null;
-  const learning = view === 'learning' ? await renderLearning(main, {makeChat}) : null;
+  const learning = view === 'learning' ? await renderLearning(main, {makeChat, startVideo:format=>newProjectDialog(null, null, format)}) : null;
   const lib = view === 'library' ? renderLibrary(main, $('#libSide', el)) : null;
   return { teardown: () => { lib?.teardown(); sched?.teardown(); learning?.teardown(); memories?.teardown(); document.body.classList.remove('in-home'); } };
 }
@@ -364,13 +364,13 @@ function setupScreen() {
 
 // New project: a name, the type (which picks the steps and the frame shape) and where the recording comes
 // from: record a new take now, an earlier take, or later. pick = 'record', a take id, or null.
-async function newProjectDialog(pick, takes) {
+async function newProjectDialog(pick, takes, selectedFormat = null) {
   const [list, projects, profiles] = await Promise.all([takes || api('/api/takes'), api('/api/projects').catch(() => []), api('/api/profiles')]);
   const canRecord = true; // the recorder is in Video Octopus itself (its panel says when this browser can't record)
   const modal = $('#modal');
   const types = Object.entries(STATUS.formats);
   const info = STATUS.formatInfo || {};
-  let type = types[0]?.[0] || 'tutorial', style = null, upload = null; // upload: the file picked with "Import a file…"
+  let type = selectedFormat?.type || types[0]?.[0] || 'tutorial', style = null, upload = null; // upload: the file picked with "Import a file…"
   // The folder the project gets: the server's slug of the name, -2, -3… when it's taken.
   const ids = new Set(projects.map((p) => p.id));
   const slug = (n) => String(n).toLowerCase().normalize('NFKD').replace(/[^\w\s-]/g, '').trim().replace(/[\s_]+/g, '-').replace(/-+/g, '-').slice(0, 60) || 'project';
@@ -394,9 +394,9 @@ async function newProjectDialog(pick, takes) {
     <input class="field big" id="pname" placeholder="e.g. Cut Editor walkthrough" autocomplete="off" aria-describedby="npErr">
     <div class="np-err" id="npErr" role="alert" hidden>Give the video a name first. It becomes the project's folder.</div>
     <div class="sub np-folder" id="npFolder"></div>
-    <div class="learn-toolbar"><label>Brand profile<select id="npProfile"><option value="">No brand</option>${profiles.profiles.map(p=>`<option value="${p.id}">${esc(p.name)}${p.brand?'':' · brand not saved'}</option>`).join('')}</select></label><label>Approved video format<select id="npFormat"><option value="">No approved format</option></select></label></div>
+    <div class="learn-toolbar"><label>Profile · channel, brand or series<select id="npProfile"><option value="">No profile</option>${profiles.profiles.map(p=>`<option value="${p.id}">${esc(p.name)}${p.brand?'':' · brand optional'}</option>`).join('')}</select></label><label>Video format<select id="npFormat"><option value="">Choose a profile first</option></select></label></div>
     <p class="sub" id="npContext">Enabled core workflows and current studio instructions will be included.</p>
-    <div class="fl" id="typeLabel">Type</div>
+    <div class="fl" id="typeLabel">Video setup</div><p class="sub" id="npSetupHint">Choose a saved format above to fill this in, or choose a setup yourself.</p>
     <div class="types" role="radiogroup" aria-labelledby="typeLabel">${types.map(([k, v]) => `<button type="button" class="type" role="radio" data-k="${k}"><span class="ty-shape ${info[k]?.aspect === '9:16' ? 'tall' : 'wide'}${info[k]?.camera === false ? ' nocam' : ''}" aria-hidden="true"></span><b>${esc(v)}</b><small>${esc(info[k]?.hint || '')}</small>
       ${info[k]?.blocks?.length ? `<span class="ty-blocks" aria-label="Starts with: ${esc(info[k].blocks.map((b) => b.label).join(', '))}">${info[k].blocks.map((b) => `<i class="t-${esc(b.type)}${b.optional ? ' opt' : ''}">${esc(b.label)}</i>`).join('')}</span>` : ''}
       ${info[k]?.steps?.length ? `<small class="ty-n">${info[k].steps.length} steps</small>` : ''}</button>`).join('')}</div>
@@ -413,12 +413,14 @@ async function newProjectDialog(pick, takes) {
     <div class="actions"><span class="np-chain" id="npChain"></span><button class="btn ghost" id="cancel">Cancel</button><button class="btn primary" id="create">Create</button></div></div>`);
   modal.replaceChildren(d); modal.hidden = false;
   let contextToken=0, selectedContext=null;
-  const contextPreview=async()=>{const token=++contextToken;selectedContext=null;const f=profiles.formats.find(f=>f.id===$('#npFormat',d).value);try{const x=await api('/api/video-context',{profileId:$('#npProfile',d).value||null,formatId:f?.id||null,type});if(token!==contextToken)return;selectedContext=x;$('#npContext',d).textContent=`${x.profileName||'No brand'} · ${x.brandVersion?'approved brand · ':''}${x.versionId?'approved learned format · ':''}${x.skills.length} skills: ${x.skills.map(s=>s.name).join(', ')}. This setup is saved for this video.`;}catch(e){if(token===contextToken)$('#npContext',d).textContent=e.message;}};
-  const formatOptions=()=>{const fs=profiles.formats.filter(f=>f.profileId===$('#npProfile',d).value&&f.activeVersion);$('#npFormat',d).innerHTML='<option value="">No approved format</option>'+fs.map(f=>`<option value="${f.id}">${esc(f.name)}</option>`).join('');};
+  const contextPreview=async()=>{const token=++contextToken;selectedContext=null;const f=profiles.formats.find(f=>f.id===$('#npFormat',d).value);try{const x=await api('/api/video-context',{profileId:$('#npProfile',d).value||null,formatId:f?.id||null,type});if(token!==contextToken)return;selectedContext=x;$('#npContext',d).textContent=`${x.profileName||'No profile'} · ${x.brandVersion?'saved brand':'no brand added'} · ${f?`${f.name} · ${x.versionId?'reviewed style guide included':'ready to use; no style guide added'}`:'no saved format selected'} · ${x.skills.length} skills: ${x.skills.map(s=>s.name).join(', ')}. This setup is saved for this video.`;}catch(e){if(token===contextToken)$('#npContext',d).textContent=e.message;}};
+  const formatOptions=()=>{const profileId=$('#npProfile',d).value,fs=profiles.formats.filter(f=>f.profileId===profileId);$('#npFormat',d).innerHTML=`<option value="">${!profileId?'Choose a profile first':fs.length?'Choose a saved format (optional)':'No formats saved for this profile'}</option>`+fs.map(f=>`<option value="${f.id}">${esc(f.name)} · ${f.activeVersion?'with style guide':'basic setup'}</option>`).join('');$('#npFormat',d).disabled=!fs.length;};
   $('#npProfile',d).onchange=()=>{formatOptions();sync();};
   $('#npFormat',d).onchange=()=>{const f=profiles.formats.find(f=>f.id===$('#npFormat',d).value);if(f)type=f.type;sync();};
   const sync = () => {
     const f=profiles.formats.find(f=>f.id===$('#npFormat',d).value);if(f&&f.type!==type)$('#npFormat',d).value='';contextPreview();
+    const selected=profiles.formats.find(f=>f.id===$('#npFormat',d).value);
+    $('#npSetupHint',d).textContent=selected?`Set by ${selected.name}. Changing the setup switches to a video without this saved format.`:'Choose a saved format above to fill this in, or choose a setup yourself.';
     d.querySelectorAll('.type').forEach((x) => { x.classList.toggle('on', x.dataset.k === type); x.setAttribute('aria-checked', String(x.dataset.k === type)); });
     // Shorts are one format with styles inside (talking head, long-form teaser, plus the studio's own from .studio/formats.json).
     const styles = info[type]?.styles || [];
@@ -472,6 +474,7 @@ async function newProjectDialog(pick, takes) {
   d.addEventListener('dragover', (e) => { if ([...e.dataTransfer.types].includes('Files')) { e.preventDefault(); d.classList.add('drop'); } });
   d.addEventListener('dragleave', (e) => { if (!d.contains(e.relatedTarget)) d.classList.remove('drop'); });
   d.addEventListener('drop', (e) => { e.preventDefault(); d.classList.remove('drop'); setFile(e.dataTransfer.files[0]); });
+  if(selectedFormat){$('#npProfile',d).value=selectedFormat.profileId;formatOptions();$('#npFormat',d).value=selectedFormat.id;}else formatOptions();
   sync();
   const close = () => { modal.hidden = true; document.removeEventListener('keydown', esc_); };
   const esc_ = (e) => { if (e.key === 'Escape') close(); };

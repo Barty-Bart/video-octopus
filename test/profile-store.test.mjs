@@ -8,7 +8,7 @@ import { syncSkills } from '../server/managed-skills.mjs';
 import { previewDatabaseRestore } from '../server/database-recovery.mjs';
 const fixture=t=>{const root=realpathSync(mkdtempSync(join(tmpdir(),'octopus-profiles-')));writeFileSync(join(root,'CLAUDE.md'),'Preserve source media.');syncSkills({studio:root,fresh:true});const s=new ProfileStore(root);t.after(()=>{s.close();rmSync(root,{recursive:true,force:true});});return {root,s};};
 const brand=(s,p,name)=>s.saveBrand(p.id,{identity:name,colors:['#123456'],voice:'Plain language'},null);
-function learned(s,p){const f=s.format(p.id,'Quick guide','short'),r=s.session(f.id,{name:'Study',focus:['scripting']});const d=s.reference(r.id,r.revision,{kind:'note',name:'Reference',note:'0:01 shows the result.'});writeFileSync(join(s.sessionDir(r.id),'work/proposal.json'),JSON.stringify({rules:[{id:'hook',area:'scripting',text:'Show the result.',confidence:'high',evidence:[{referenceId:d.references[0].id,note:'0:01 result'}]}],workflow:'Plan before building.',assets:[]}));const q=s.proposal(r.id),v=s.approve(r.id,{revision:q.revision,token:q.token,decisions:[{id:'hook',action:'keep'}]});return {f,v};}
+function learned(s,p,f=s.format(p.id,'Quick guide','short')){const r=s.session(f.id,{name:'Study',focus:['scripting']});const d=s.reference(r.id,r.revision,{kind:'note',name:'Reference',note:'0:01 shows the result.'});writeFileSync(join(s.sessionDir(r.id),'work/proposal.json'),JSON.stringify({rules:[{id:'hook',area:'scripting',text:'Show the result.',confidence:'high',evidence:[{referenceId:d.references[0].id,note:'0:01 result'}]}],workflow:'Plan before building.',assets:[]}));const q=s.proposal(r.id),v=s.approve(r.id,{revision:q.revision,token:q.token,decisions:[{id:'hook',action:'keep'}]});return {f,v};}
 test('migration saves instructions once, keeps originals and does not assign legacy brand to new profiles',t=>{const root=realpathSync(mkdtempSync(join(tmpdir(),'octopus-legacy-brand-')));t.after(()=>rmSync(root,{recursive:true,force:true}));writeFileSync(join(root,'CLAUDE.md'),'Original instructions');writeFileSync(join(root,'BRAND.md'),'Legacy identity');const s=new ProfileStore(root);const id=s.instructions().id;assert.equal(s.instructions().files['CLAUDE.md'],'Original instructions');const imported=s.viewProfiles()[0];assert.equal(imported.brand.brand.identity,'Legacy identity');const p=s.profile('Another brand');assert.equal(s.brand(p.id),null);assert.equal(readFileSync(join(root,'CLAUDE.md'),'utf8'),'Original instructions');s.close();writeFileSync(join(root,'CLAUDE.md'),'Unaccepted external edit');const again=new ProfileStore(root);assert.equal(again.instructions().id,id);assert.equal(again.instructions().files['CLAUDE.md'],'Original instructions');again.close();});
 test('instruction edits have stale protection, preserve files and support explicit import and restore',t=>{const {s,root}=fixture(t),old=s.instructions();const next=s.saveInstructions({...old.files,'AGENTS.md':'New instructions'},old.id);assert.equal(readFileSync(join(root,'AGENTS.md'),'utf8'),'New instructions');assert.throws(()=>s.saveInstructions({},old.id),/changed/);writeFileSync(join(root,'AGENTS.md'),'External edit');s.projectInstructions();assert.equal(readFileSync(join(root,'AGENTS.md'),'utf8'),'New instructions');assert(existsSync(join(root,'.studio/instruction-recovery')));writeFileSync(join(root,'AGENTS.md'),'Accepted external edit');const imported=s.importInstructions(next.id);assert.equal(imported.files['AGENTS.md'],'Accepted external edit');assert.equal(s.instructions(old.id).files['CLAUDE.md'],'Preserve source media.');assert.throws(()=>s.saveInstructions({'../bad.md':'x'},imported.id),/Supported instructions/);});
 test('profile brands and asset bytes are isolated and immutable across revisions',t=>{const {s}=fixture(t),a=s.profile('A'),b=s.profile('B');const asset=s.uploadAsset(a.id,'logo.svg',Buffer.from('<svg/>'));const av=s.saveBrand(a.id,{identity:'Alpha',assets:[asset.id]},null);brand(s,b,'Beta');assert.throws(()=>s.saveBrand(b.id,{identity:'Wrong',assets:[asset.id]},s.brand(b.id).id),/missing/);s.saveBrand(a.id,{identity:'Alpha new'},av.id);assert.equal(s.brand(a.id,av.id).brand.identity,'Alpha');assert.equal(s.brand(b.id).brand.identity,'Beta');assert.throws(()=>s.saveBrand(a.id,{identity:'Stale'},av.id),/changed/);assert.throws(()=>s.uploadAsset(a.id,'../logo.svg',Buffer.from('x')),/Choose/);});
@@ -29,4 +29,34 @@ test('copied formats use the destination brand and leave source project context 
  assert.equal(s.brand(b.id,selected.brandVersion).brand.identity,'Destination identity');assert.equal(s.projectBundle('original').versionId,v.id);
  assert.equal(selected.versionId,copy.activeVersion);assert.notEqual(selected.brandVersion,original.brandVersion);
  assert.equal(s.list('brand_versions').length,2);
+});
+
+
+test('saved formats work before study or brand setup and pin the absence of both',t=>{
+ const {s,root}=fixture(t),p=s.profile('New channel'),other=s.profile('Other channel'),f=s.format(p.id,'Narrated videos','short');
+ const b=s.bundle({profileId:p.id,formatId:f.id,type:'short'});
+ assert.equal(b.formatId,f.id);assert.equal(b.formatName,f.name);assert.equal(b.type,'short');assert.equal(b.versionId,null);assert.equal(b.brandVersion,null);
+ assert.equal(b.skills.length,6);
+ assert.throws(()=>s.bundle({profileId:other.id,formatId:f.id,type:'short'}),/another profile/);
+ assert.throws(()=>s.bundle({profileId:p.id,formatId:f.id,type:'faceless'}),/video type/);
+ assert.throws(()=>s.bundle({profileId:p.id,formatId:f.id,versionId:'missing',type:'short'}));
+ const dir=join(root,'projects','basic');mkdirSync(dir,{recursive:true});s.pinContext('basic',b);
+ assert.deepEqual(s.materialize('basic',dir).brand,{});
+ const bv=brand(s,p,'Later brand'),{v}=learned(s,p,f);
+ const next=s.bundle({profileId:p.id,formatId:f.id,type:'short'});
+ assert.equal(next.brandVersion,bv.id);assert.equal(next.versionId,v.id);
+ assert.equal(s.projectBundle('basic').versionId,null);assert.deepEqual(s.materialize('basic',dir).brand,{});
+ assert.match(s.contextText('basic',dir),/Style guide version: none/);
+ assert.equal(s.projectBundle('basic').skills.length,6);
+ const backup=s.backup();assert.deepEqual(previewDatabaseRestore(root,backup.id,[{project:'basic',name:'Basic',...b}]).missingPins,[]);
+});
+
+test('draft studies are excluded while selected personal skills work without a guide',t=>{
+ const {s,root}=fixture(t),p=s.profile('Channel'),f=s.format(p.id,'Shorts','short');
+ const skills=syncSkills({studio:root,action:{action:'create',revision:syncSkills({studio:root}).revision,text:'---\nname: chosen-helper\ndescription: A helper\n---\nDo work.'}});
+ const helper=skills.items.find(x=>x.name==='chosen-helper');s.setFormatSkills(f.id,[helper.id],[]);
+ const session=s.session(f.id,{name:'Unreviewed study'});
+ writeFileSync(join(s.sessionDir(session.id),'work/proposal.json'),JSON.stringify({workflow:'UNREVIEWED_SENTINEL'}));
+ const b=s.bundle({profileId:p.id,formatId:f.id,type:'short'}),dir=join(root,'projects','draft-free');mkdirSync(dir,{recursive:true});s.pinContext('draft-free',b);
+ assert(b.skills.some(x=>x.id===helper.id));assert.equal(b.versionId,null);assert.doesNotMatch(s.contextText('draft-free',dir),/UNREVIEWED_SENTINEL/);
 });

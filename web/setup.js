@@ -1,3 +1,4 @@
+import { environmentPicker } from './setup-environments.js';
 import { TERMS } from './terms.js';
 // First-time setup checks local tools, then offers skippable database-backed brand profiles.
 import { $, esc, h, api, toast, confirmBox } from './ui.js';
@@ -62,9 +63,10 @@ export async function setupPage(ctx, { back = '#/', assistantPanel }) {
       <div class="su-top"><a class="brand" href="#/"><span class="logo" aria-hidden="true"><i></i></span>Video Octopus</a><span class="gap"></span>
         ${st.done ? `<a class="btn small ghost" href="${esc(back)}">Back</a>` : ''}<a class="btn small ghost" href="#/settings">Settings</a></div>
       <div id="scanView">
-      <div class="set-head"><h1>Let’s check your computer.</h1><span class="gap"></span><button type="button" class="btn small" id="again">Scan again</button></div>
-      <p class="sub lead">Here’s what Video Octopus found. Nothing is connected, installed or downloaded until you click, and anything missing can wait: Settings has all of it later.</p>
+      <div class="set-head"><h1>Let’s check your computer.</h1><span class="gap"></span><button type="button" class="btn small" id="again">Check my computer</button></div>
+      <p class="sub lead">Check installed AI tools and their sign-in status, Python environments, video utilities and hardware. The check runs local tools in standard locations and your studio. Nothing is installed or selected automatically. You can skip this and return later.</p>
 
+      <div id="scanResults" hidden><div id="environmentPicker"></div>
       <section class="su-card" aria-labelledby="suAgents"><div class="su-ch"><h2 id="suAgents">Agents</h2><span class="sub">pick one to run the chats</span></div>
         <ol class="su-list" id="agents"><li class="su-item checking"><div class="su-i"><span class="spin big" aria-hidden="true"></span></div><div class="su-b"><b>Looking for agents…</b></div></li></ol>
         <p class="sub su-byo">Using another provider (OpenRouter, a gateway)? <a href="#/settings/claude">Settings → Agent &amp; model</a>.</p></section>
@@ -73,7 +75,7 @@ export async function setupPage(ctx, { back = '#/', assistantPanel }) {
         <button type="button" class="btn small" id="machineBtn">Check my machine</button></div>
         <p class="sub su-mnote" id="machineNote">The transcription model and the object-separation model that suit this computer, each with its own Download.</p>
         <ol class="su-list" id="machine" hidden></ol></section>
-      <div class="su-foot"><button type="button" class="btn ghost" id="scanSkip">Skip for now</button><span class="gap"></span><button type="button" class="btn primary" id="scanNext">Continue</button></div>
+      </div><div class="su-foot"><button type="button" class="btn ghost" id="scanSkip">Skip for now</button><span class="gap"></span><button type="button" class="btn primary" id="scanNext">Continue</button></div>
       </div>
 
       <div id="youView" hidden>
@@ -132,9 +134,9 @@ export async function setupPage(ctx, { back = '#/', assistantPanel }) {
       $('.su-b', r.li).append(make.el, f, other);
     } else if (c.fix && (s === 'fail' || s === 'warn')) {
       // Python's Install (and every Fix) goes to the Video Octopus assistant, which shows its plan and asks before each step.
-      const b = h(`<button type="button" class="btn small accent">${c.install === true ? 'Install' : 'Fix'}</button>`);
+      const b = h(`<button type="button" class="btn small accent">${c.install === true ? 'Set up libraries' : 'Fix'}</button>`);
       b.onclick = async () => {
-        if (c.install === true && !(await confirmBox({ title: 'Install Python for Video Octopus?', text: 'The Video Octopus assistant on the right sets it up: it shows its plan and asks before each step.', ok: 'Ask the assistant' }))) return;
+        if (c.install === true && !(await confirmBox({ title: 'Set up Python libraries for Video Octopus?', text: 'The Video Octopus assistant on the right sets it up: it shows its plan and asks before each step.', ok: 'Ask the assistant' }))) return;
         fix(id);
       };
       a.append(b);
@@ -377,12 +379,23 @@ export async function setupPage(ctx, { back = '#/', assistantPanel }) {
       if (!r.sent) { fixing.delete(id); rows.get(id).check = r.check; rows.get(id).state = r.check.state; drawRow(id); count(); toast('That one is fine now.'); }
     } catch (e) { fixing.delete(id); drawRow(id); toast(e.message); }
   }
-  $('#again', el).onclick = checkAll;
+  let scanStarted = false;
+  const picker = environmentPicker(() => Promise.all([check('python'), ...(machineOn ? [check('objsep'), check('whisper')] : [])]));
+  $('#environmentPicker', el).append(picker.el);
+  $('#again', el).onclick = async () => {
+    if ($('#again', el).disabled) return;
+    scanStarted = true;
+    $('#scanResults', el).hidden = false;
+    $('#again', el).disabled = true;
+    try { await Promise.all([checkAll(), picker.scan()]); }
+    finally { $('#again', el).disabled = false; $('#again', el).textContent = 'Scan again'; }
+  };
 
   // ---- the assistant on the right; when it finishes a reply, check again ----
   const panel = assistantPanel({
     hint: 'Press Fix on a row and I take it from there, asking before each step.',
     onResult: async () => {
+      if (!scanStarted) return;
       const ids = fixing.size ? [...fixing] : [...rows.keys()].filter((id) => machineOn || rows.get(id).card !== 'machine');
       fixing.clear();
       await Promise.all(ids.map(check));
@@ -417,6 +430,6 @@ export async function setupPage(ctx, { back = '#/', assistantPanel }) {
 
   for (const id of rows.keys()) drawRow(id);
   count();
-  checkAll();
-  return { teardown: () => { live = false; Object.values(polls).forEach(clearTimeout); panel.destroy(); profilePanel?.teardown?.(); document.body.classList.remove('in-home', 'in-app-page'); } };
+  drawSteps(Boolean(st.studioReady));
+  return { teardown: () => { live = false; picker.destroy(); Object.values(polls).forEach(clearTimeout); panel.destroy(); profilePanel?.teardown?.(); document.body.classList.remove('in-home', 'in-app-page'); } };
 }

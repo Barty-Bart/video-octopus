@@ -112,6 +112,12 @@ Faceless workflows use imported/recorded narration; no TTS provider is selected.
 
 ## Profiles, presets and reusing formats
 
+Video formats lists all saved formats grouped by profile, including formats with
+no style guide yet. The last selection is remembered in this browser, and the
+page URL identifies the selected profile, format and study. Returning to the page
+does not hide another profile's formats. Only selection IDs are browser preferences;
+format content remains in SQLite.
+
 A profile is a channel, brand or series. A format is a repeatable video style
 with its own approved guide and learning history. For example, one channel can
 have long-form explainers and Shorts, while a second channel has its own formats.
@@ -157,8 +163,13 @@ profile explicitly. A missing canonical database cannot be replaced by generated
 External instruction edits require explicit import; rebuilding preserves displaced
 edits under `.studio/instruction-recovery/`. Keep brand-specific prose in its profile.
 
-**New video** lets you choose a profile and approved learned format, or no brand and
-no learned format. It previews the selection, validates compatible enabled skills,
+**New video** lists every saved format under its profile. Choosing one fills in
+its video setup; formats without a reviewed guide are labelled **basic setup**
+and can be used immediately. Brand details and studying examples are optional.
+A format card also opens New video with that profile and format selected.
+Only approved guides are included; draft studies never become project instructions.
+A project created without a brand or guide stays that way when either is added later.
+You can also create a video without a profile or saved format. It previews the selection, validates compatible enabled skills,
 and pins exact brand, instruction, skill and learned versions. Generated files under
 `<project>/.octopus/context/` give the agent its selected context. Brand palettes are
 available to the editor; instructions/format guidance inform the agent's planning.

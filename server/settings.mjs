@@ -202,6 +202,7 @@ export async function childEnv() {
   const s = settings();
   const t = section('transcribe', s);
   const env = {};
+  if (s.python) env.STUDIO_PYTHON = expandHome(s.python);
   const c = section('claude', s), useApi = c.useApiKey && (c.ccSource || 'plan') === 'plan';
   const names = Object.keys(KEYS).filter((n) => (n !== 'ANTHROPIC_API_KEY' || useApi) && n !== 'ANTHROPIC_COMPATIBLE_API_KEY');
   const values = await Promise.all(names.map((n) => readKey(n).catch(() => null)));
@@ -232,7 +233,8 @@ export function settingsBrief(env = {}, { profileScoped = false } = {}) {
       : `- Transcription: on this computer with the transcribe skill (STUDIO_TRANSCRIBE=local, ${t.model !== 'auto' ? `model ${t.model}` : '--model auto: the best verbatim model already downloaded'}). Never run two transcriptions side by side; the rough cut's filler pass goes in the same run (--fill-out).`);
   if (t.language !== 'auto' || t.vocab.length) lines.push(`- Transcription language: ${LANGS[t.language]}${t.vocab.length ? `. Always spell these right (pass them as the prompt): ${t.vocab.join(', ')}` : ''}.`);
   lines.push(`- Rendering: on this computer${r.jobs ? `, up to ${r.jobs} jobs in parallel` : ''}; default output ${r.size === '4k' ? '4K' : '1080p'} ${{ h264: 'H.264', hevc: 'HEVC', prores: 'ProRes' }[r.codec]}.`);
-  lines.push('- Python: transcription on this computer, the rough cut, join check, tools/cut/apply_edit.py and object separation run Python (the studio\'s .venv first). When a step needs it and it isn\'t there (Setup may have said "Not needed"), say so in one line, offer to set it up (Python 3.10+, a .venv in the studio with its requirements.txt) and ask before installing anything.');
+  if (s.python) lines.push(`- Selected Python: ${JSON.stringify(expandHome(s.python))}. Use this executable (also STUDIO_PYTHON) for all Python tools. Its directory is on PATH. Do not substitute another project environment or install into this shared environment without permission.`);
+  lines.push('- Python: transcription on this computer, the rough cut, join check, tools/cut/apply_edit.py and object separation run Python (the explicitly selected Python first, otherwise the studio\'s .venv). When a step needs it and it isn\'t there (Setup may have said "Not needed"), say so in one line, offer to set it up (Python 3.10+, a .venv in the studio with its requirements.txt) and ask before installing anything.');
   const o = section('objsep', s), sam = sam2Have();
   lines.push(`- Object separation: the object-separation skill with SAM 2.1 ${o.model === 'auto' ? 'as recommended for this computer (--model left out: its own pick)' : `${o.model} (STUDIO_OBJSEP_MODEL=${o.model})`}; downloaded: ${sam.length ? sam.join(', ') : 'none yet'}. The skill never downloads a model: when it isn't there, the creator presses Download in Video Octopus's Setup (Object separation row) or picks another one in Settings → Rendering.`);
   lines.push(`- Sound sources: ${[so.claude && 'made by Claude', so.epidemic && 'Epidemic Sound (through its connector)', so.library && `the library folder ${so.library}`].filter(Boolean).join(', ') || 'none picked'}; effects sit about ${Math.abs(so.fxDb)} dB under the voice (an effect's loudest 0.2 s against the voice's level while it talks: Video Octopus's export and canvas mix sound cues this way, so mix your renders the same).`);
@@ -301,6 +303,7 @@ export async function whisperEngine(s = settings()) {
   const e = section('transcribe', s).whisperEngine, mac = await machineInfo();
   if (e === 'faster-whisper' || (e === 'mlx' && !mac.arm64)) return 'faster-whisper';
   if (e === 'mlx') return 'mlx';
+  if (s.python && ['mlx', 'faster-whisper'].includes(s.pythonEngine)) return s.pythonEngine === 'mlx' && !mac.arm64 ? 'faster-whisper' : s.pythonEngine;
   return mac.whisper.engine === 'mlx' && !downloaded('mlx').length && downloaded('whisper').length ? 'faster-whisper' : mac.whisper.engine;
 }
 

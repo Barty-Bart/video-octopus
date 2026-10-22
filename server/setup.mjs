@@ -4,7 +4,7 @@
 import { existsSync, statSync, accessSync, constants } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { execFile } from 'node:child_process';
-import { settings, studioTool, python, childPathEnv, tildePath as tilde, hfHub, IS_WIN, IS_MAC, APP_DIR } from './util.mjs';
+import { settings, saveSettings, shellPath, studioTool, python, childPathEnv, tildePath as tilde, hfHub, IS_WIN, IS_MAC, APP_DIR } from './util.mjs';
 import { claudeInfo } from './claude.mjs';
 import { ccSource, sourceProblem, settingsCredentials } from './claude-source.mjs';
 import { codexInfo } from './codex.mjs';
@@ -15,6 +15,7 @@ import { settingsView, saveSection, section, profile, saveProfile, testKey, KEYS
 import { saveKey, removeKey, hasKey } from './keychain.mjs';
 import { createStudio, studioPathInfo, defaultStudioPath } from './starter.mjs';
 import { SAM2_MODELS, sam2Have, sam2Recommend, sam2Machine, sam2Download } from './sam2.mjs';
+import { scanPython, probePython, describeEnvironment } from './python-environments.mjs';
 import { sources, sourceLine, downloadState, startDownload, stopDownload } from './hfmodels.mjs';
 
 // What the object-separation skill needs from Python: torch (and the device it can use), torchvision (transformers' SAM 2
@@ -75,6 +76,29 @@ const run = async (bin, args, ms = 8000) => {
 
 // The last result of each check, for the Video Octopus assistant's context.
 export const lastChecks = new Map();
+let environmentScan = null;
+let environmentBusy = false;
+async function environments(action, b) {
+  if (b.confirmed !== true) throw Error('Confirm the computer check first.');
+  if (environmentBusy) throw Error('An environment check is already running.');
+  environmentBusy = true;
+  try {
+    const machine = await machineInfo();
+    if (action === 'scan') {
+      environmentScan = await scanPython({ path: await shellPath(), studio: settings().studio, configured: settings().python, extra: b.path || '' }, machine);
+      return { ...environmentScan, machine };
+    }
+    const candidate = environmentScan?.environments.find(x => x.path === b.path);
+    if (!candidate) throw Error('Scan this environment before verifying or selecting it.');
+    const checked = describeEnvironment({ path: candidate.path, source: candidate.source, ...await probePython(candidate.path), verification: await probePython(candidate.path, { verify: true }) }, machine);
+    if (action === 'select') {
+      if (!checked.verified || !checked.transcription) throw Error('This environment did not pass the transcription library checks. Review its results or choose another.');
+      saveSettings({ python: checked.path, pythonEngine: checked.engine });
+      settingsChanged('python');
+    }
+    return { environment: checked, selected: action === 'select' };
+  } finally { environmentBusy = false; }
+}
 
 export async function runCheck(id) {
   const title = (CHECKS.find((c) => c[0] === id) || [])[1];
@@ -147,14 +171,14 @@ const CHECK = {
     const r = await run(py, ['-c', code], 20000);
     let j = null;
     try { j = JSON.parse(r.out.split('\n').pop()); } catch {}
-    const need = 'Python is needed to run models on this computer';
-    if (!j) return { state: 'fail', install: true, detail: `${need}: it isn't found (${tilde(py)}).`,
+    if (!j) return { state: 'fail', install: true, detail: `Python could not complete its check (${tilde(py)}). It may be unavailable or a library import may have failed.`,
       fix: `Setup check "Python" failed: Video Octopus can't run Python (it tried ${py}). Transcription on this computer (faster-whisper${mlx ? ' or MLX Whisper' : ''}) and the rough cut and join check skills (numpy) need Python 3.10 or newer. Set it up on this computer (a venv in the studio folder at .venv is what Video Octopus looks for first${IS_WIN ? '; on Windows, winget install Python.Python.3.12' : ''}), then install the studio's requirements.txt into it. Tell me your plan first and ask before installing anything.` };
-    const missing = [!j.faster_whisper && 'faster-whisper', !j.numpy && 'numpy', mlx && !j.mlx_whisper && 'mlx-whisper'].filter(Boolean);
+    if (Number(j.py.split('.')[0]) !== 3 || Number(j.py.split('.')[1]) < 10) return { state: 'warn', detail: `Python ${j.py} found at ${tilde(py)}. Choose Python 3.10 or newer in Python environments.` };
+    const missing = [!mlx && !j.faster_whisper && 'faster-whisper', !j.numpy && 'numpy', mlx && !j.mlx_whisper && 'mlx-whisper'].filter(Boolean);
     const base = `Python ${j.py}${j.faster_whisper ? ` · faster-whisper ${j.faster_whisper}` : ''}${mlx && j.mlx_whisper ? ` · mlx-whisper ${j.mlx_whisper}` : ''}`;
     if (mlx && j.arch !== 'arm64') return { state: 'warn', install: true, detail: `${base} · this Python is an Intel build (${j.arch}), which can't run MLX Whisper: transcription falls back to faster-whisper.`,
       fix: `Setup check "Python": ${py} is an Intel (${j.arch}) Python running under Rosetta, so MLX Whisper can't run on it. Set up a native arm64 Python 3.10+ for the studio's .venv and install requirements.txt into it. Ask me before installing anything.` };
-    if (missing.length) return { state: 'fail', install: true, detail: `${need}: Python ${j.py} is there, but ${missing.join(' and ')} ${missing.length > 1 ? 'aren\'t' : 'isn\'t'} installed.`,
+    if (missing.length) return { state: 'warn', install: true, detail: `Python ${j.py} found at ${tilde(py)}, but ${missing.join(' and ')} ${missing.length > 1 ? 'aren\'t' : 'isn\'t'} installed.`,
       fix: `Setup check "Python" failed: Python ${j.py} (${py}) is there but ${missing.join(' and ')} can't be imported. faster-whisper${mlx ? ' and mlx-whisper are' : ' is'} for transcribing on this computer, numpy is for the rough cut and join check skills. Install ${missing.join(' and ')} for that Python (pip; if it says "externally managed", use the studio's .venv; the studio's requirements.txt lists them). Ask me before installing.` };
     // The Whisper model itself has its own row (whisper, below).
     if (!IS_MAC && !j.cv2) return { state: 'warn', detail: `${base} · no OpenCV, which Auto-frame needs.`,
@@ -289,8 +313,9 @@ export async function appRoute(req, res, url, { send, body }) {
       return send(res, 200, await testKey(b.name)), true;
     }
     if (p === '/api/app/profile') return send(res, 200, post ? saveProfile(b) : profile() || {}), true;
-    if (p === '/api/app/setup' && !post) return send(res, 200, { needed: setupNeeded(), done: section('setup').done, checks: CHECKS.map(([id, title]) => ({ id, title, card: CARD[id] })), formats: formats() }), true;
+    if (p === '/api/app/setup' && !post) return send(res, 200, { needed: setupNeeded(), studioReady: Boolean(settings().studio && existsSync(settings().studio)), done: section('setup').done, checks: CHECKS.map(([id, title]) => ({ id, title, card: CARD[id] })), formats: formats() }), true;
     if (p === '/api/app/setup' && post) { saveSection('setup', { done: Boolean(b.done) }); return send(res, 200, { done: section('setup').done }), true; }
+    if (/^\/api\/app\/setup\/environments\/(scan|verify|select)$/.test(p) && post) return send(res, 200, await environments(p.split('/').pop(), b)), true;
     if (p === '/api/app/setup/check') return send(res, 200, await runCheck(url.searchParams.get('id'))), true;
     // A model row's download (sam2: object separation, whisper: transcription): its progress, start it (the row's
     // picked model unless one is named), stop it.

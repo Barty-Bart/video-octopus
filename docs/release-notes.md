@@ -1,3 +1,14 @@
+# v0.1.0-beta.8
+
+- Video formats shows all saved formats grouped by profile, remembers the last selection and keeps direct links to the selected format or study.
+- Saved video formats are immediately available in New video, even before optional brand setup or example studies. Choosing a format selects its video setup automatically.
+- Format cards show Ready to use and provide a New video action. Only reviewed style guides are included; later brand or guide additions leave existing videos unchanged.
+- Setup offers an explicit Check my computer action, bounded Python environment discovery and recommendations based on installed packages and hardware.
+- Check an existing project or environment location, verify its library imports, then explicitly select it for local Python work. Python presence and missing libraries are reported separately.
+- No automatic package installation, model download, provider change or creator-folder relocation.
+
+See [computer checks](onboarding-scan.md) and [formats and storage](learning-and-storage.md). Verified with 205 tests, disposable API/fake-agent runs and browser creation. Native Windows environment execution and real-provider output remain unverified for these changes. This is a source update on main; the downloadable tagged prerelease remains separate.
+
 # v0.1.0-beta.7
 
 - Scoped SQLite memories, review inbox, source quotes, revisions, explicit replacement, expiry and forgetting.

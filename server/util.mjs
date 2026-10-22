@@ -114,7 +114,9 @@ export function shellPath() {
 // child could get two.
 export async function childPathEnv(extra = {}) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^path$/i.test(k)));
-  return { ...env, PATH: await shellPath(), ...extra };
+  const chosen = settings().python;
+  const path = await shellPath();
+  return { ...env, PATH: chosen ? `${dirname(expandHome(chosen))}${delimiter}${path}` : path, ...(chosen ? { STUDIO_PYTHON: expandHome(chosen) } : {}), ...extra };
 }
 
 // Show a file in Finder / File Explorer (a folder opens).
