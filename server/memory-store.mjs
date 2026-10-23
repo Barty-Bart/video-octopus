@@ -205,7 +205,7 @@ export class MemoryStore extends LearningStore {
   // that level. Returns an approved twin already kept there (the caller closes this one in its favour); a pending twin
   // is closed in favour of this one.
   retarget(m, scope) {
-    if (!selectable(scope) || !this.levelsFor(m).includes(scope)) fail('Choose This channel or Everything for this memory.');
+    if (!selectable(scope) || !this.levelsFor(m).includes(scope)) fail('Choose This style or Everything for this memory.');
     this.scope(scope);
     const digest = `${scope}:${fingerprint(m.text)}`;
     if (this.dead('text', digest)) fail('This memory was forgotten or rejected at that level.');

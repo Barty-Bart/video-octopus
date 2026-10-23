@@ -24,6 +24,7 @@ import { addResource, updateResource, archiveResource, getResource, listResource
   RESOURCE_KINDS, LIKENESS, USES, MAX_RESOURCE_BYTES, canAttach } from './resource-store.mjs';
 import { RESOURCE_LEVELS, parseScope } from './scope-chain.mjs';
 import { SHEET_GRID, THUMB_SIZE, sheetBoxes, cutBoxes, fitThumbnail, imageSize, imageType, extensionFor } from './images.mjs';
+import { autoName } from './naming.mjs';
 
 const MAX_UPLOAD = 20 * 1024 * 1024;
 const MAX_ATTACHED = 4;
@@ -280,7 +281,7 @@ function levelsForProfile(s, profileId) {
   const p = s.get('profiles', profileId);
   const videos = listProjects().map((x) => ({ id: x.id, name: x.name, profileId: s.projectIds(x.id).profileId })).filter((x) => x.profileId === profileId);
   return [
-    { scope: 'global', level: 'global', label: 'All channels', items: listResources(s, ['global']) },
+    { scope: 'global', level: 'global', label: 'All styles', items: listResources(s, ['global']) },
     { scope: `profile:${profileId}`, level: 'profile', label: `This channel: ${p.name}`, items: listResources(s, [`profile:${profileId}`]) },
     { scope: null, level: 'project', label: 'Videos in this channel', videos: videos.map((v) => ({ ...v, scope: `project:${v.id}`, items: listResources(s, [`project:${v.id}`]) })) },
   ];
@@ -289,7 +290,7 @@ function levelsForProject(s, project) {
   const ids = s.projectIds(project), list = s.chainResources(project);
   return s.resourceChain(project).map((scope) => {
     const level = parseScope(scope).level;
-    const label = level === 'global' ? 'All channels' : level === 'profile' ? `Channel: ${s.get('profiles', ids.profileId).name}` : 'This video';
+    const label = level === 'global' ? 'All styles' : level === 'profile' ? `Style: ${s.get('profiles', ids.profileId).name}` : 'This video';
     return { scope, level, label, items: list.filter((r) => r.shownAt === scope) };
   });
 }
@@ -408,8 +409,10 @@ export async function packagingRoute(req, res, url, { send, body }) {
     if (action === 'title') {
       const meta = use((s) => { const m = s.setTitle(project, b.title); s.writePackaging(project, dir); return m; });
       const post = fillPostTitle(dir, name, meta.title);
+      // A video still named automatically ("Untitled video") takes the creator's working title as its name.
+      const renamed = meta.title ? autoName(project, meta.title, 'title') : null;
       boardChanged(project, 'title');
-      return reply({ title: meta.title, post });
+      return reply({ title: meta.title, post, renamed });
     }
     if (action === 'items' && sub && !op) {
       const r = use((s) => { const out = s.mark(project, sub, b); s.writePackaging(project, dir); return out; });

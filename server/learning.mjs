@@ -304,7 +304,7 @@ export async function learningRoute(req,res,url,{send,body,serveFile}) {
     if(group==='skills') { beginMaintenance('Updating the skill database.'); try{const result=syncSkills({studio,action:{...b,id:id||b.id}});settingsChanged('skills');return reply(result);}finally{endMaintenance();} }
     if(group==='versions' && action==='regenerate') return reply(current(s=>s.regenerateVersion(id)));
     if(group==='profiles') {
-      if(!id) return reply(current(s=>s.profile(b.name)));
+      if(!id) return reply(current(s=>s.profile(b.name,b.description)));
       let profile;
       if(action==='update') profile=current(s=>s.updateProfile(id,b));
       else if(action==='archive'||action==='unarchive') profile=current(s=>s.archiveProfile(id,b.expected,action==='archive'));

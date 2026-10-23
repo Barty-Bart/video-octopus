@@ -315,16 +315,18 @@ copy a format to reuse its complete approved package. Source media stay in place
 
 ## Brand profiles, instructions and New video
 
-Since the Direction A shell (23 Oct 2026) a profile is shown as a **channel**; the design V2 rail links to
-**Channels** (`#/channels`). Each channel's hub (`#/channel/<id>`) has **Formats**, **Brand** and **Memories** tabs;
-**All channels** (`#/channels`) lists every channel, including archived ones, and holds the shared
-**Instructions** and the Everything memories. Old addresses (`#/learning`, `#/memories`,
+Since design V2 (23 Oct 2026) a profile is shown as a **style** (it was a "channel" in the Direction A shell); the
+rail links to **My styles** (`#/styles`). The My styles page lists every style with its optional one-line
+description and its formats as tiles, plus the shared **Studio instructions** (`#/styles/instructions`) and
+**Memories for everything** (`#/styles/memories`). Each style's hub (`#/style/<id>`) has **Formats**, **Brand** and
+**Memories** tabs. Old addresses (`#/channels…`, `#/channel/<id>/<tab>`, `#/learning`, `#/memories`,
 `#/settings/brand`, `#/settings/instructions`, `#/storage`, `#/dashboard`) redirect through
-`legacyRoute()` in `web/nav.js`. Settings has six groups (`#/settings/general|agent|recording|editing|export|storage`);
+`legacyRoute()` in `web/nav.js`. Code, the API and the SQLite tables keep the `profile` names.
+Settings has six groups (`#/settings/general|agent|recording|editing|export|storage`);
 the old one-section addresses (`#/settings/claude`, `#/settings/usage`…) land on their group, at the section.
 Storage & backups and Usage are sections of Settings › Storage.
 
-The channel's **Brand** tab owns identity, audience, voice, colours, fonts, guidance and uploaded
+The style's **Brand** tab owns identity, audience, voice, colours, fonts, guidance and uploaded
 brand assets. A profile can have several learned formats. Each format can select
 additional enabled personal skills from the format's options (Personal skills for this format); enabled compatible
 core skills are included automatically. The approved learned package is selected
@@ -347,10 +349,21 @@ profile explicitly. A missing canonical database cannot be replaced by generated
 External instruction edits require explicit import; rebuilding preserves displaced
 edits under `.studio/instruction-recovery/`. Keep brand-specific prose in its profile.
 
-**New video** lists every saved format under its profile. Choosing one fills in
-its video setup; formats without a reviewed guide are labelled **basic setup**
-and can be used immediately. Brand details and studying examples are optional.
-A format card also opens New video with that profile and format selected.
+**New video** (the rail, the Projects page, `N`, a style's or format's page) makes an **Untitled video** straight
+away and opens it. It uses the last-used style and format (settings `lastNewVideo`), the style or format it was
+started from, or no style. An empty video shows a start screen: **Record now**, **Drop footage** or **Idea &
+thumbnail first** (the Packaging stage). The editor's **style picker** (top bar) lists every style's formats, then
+**No style · decide as I go** and **+ New style from this video**. Changing it calls
+`POST /api/project-context/<id>/select { profileId, formatId, confirm }`, which re-pins brand, instructions, skills
+and format as New video does and rebuilds the context files; a format of another video setup also changes the video's
+setup. After a Build step has run it needs `confirm: true` ("Videos keep the style they were built with") and must keep
+the same video setup. Formats without a reviewed guide are **basic setup** and can be used immediately.
+
+**Automatic names.** An Untitled video's name is automatic (`nameSource: 'auto'` in project.json) until the creator
+renames it. While it is, the project agent is asked to propose a short title (at most 60 characters) once the creator
+has described the video, in a fenced ` ```octopus-name ` block that the server applies; saving a Packaging working title
+also renames it (and then the agent's later proposals don't replace it). A rename by hand sets `nameSource: 'manual'`
+and nothing automatic changes the name again. Only the display name changes, never the folder or id.
 Only approved guides are included; draft studies never become project instructions.
 A project created without a brand or guide stays that way when either is added later.
 You can also create a video without a profile or saved format. It previews the selection, validates compatible enabled skills,
@@ -360,10 +373,10 @@ format skill copy in `.octopus/context/.claude/skills/`. Brand palettes are
 available to the editor; instructions/format guidance inform the agent's planning.
 This does not automatically render or redesign a video. Explicit project choices
 still win. **Video defaults** retains background and framing controls; brand colours
-and font guidance now live in each channel's Brand tab.
+and font guidance now live in each style's Brand tab.
 
-Later profile edits apply to new videos, preserving existing project pins. All channels →
-Instructions says so and counts the videos on an earlier instruction version. A
+Later profile edits apply to new videos, preserving existing project pins. My styles →
+Studio instructions says so and counts the videos on an earlier instruction version. A
 deliberate learned-format upgrade retains the project's brand and instructions while
 selecting the upgraded format and its current skills. Upgrades stay within the video's
 channel (another channel's format is refused before anything is written); a video

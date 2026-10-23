@@ -153,7 +153,7 @@ export async function renderSkills(root, { counts = {} } = {}) {
     const hint = x.kind === 'core'
       ? 'Changing the workflow creates your own customized core version. Editing only the explanation keeps it Core.'
       : x.name.startsWith('learned-')
-        ? 'This edits the reusable skill copy. Pinned projects retain their approved snapshot. To change approved rules, talk to the format in its channel.'
+        ? 'This edits the reusable skill copy. Pinned projects retain their approved snapshot. To change approved rules, talk to the format in its style.'
         : 'Saving creates a database revision.';
     dialog(`${x.name} · ${x.kind}`, `<p class="sub">${hint}</p>` + field('Short explanation (shown in the list)', 'summary', x.summary) + field('Skill Markdown', 'text', x.text, 'textarea'), async (form) => {
       await api(`${E}/skills/${id}`, { action: form.text === x.text ? 'describe' : 'edit', text: form.text, summary: form.summary, revision: x.revision });

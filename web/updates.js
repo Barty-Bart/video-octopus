@@ -228,7 +228,7 @@ export function updatesSection(V, save, { row, group, toggle, advanced = null })
       skillRows.push(row('Recovery', '', list));
     }
     const skillGroup = group('Core and personal skills', ...skillRows);
-    const preferenceDetails = h('<div class="found"><span class="sub">Supported skill options live in <code>preferences/skills.json</code> inside your studio. Broader creative notes stay in <code>memory/preferences.md</code>, <code>memory/style.md</code>, <code>BRAND.md</code> and <code>STYLE.md</code>. App and starter updates leave these files alone. Ask the assistant to change a supported option; it reads the file again on your next turn.</span><a class="btn small" href="#/channel/_/brand">Brand and style</a></div>');
+    const preferenceDetails = h('<div class="found"><span class="sub">Supported skill options live in <code>preferences/skills.json</code> inside your studio. Broader creative notes stay in <code>memory/preferences.md</code>, <code>memory/style.md</code>, <code>BRAND.md</code> and <code>STYLE.md</code>. App and starter updates leave these files alone. Ask the assistant to change a supported option; it reads the file again on your next turn.</span><a class="btn small" href="#/style/_/brand">Brand and style</a></div>');
     if (u.preferences) {
       preferenceDetails.prepend(h(`<b>${u.preferences.status === 'invalid' ? 'Preferences need attention' : u.preferences.status === 'valid' ? 'Your skill options are valid' : 'Using core option defaults'}</b>`));
       for (const issue of u.preferences.diagnostics || []) preferenceDetails.append(h(`<span class="notice small" role="status">${esc(issue.path)}: ${esc(issue.message)}</span>`));

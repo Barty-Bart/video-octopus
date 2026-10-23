@@ -178,7 +178,7 @@ export function makePackaging({ pane, id, makeChat, onChange }) {
     insBox.innerHTML = `<div class="pg-ins">
       <section class="ins-sec"><h3>Working title</h3>
         <form class="pg-title"><input name="title" maxlength="200" value="${esc(b.title)}" aria-label="Working title" placeholder="The title you plan to use"><button class="btn small">Save</button></form>
-        <p class="sub">Fills the Post tab’s YouTube title when it is empty; never replaces one.</p></section>
+        <p class="sub">Fills the Post tab’s YouTube title when it is empty; never replaces one. A video that is still named automatically takes it as its name.</p></section>
       <section class="ins-sec"><h3>Winners <span class="sub">${winners.length} of ${b.limits.winners}</span></h3>
         <ol class="pg-slots">${slots}</ol>
         <p class="sub">The main thumbnail finishes Package on the rail.</p></section>
@@ -189,6 +189,7 @@ export function makePackaging({ pane, id, makeChat, onChange }) {
       e.preventDefault();
       try {
         const r = await api(`${P}/title`, { title: e.target.elements.title.value });
+        // (An automatically named video is renamed too; the project bar hears it from its own event stream.)
         toast(r.post === 'filled' ? 'Saved, and put in the Post tab’s empty title.' : r.post === 'kept' ? 'Saved. The Post tab keeps its own title.' : 'Saved. The post kit will use it.');
         await load();
         onChange?.();

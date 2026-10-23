@@ -1,10 +1,11 @@
 import { ProfileStore } from './profile-store.mjs';
-import { settings } from './util.mjs';
+import { settings, saveSettings } from './util.mjs';
 import { beginMaintenance, endMaintenance } from './maintenance.mjs';
 import { settingsChanged } from './settings.mjs';
 import { makeChat, staleChat } from './engines.mjs';
 import { forReplay } from './claude.mjs';
-import { createProject, projectDir, projectMeta, saveProjectMeta, appendWorklog, listProjects } from './studio.mjs';
+import { createProject, projectDir, projectMeta, saveProjectMeta, appendWorklog, listProjects, pipelineStatus, formats, formatId as typeOf } from './studio.mjs';
+import { normalize, defaultLayout } from '../web/layout.js';
 import { existsSync, writeFileSync, readFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { safeFile } from './learning-store.mjs';
@@ -17,11 +18,112 @@ export function pinnedContext(id,dir){if(!dir||!settings().studio||!existsSync(j
 export function pinnedContextText(id,dir){if(!dir||!existsSync(join(settings().studio,'.studio/profile-storage.json')))return '';return use(s=>s.contextText(id,dir));}
 export function sharedInstructionContext(){if(!settings().studio||!existsSync(join(settings().studio,'.studio/profile-storage.json')))return '';return use(s=>`Canonical studio instructions from SQLite: ${JSON.stringify(s.instructions().files)}. Legacy file edits are not accepted until explicitly imported through Instructions. Brand identity must come from a selected profile, never an unrelated profile or legacy brand notes.`);}
 export function createConfiguredProject(b){
- return use(s=>{const bundle=s.bundle(b);if(b.contextExpected){for(const key of ['profileId','brandVersion','instructionVersion','skillSnapshot','formatId','versionId'])if(b.contextExpected[key]!==bundle[key])throw Error('The selected setup changed. Reopen New video to review it.');}const name=String(b.name||'').trim();if(!name)throw Error('Give the video a name.');const id=createProject(name,bundle.type,b.style),dir=projectDir(id);
+ return use(s=>{const bundle=s.bundle(b);if(b.contextExpected){for(const key of ['profileId','brandVersion','instructionVersion','skillSnapshot','formatId','versionId'])if(b.contextExpected[key]!==bundle[key])throw Error('The selected setup changed. Reopen New video to review it.');}const name=String(b.name||'').trim();if(!name)throw Error('Give the video a name.');const id=createProject(name,bundle.type,b.style,b.nameSource==='auto'?{nameSource:'auto'}:{}),dir=projectDir(id);
   try{s.pinContext(id,bundle);const meta={context:bundle};if(bundle.versionId){meta.learning={profileId:bundle.profileId,formatId:bundle.formatId,versionId:bundle.versionId,entry:b.entry||'footage',build:b.build||'scene',brief:String(b.brief||'').slice(0,20000)};if(!['idea','script','footage'].includes(meta.learning.entry)||!['scene','full'].includes(meta.learning.build))throw Error('Choose a valid entry and build preference.');s.pin(id,meta.learning);}saveProjectMeta(dir,meta);s.materialize(id,dir);if(b.entry==='script'&&b.brief)writeFileSync(join(dir,'script.md'),String(b.brief));return id;}
   catch(e){s.db.prepare('DELETE FROM project_context WHERE project=?').run(id);s.db.prepare('DELETE FROM project_learning WHERE project=?').run(id);rmSync(dir,{recursive:true,force:true});throw e;}
  });
 }
+// ---- New video and the editor's style picker (design V2 §6). In the UI a profile is a "style". ----
+
+// The style and format a New video gets, as { profileId, formatId, type }:
+//   - a format asked for (formatId): that format, in its own style;
+//   - a style asked for (profileId): the format used last if it is one of that style's, else its first format, else none;
+//   - No style asked for (profileId: null): none;
+//   - nothing asked for: the last-used style and format (settings lastNewVideo) while they exist and aren't archived.
+// Without a format the video gets the type asked for, else the first video setup.
+export function newVideoChoice(b = {}) {
+ const firstType = Object.keys(formats())[0] || 'tutorial';
+ const plainType = formats()[typeOf(b.type)] ? typeOf(b.type) : firstType;
+ const none = { profileId: null, formatId: null, type: plainType };
+ if (!settings().studio) return none;
+ const last = settings().lastNewVideo || {};
+ return use((s) => {
+  const profile = (pid) => { try { const p = s.get('profiles', pid); return p.archived ? null : p; } catch { return null; } };
+  const format = (fid) => { try { const f = s.get('formats', fid); return f.archived || !profile(f.profileId) ? null : f; } catch { return null; } };
+  const withFormat = (f) => ({ profileId: f.profileId, formatId: f.id, type: f.type });
+  if (b.formatId) {
+   const f = format(b.formatId);
+   if (!f) throw Error('That format is archived or no longer exists.');
+   return withFormat(f);
+  }
+  if ('profileId' in b) {
+   if (!b.profileId) return none;
+   const p = profile(b.profileId);
+   if (!p) throw Error('That style is archived or no longer exists. Restore it in My styles first.');
+   const remembered = last.profileId === p.id && last.formatId ? format(last.formatId) : null;
+   const first = s.list('formats').find((f) => f.profileId === p.id && !f.archived);
+   const f = remembered || first;
+   return f ? withFormat(f) : { ...none, profileId: p.id };
+  }
+  if (last.formatId && format(last.formatId)) return withFormat(format(last.formatId));
+  if (last.profileId && profile(last.profileId)) return { ...none, profileId: last.profileId };
+  return none;
+ });
+}
+export function rememberNewVideo({ profileId = null, formatId = null } = {}) {
+ saveSettings({ lastNewVideo: { profileId: profileId || null, formatId: formatId || null } });
+}
+
+// Has a Build step run? After that, changing the style needs the creator's OK.
+export const BUILT_NOTE = 'Videos keep the style they were built with; changing it now affects only new steps.';
+export function projectBuilt(dir, type) {
+ const status = type ? pipelineStatus(dir, type) : null;
+ return Boolean(status?.steps.some((x) => x.stage === 'Build' && x.done));
+}
+
+// POST /api/project-context/<id>/select { profileId|null, formatId|null, confirm }: re-pin the project's brand,
+// instructions, skills and format exactly as New video does (the current brand and instructions of the chosen style),
+// rebuild its context files, move its chat memories to the new style, and follow the format's video setup. Free before
+// a Build step has run; after that only with confirm: true, and only within the same video setup.
+// The database pins, project.json and the context files change together or not at all.
+export function selectProjectContext(id, b = {}) {
+ const dir = projectDir(id);
+ if (!dir) throw Object.assign(Error('Project not found.'), { status: 404 });
+ const meta = projectMeta(dir) || {};
+ const built = projectBuilt(dir, meta.type);
+ if (built && b.confirm !== true) throw Object.assign(Error(BUILT_NOTE), { status: 409, needsConfirm: true });
+ const result = use((s) => {
+  const f = b.formatId ? s.get('formats', b.formatId) : null;
+  const profileId = f ? f.profileId : (b.profileId || null);
+  if (f && b.profileId && b.profileId !== f.profileId) throw Error('That format belongs to another style.');
+  const type = f ? f.type : typeOf(meta.type);
+  if (built && type !== typeOf(meta.type)) throw Error(`This video was built as a ${formats()[typeOf(meta.type)] || meta.type}. Choose a format with the same video setup, or No style.`);
+  const bundle = s.bundle({ profileId, formatId: f?.id || null, type });
+  const before = s.binding(id) || meta.learning || null;
+  const learning = bundle.versionId
+   ? { profileId: bundle.profileId, formatId: bundle.formatId, versionId: bundle.versionId, entry: before?.entry || 'footage', build: before?.build || 'scene', brief: before?.brief || '' }
+   : null;
+  const saved = readFileSync(join(dir, 'project.json'));
+  let files = null;
+  try {
+   s.tx(() => {
+    s.pinContext(id, bundle);
+    if (learning) s.pin(id, learning);
+    else s.db.prepare('DELETE FROM project_learning WHERE project=?').run(id);
+    s.rebindProjectMemory(id, bundle);
+    files = s.replaceProjectFiles(id, dir, 'before-style');
+    const patch = { context: bundle, learning };
+    // Another video setup brings its frame shape (a Short is 9:16); the rest of the layout carries over.
+    if (type !== typeOf(meta.type)) Object.assign(patch, { type, layout: meta.layout ? { ...normalize(meta.layout, type), aspect: defaultLayout(type).aspect } : defaultLayout(type) });
+    saveProjectMeta(dir, patch);
+   });
+  } catch (e) {
+   files?.undo();
+   writeFileSync(join(dir, 'project.json'), saved);
+   throw e;
+  }
+  return { bundle, typeChanged: type !== typeOf(meta.type) };
+ });
+ const { bundle } = result;
+ const what = bundle.profileName ? `${bundle.profileName}${bundle.formatName ? ` · ${bundle.formatName}` : ''}` : 'No style';
+ appendWorklog(dir, `Style changed to ${what}${built ? ' after Build (earlier steps keep the style they were made with)' : ''}.`);
+ rememberNewVideo(bundle);
+ return {
+  ok: true, built, typeChanged: result.typeChanged,
+  context: { profileId: bundle.profileId, profileName: bundle.profileName, formatId: bundle.formatId, formatName: bundle.formatName },
+ };
+}
+
 // Project panel → Repair project setup: re-pin what is no longer valid (ProfileStore.repairedBundle) and rebuild the
 // generated context files from SQLite, as one step. Displaced files are kept next to the context folder.
 function repairProject(s,id,dir){
@@ -67,7 +169,7 @@ export async function profileRoute(req,res,url,{send,body,serveFile}){
    if(action==='brand'){const v=use(s=>s.saveBrand(id,b.brand,b.expected));settingsChanged('profile');return reply(v);}
    if(action==='research')return reply(use(s=>s.research(id,b.url,b.direction)));
    if(action==='skills')return reply(use(s=>{if(s.get('formats',b.formatId).profileId!==id)throw Error('Format belongs to another profile.');return s.setFormatSkills(b.formatId,b.ids,b.expected);}));
-   if(!id)return reply(use(s=>s.profile(b.name)));
+   if(!id)return reply(use(s=>s.profile(b.name,b.description)));
   }
   if(group==='instructions'){beginMaintenance('Updating studio instructions.');try{const result=use(s=>b.action==='import'?s.importInstructions(b.expected):b.action==='regenerate'?(s.projectInstructions(),s.instructions()):b.action==='restore'?s.saveInstructions(s.instructions(b.versionId)?.files,b.expected,'Restored instruction version'):s.saveInstructions(b.files,b.expected));settingsChanged('instructions');return reply(result);}finally{endMaintenance();}}
   if(group==='video-context')return reply(use(s=>s.bundle(b)));
@@ -153,12 +255,23 @@ export function channelSummaries() {
    return {
     id: p.id,
     name: p.name,
+    description: p.description || '',
     formats: own.filter((f) => !f.archived).length,
     color: brandColor(p.id),
     pendingMemories: entries.filter((m) => scopes.has(m.scope)).length,
    };
   });
  }, []);
+}
+
+// What waits for the creator outside any one video (Home's "Waiting for you" chips, design V2 §4), read-only:
+// Everything-level memories to review, and format drafts ready for review ({ count, formatId } of the newest).
+export function studioWaiting() {
+ return readStudioDb((db, tables) => {
+  const memories = rowsOf(db, tables, 'memory_entries').filter((m) => m.status === 'pending' && m.scope === 'global').length;
+  const drafts = rowsOf(db, tables, 'sessions').filter((x) => x.status === 'review');
+  return { memories, drafts: { count: drafts.length, formatId: drafts.at(-1)?.formatId || null } };
+ }, { memories: 0, drafts: { count: 0, formatId: null } });
 }
 
 // Adds profileId, profileName, formatId and formatName to project rows from their pinned setup (null when a project

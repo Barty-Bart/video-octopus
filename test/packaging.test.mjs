@@ -84,7 +84,7 @@ test('resources: add, update, move (logged), archive; a photo must say who is in
   assert.ok(s.files.has(logo.hash), 'bytes are in the file store');
   assert.equal(s.db.prepare("SELECT count(*) n FROM resources WHERE scope=?").get(`profile:${a.id}`).n, 1);
   assert.throws(() => addResource(s, { scope: 'global', name: 'me.jpg', kind: 'photo', bytes: png(4, 4, () => [1, 2, 3]) }), /who is in this photo/);
-  assert.throws(() => addResource(s, { scope: 'format:x', name: 'a.png', bytes: png(4, 4, () => [0, 0, 0]) }), /All channels, a channel or a video/);
+  assert.throws(() => addResource(s, { scope: 'format:x', name: 'a.png', bytes: png(4, 4, () => [0, 0, 0]) }), /All styles, a style or a video/);
   assert.throws(() => addResource(s, { scope: 'global', name: 'a.exe', bytes: Buffer.from('x') }), /Choose an image/);
   const me = addResource(s, { scope: 'global', name: 'me.png', kind: 'photo', likeness: 'self', use: 'always', bytes: png(4, 4, () => [9, 9, 9]) });
   const friend = addResource(s, { scope: 'global', name: 'friend.png', kind: 'photo', likeness: 'other', bytes: png(4, 4, () => [8, 8, 8]) });
@@ -127,7 +127,7 @@ test('resources: a video sees All channels, its own channel and itself — never
   // The projection: RESOURCES.md and copies, by level, with nothing from Beta.
   s.writeResources('alpha-video', dirA);
   const md = readFileSync(join(dirA, 'packaging/RESOURCES.md'), 'utf8');
-  assert.match(md, /## All channels[\s\S]*everyone\.png[\s\S]*## Channel: Alpha[\s\S]*alpha-logo\.png[\s\S]*## This video[\s\S]*alpha-shot\.png/);
+  assert.match(md, /## All styles[\s\S]*everyone\.png[\s\S]*## Style: Alpha[\s\S]*alpha-logo\.png[\s\S]*## This video[\s\S]*alpha-shot\.png/);
   assert.doesNotMatch(md, /beta|sibling/i);
   const copies = ['all-channels', 'channel', 'this-video'].flatMap((d) => readdirSync(join(dirA, 'packaging/resources', d)));
   assert.equal(copies.length, 3);

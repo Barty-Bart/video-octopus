@@ -27,7 +27,8 @@ import { buildSteps, renderKind } from './built.mjs';
 import { appRoute } from './setup.mjs';
 import { onboardingRoute, ffmpegReady, setupBusy } from './onboarding.mjs';
 import { createStudio, defaultStudioPath } from './starter.mjs';
-import { profileRoute, profileBusy, killProfileResearch, createConfiguredProject, pinnedContext, profilePalette, projectIdHasRows, hasPinnedContext, channelSummaries, withProjectChannels } from './profiles.mjs';
+import { profileRoute, profileBusy, killProfileResearch, createConfiguredProject, pinnedContext, profilePalette, projectIdHasRows, hasPinnedContext, channelSummaries, studioWaiting, withProjectChannels, newVideoChoice, rememberNewVideo, selectProjectContext } from './profiles.mjs';
+import { UNTITLED, autoName, nameFromReply, namingContext, onAutoRename } from './naming.mjs';
 import { memoryRoute } from './memory.mjs';
 import { packagingRoute, resourcesRoute, packagingBusy, killPackaging } from './packaging.mjs';
 import { learningRoute, learningProjectContext, projectLearning, guardLearnedStep, learningBusy, killLearning } from './learning.mjs';
@@ -43,7 +44,7 @@ import { logUse, usageFromFiles, cutSaved, dashboard, backfill, catchUpUsage, ge
 import { schedulesRoute, startScheduler, stopScheduler, readSchedules, schedulesBusy } from './schedules.mjs';
 import { inboxRoute, inboxItems } from './inbox.mjs';
 import { updatesRoute, startUpdateChecks, updateCount, RESTART_CODE, activateStudioSkills, managedSkillsView } from './updates.mjs';
-import { trackTurns, unfinishedOf, clearUnfinished, undoTurn } from './turns.mjs';
+import { trackTurns, unfinishedOf, clearUnfinished, undoTurn, keepInTurn } from './turns.mjs';
 import { downloadsBusy } from './hfmodels.mjs';
 import { setActivityProbe, beginWrite, assertNotUpdating } from './maintenance.mjs';
 
@@ -99,6 +100,12 @@ function chatFor(id) {
     chat.guard = () => projectDir(id);
     chat.listeners.add((ev) => broadcast(id, ev));
     chat.listeners.add((ev) => { if (ev.t === 'busy' && !ev.busy) stepRuns.delete(id); });
+    // AI naming (server/naming.mjs): only the agent's own reply can name an automatically named video.
+    chat.listeners.add((ev) => {
+      if (ev.t !== 'text' || ev.replay) return;
+      const name = nameFromReply(ev.text);
+      if (name) autoName(id, name, 'agent');
+    });
     // When a turn ends: did its step get its result (else the dock says "Didn't finish"), and what can Undo put back.
     trackTurns(id, chat, { broadcast: (ev) => broadcast(id, ev) });
     chats.set(id, chat);
@@ -109,6 +116,12 @@ function chatFor(id) {
   }
   return chats.get(id);
 }
+// An automatic name was applied (the agent's block, or the Packaging working title): the open pages show it at once.
+onAutoRename((id, name, by) => {
+  keepInTurn(id, 'project.json', { name, autoNamedBy: by }); // not the agent's file change: no Undo for it
+  broadcast(id, { t: 'renamed', name, by, ts: Date.now() });
+});
+
 // A look at the chat for a GET (the project view, the event stream): the one in use, or one made just to read the
 // saved log. It's never kept, so nothing is renamed, written or logged until a POST calls chatFor.
 const peekChat = (id) => chats.get(id) || makeChat(id, () => projectContext(id));
@@ -140,6 +153,7 @@ function projectContext(id) {
     `The change package: besides notes, the creator's quick edits in the Scenes tab are notes of kind "change" in the same file: {kind: "change", scene, field: "layout"|"background"|"transition"|"sfx"|"timing"|"style"|"text"|"cut", target {id, label} (a scene element, when it's about one), from, to, text}. Timing changes move a scene edge ({start, end}) or when an element is on screen ({in, out}); they never cut audio (the cut belongs to the Cut tab). A "cut" change (no scene) comes from the Cut tab: from and to are the kept parts of the take before and after ({segments: [[start, end], …]} in take seconds); the brief lists every edit with where it sits on the old cut and writes the old cut to work/cut_before_<id>.json, and before re-rendering you re-align everything that sits on the old timeline (production sheet times, scene files, keyframes and element times in work/overrides.json, note times, B-roll) so nothing drifts off its words. The creator sends the package with "Save changes → Claude". Every note and change with status "open", plus moves in work/overrides.json newer than the newest render, is the creator's change package. Video Octopus sends it to you as one message; if the creator asks you in this chat to send, apply or do "the package" or "my changes", read work/notes.json, tell them what's in it (how many items, which scenes), set those items to "sent", do them in one pass and re-render once, then mark each "done" with a one-line reply. If they ask what's waiting, read the open items and list them.`,
     `Direct edits: the creator can drag and resize the titles, cards and boxes of an HTML scene in Video Octopus. The moves are in work/overrides.json {v: 1, scenes: {"<scene id>" or "*" (every scene): {"<element id>": {dx, dy (frame pixels), scale (around the element's centre)}}}}. Scenes that load the Video Octopus scene kit (assets/octopus-scene.js, a copy of ${KIT}) apply them by themselves whenever they draw, so renders pick them up: don't bake them into the scene code, and keep element ids stable. To make an element movable, draw it inside Octopus.el('<id>', [x, y, w, h], () => { ... }, { label }) in a canvas scene, or give it data-studio="<id>" in an HTML scene.`,
     `Keyframes: an element's entry in work/overrides.json can also hold keys: [{t, dx, dy, s, o, e}], the creator's own keyframes from the scene timeline (◆). t = seconds on the render's timeline (the same as the production sheet), dx/dy = frame pixels, s = scale around the element's centre, o = opacity 0–1 (multiplies the element's own), e = "linear" or "hold" (default: ease in and out) for the way to the next key. Leave "at" out of entries you write: Video Octopus stamps the creator's own moves with it, and only those go into the change package. The kit (kit 2) interpolates them on top of your own animation whenever the scene draws, so the preview and every render show them; with keys, they replace that element's dx/dy/scale. Respect them: when you change a scene, keep element ids and their timing, don't animate the same property against the creator's keys, and if you have to move or rename a keyed element, say so and move its keys along with it (keep their times on the render timeline). Never remove keys unless the creator asks. If a project's assets/octopus-scene.js is older than kit 2, copy ${KIT} over it before relying on keys.`,
+    namingContext(meta),
     ...(dir ? kitContext(dir, meta) : []),
     ...learningProjectContext({...meta, learning: projectLearning(id,meta)}),
     blocksContext(),
@@ -335,7 +349,10 @@ function projectView(id, dir) {
   const busy = Boolean(chats.get(id)?.busy); // read only: a GET never makes or switches the chat
   const pipeline = meta.type ? pipelineStatus(dir, meta.type, { lines: true, seen: railSeen(id) }) : null;
   return {
-    id, name: meta.name || id, learning: projectLearning(id,meta), type: formatId(meta.type), shortStyle: meta.shortStyle || null, app: Boolean(projectMeta(dir)),
+    id, name: meta.name || id, nameSource: meta.nameSource === 'auto' ? 'auto' : 'manual', autoNamedBy: meta.autoNamedBy || null,
+    // The style and format it uses (its pinned setup), for the editor's style picker.
+    context: (({ profileId, profileName, formatId, formatName }) => ({ profileId, profileName, formatId, formatName }))(withProjectChannels([{ id }])[0]),
+    learning: projectLearning(id,meta), type: formatId(meta.type), shortStyle: meta.shortStyle || null, app: Boolean(projectMeta(dir)),
     path: dir, layout: normalize(meta.layout, meta.type),
     // The steps with their words, each done step's line, and the newest step finished since the page last looked.
     roles: r, canvas: canvasSources(dir), proxies, pipeline,
@@ -420,11 +437,29 @@ async function route(req, res) {
     const skillUpdates = settings().studio ? managedSkillsView().pending : 0;
     // channels: the sidebar's My style rows (Direction A), read-only from the studio database.
     const channels = settings().studio ? channelSummaries() : [];
-    return send(res, 200, { schedules: readSchedules().filter((x) => x.enabled).length, inbox, skillUpdates, channels, update: await updateCount() });
+    // waiting: Home's "Waiting for you" chips (Everything memories to review, format drafts to review).
+    const waiting = settings().studio ? studioWaiting() : { memories: 0, drafts: { count: 0, formatId: null } };
+    return send(res, 200, { schedules: readSchedules().filter((x) => x.enabled).length, inbox, skillUpdates, channels, waiting, update: await updateCount() });
   }
   // Settings → Updates: the app's update (git), Restart, starter files, Open Video Octopus when I log in (server/updates.mjs).
   if (await updatesRoute(req, res, url, { send, body, restart: () => shutdown(RESTART_CODE) })) return;
   if (await schedulesRoute(req, res, url, { send, body })) return;
+  // The editor's style picker (design V2 §6): pin another style and format to an existing project, as New video does.
+  const pick = /^\/api\/project-context\/([^/]+)\/select$/.exec(p);
+  if (pick && req.method === 'POST') {
+    let pid = '';
+    try { pid = decodeURIComponent(pick[1]); } catch {}
+    const b = await body(req);
+    const live = chats.get(pid);
+    if (live?.busy) return send(res, 409, { error: 'Wait for the agent to finish its reply, then change the style.' });
+    try {
+      const result = selectProjectContext(pid, b);
+      restartWhenIdle(live); // the project's chat starts again with the new setup (its conversation carries on)
+      return send(res, 200, result);
+    } catch (e) {
+      return send(res, e.status || 400, { error: e.message, ...(e.needsConfirm ? { needsConfirm: true } : {}) });
+    }
+  }
   if (await profileRoute(req, res, url, { send, body, serveFile })) return;
   // Packaging (thumbnails, its Codex chat) and the resources it uses (server/packaging.mjs).
   if (p.startsWith('/api/packaging/') && await packagingRoute(req, res, url, { send, body })) return;
@@ -491,10 +526,14 @@ async function route(req, res) {
   }
   if (p === '/api/projects' && req.method === 'GET') return send(res, 200, withProjectChannels(listProjects()));
   if (p === '/api/projects' && req.method === 'POST') {
-    const b = await body(req);
-    if (!b.name?.trim()) return send(res, 400, { error: 'Give the project a name.' });
+    let b = await body(req);
+    if (!b.untitled && !b.name?.trim()) return send(res, 400, { error: 'Give the project a name.' });
     try {
+      // New video (design V2 §6): "Untitled video" with the last-used style and format (or the ones given), named
+      // automatically later (server/naming.mjs).
+      if (b.untitled) b = { ...b, ...newVideoChoice(b), name: UNTITLED, nameSource: 'auto' };
       const id = createConfiguredProject(b);
+      if (b.untitled) rememberNewVideo(b);
       const dir = projectDir(id);
       logUse('project.created', { project: id, type: b.type || null });
       if (b.take) { importTake(dir, b.take); logUse('take.imported', { project: id }); makeProxies(dir, (ev) => broadcast(id, ev)); }
@@ -782,7 +821,8 @@ async function route(req, res) {
   if (action === '/rename') {
     const name = String(b.name || '').trim().slice(0, 120);
     if (!name) return send(res, 400, { error: 'Give the project a name.' });
-    saveProjectMeta(dir, { name });
+    // The creator's own name: automatic naming never touches it again (server/naming.mjs).
+    saveProjectMeta(dir, { name, nameSource: 'manual' });
     return send(res, 200, { id, name });
   }
   // The record panel's script (web/prompter.js): script.md in the project folder, read back through /files/. Empty removes it.

@@ -14,7 +14,11 @@ import { makeUndo, tokens, lookKey as appearanceKey } from './tlcore.js';
 import { makeScenes, cutMap } from './scenes.js';
 import { makeCompare, previousOf, versionName } from './compare.js';
 import { appPage } from './settings.js';
-import { makeRouter, legacyRoute, parseRoute, channelHref } from './nav.js';
+import { makeRouter, legacyRoute, parseRoute } from './nav.js';
+import { TERMS } from './terms.js';
+import { renderProjects, setTypeNames } from './projects-home.js';
+import { makeStartScreen } from './start-screen.js';
+import { makeStylePicker } from './style-picker.js';
 import { renderSchedules } from './schedules.js';
 import { paintNight, painterFor, frameTime, edgeHTML, wireEdge, renderEdge, drawGhost, drawGuides, makeBackgroundSection } from './look.js';
 import { makePostKit } from './postkit.js';
@@ -36,7 +40,7 @@ import { applyAppearance, onAppearance, cutLookParams, themeSwitch } from './app
 import { rememberMessage, reviewLessons } from './memory.js';
 import { projectLearningPanel } from './learning.js';
 import { renderSkills } from './skills.js';
-import { renderChannel, renderChannels } from './channel.js';
+import { renderChannel, renderStyles } from './channel.js';
 import { sidebarMarkup, topBarMarkup, pageName, wireShell, askTip } from './shell.js';
 import { exportLooks, sceneKey, shotsSummary } from './exportshots.js';
 
@@ -129,7 +133,7 @@ const router = makeRouter(async (nav) => {
   // Settings, Setup (opens by itself the first time) and the Video Octopus assistant live in settings.js / setup.js.
   const page = await appPage(location.hash, {
     app, makeChat, loadStatus, nav, status: () => STATUS, railAgent: () => railAgent(),
-    newVideo: async () => newProjectDialog(null, await api('/api/takes').catch(() => [])),
+    newVideo: () => newVideo(),
   });
   if (page) return page;
   const m = /^#\/p\/(.+)$/.exec(location.hash);
@@ -138,248 +142,81 @@ const router = makeRouter(async (nav) => {
 });
 window.addEventListener('hashchange', router);
 
-// ---------- home: a sidebar (projects, recordings, skills, Claude Code), the project you were on, all projects ----------
-const HOME_ICON = {
-  projects: '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2" width="5" height="5" rx="1.2"/><rect x="9" y="2" width="5" height="5" rx="1.2"/><rect x="2" y="9" width="5" height="5" rx="1.2"/><rect x="9" y="9" width="5" height="5" rx="1.2"/></svg>',
-  dashboard: '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 13.5h11"/><rect x="3" y="8" width="2.4" height="4" rx=".6"/><rect x="6.8" y="4.5" width="2.4" height="7.5" rx=".6"/><rect x="10.6" y="6.5" width="2.4" height="5.5" rx=".6"/></svg>',
-  scheduled: '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8.5" r="5.5"/><path d="M8 5.5v3l2 1.5M6 1.5h4"/></svg>',
-  recordings: '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="2.3" class="fill"/></svg>',
-  skills: '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2l1.6 3.7L13.5 6l-3 2.6.9 3.9L8 10.5 4.6 12.5l.9-3.9-3-2.6 3.9-.3z"/></svg>',
-  search: '<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><circle cx="6" cy="6" r="4.2"/><path d="M9.2 9.2l3 3"/></svg>',
-  take: '<svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="3" width="11" height="8" rx="1.5"/><circle cx="13.5" cy="12.5" r="3" class="hole"/></svg>',
-  close: '<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 3l8 8M11 3l-8 8"/></svg>',
-};
+// ---------- home: the shell (rail + one page): Projects, Recordings, My styles, Library, Skills, Scheduled ----------
+const TAKE_ICON = '<svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="3" width="11" height="8" rx="1.5"/><circle cx="13.5" cy="12.5" r="3" class="hole"/></svg>';
 const takeWhat = (t) => t.files.map((f) => (/_screen\./.test(f) ? 'screen' : /_webcam\./.test(f) ? 'camera' : isSound(f) ? 'mic only' : 'video')).join(' + ').replace(/^./, (c) => c.toUpperCase());
-const thumbUrl = (p) => `/api/projects/${encodeURIComponent(p.id)}/thumb?v=${Math.round(p.updated)}`;
-// A picture fades in when it loads; with no picture the box stays a quiet tile with the project's initial.
-function wireThumb(box) {
-  const img = $('img', box);
-  if (!img) return;
-  img.onload = () => box.classList.add('in');
-  img.onerror = () => { img.remove(); box.classList.add('none'); };
-}
-let homeFilter = 'all';
-let pendingRecord = null; // a project made with "Record a new take now" opens its record panel
+let pendingRecord = null; // a video made with Record (or the start screen's Record now) opens its record panel
+const PAGE_TITLES = { scheduled: 'Scheduled', recordings: 'Recordings', skills: 'Skills', library: 'Library', styles: TERMS.myStyles, style: TERMS.channel };
 
 // The shell (web/shell.js): the sidebar and one page beside it. route: parseRoute(location.hash), nav: { signal,
-// alive } from the router (web/nav.js). Pages: projects, recordings, library, scheduled, skills, channel, channels.
+// alive } from the router (web/nav.js). Pages: projects, recordings, library, scheduled, skills, style, styles.
 async function home(route, nav = null) {
   const view = route.page;
   $('#crumbs').innerHTML = '';
   clearBar();
   document.body.classList.add('in-home');
-  document.title = view === 'projects' ? 'Video Octopus' : `${{ scheduled: 'Scheduled', recordings: 'Recordings', skills: 'Skills', library: 'Library', channels: 'All channels', channel: 'Channel' }[view]} · Video Octopus`;
+  document.title = view === 'projects' ? 'Video Octopus' : `${PAGE_TITLES[view]} · Video Octopus`;
   await loadStatus();
   if (!STATUS.studioOk) return setupScreen();
   const [projects, takes, counts] = await Promise.all([api('/api/projects'), api('/api/takes'), api('/api/app/counts').catch(() => ({}))]);
   const agent = agentView(STATUS);
-  const claudeNote = agent.note;
   const active = { page: view };
-  const channelName = (counts.channels || []).find((c) => c.id === route.id)?.name;
+  const styleName = (counts.channels || []).find((c) => c.id === route.id)?.name;
   const el = h(`<div class="home shell${view === 'library' ? ' with-side' : ''}">
-    ${topBarMarkup(pageName(active, channelName))}
+    ${topBarMarkup(pageName(active, styleName))}
     ${sidebarMarkup({ active, counts, takes, agent: railAgent(agent) })}
     <div class="home-main" id="homeMain"></div>
     ${view === 'library' ? '<aside class="home-rec lib-side" aria-label="Library assistant" id="libSide"></aside>' : ''}
   </div>`);
   app.replaceChildren(el);
   const main = $('#homeMain', el);
-  // New video from a channel page starts in that channel.
-  const startVideo = ({ profileId = null, format = null } = {}) => newProjectDialog(null, takes, format, profileId);
+  // New video from a style's page starts in that style; a format's page passes the format.
+  const startVideo = ({ profileId, format = null } = {}) => newVideo(format ? { formatId: format.id } : profileId !== undefined ? { profileId } : {});
   const shell = wireShell(el, {
-    onNewVideo: () => startVideo({ profileId: view === 'channel' ? route.id : null }),
+    onNewVideo: () => startVideo(view === 'style' ? { profileId: parseRoute(location.hash).id } : {}),
   });
-  // After a channel is renamed, archived or restored the whole page redraws; a new or archived format, or a brand
-  // change, only recounts (the channel hub repaints its avatar from the fresh counts).
+  // N: New video, from any page of the shell (not while typing).
+  const keys = (e) => {
+    if (e.key !== 'n' && e.key !== 'N') return;
+    if (e.metaKey || e.ctrlKey || e.altKey || e.target.closest?.('input, textarea, select, [contenteditable]') || !$('#modal').hidden) return;
+    e.preventDefault();
+    startVideo(view === 'style' ? { profileId: parseRoute(location.hash).id } : {});
+  };
+  document.addEventListener('keydown', keys);
+  // After a style is renamed, archived or restored the whole page redraws; a new or archived format, or a brand
+  // change, only recounts (the style hub repaints its avatar from the fresh counts).
   const onChannelsChange = () => router();
   const onFormatsChange = () => api('/api/app/counts').catch(() => null);
   let page = null;
-  if (view === 'projects') renderProjects(main, projects, takes, claudeNote, counts, route.query);
+  if (view === 'projects') {
+    setTypeNames(STATUS.formats);
+    page = renderProjects(main, {
+      projects, takes, counts, query: route.query, notice: agent.note, newVideo,
+      recover: async (u) => { try { await rec.recover(u.project, u.take); location.hash = `#/p/${encodeURIComponent(u.project)}`; } catch (e) { toast(e.message); } },
+    });
+  }
   if (view === 'recordings') renderRecordings(main, takes);
   if (view === 'scheduled') page = await renderSchedules(main, nav).catch((e) => { main.replaceChildren(h(`<div class="home-wrap"><div class="notice">${esc(e.message)}</div></div>`)); return null; });
   if (view === 'skills') page = await renderSkills(main, { counts });
   if (view === 'library') page = renderLibrary(main, $('#libSide', el));
-  if (view === 'channel') {
+  if (view === 'style') {
     page = await renderChannel(main, { id: route.id, tab: route.tab, query: route.query, makeChat, startVideo, counts, projects, onChannelsChange, onFormatsChange });
-    // A `_` address was resolved to a real channel: name it in the narrow top bar.
+    // A `_` address was resolved to a real style: name it in the narrow top bar.
     const real = parseRoute(location.hash);
-    if (real.page === 'channel' && real.id !== route.id) {
+    if (real.page === 'style' && real.id !== route.id) {
       const known = (counts.channels || []).find((c) => c.id === real.id);
       if (known) $('.shell-page', el).textContent = known.name;
     }
   }
-  if (view === 'channels') page = await renderChannels(main, { tab: route.tab, onChannelsChange });
-  return { teardown: () => { page?.teardown?.(); shell.teardown(); document.body.classList.remove('in-home'); } };
+  if (view === 'styles') page = await renderStyles(main, { tab: route.tab, counts, onChannelsChange, formatInfo: STATUS.formatInfo || {} });
+  return { teardown: () => { page?.teardown?.(); shell.teardown(); document.removeEventListener('keydown', keys); document.body.classList.remove('in-home'); } };
 }
 
-// Projects (layout H1, 17 Oct 2026): the page uses the whole width. One band to carry on (the last project, its
-// steps, what's next) next to what else is waiting for you; a new take shows only while it isn't in a project yet
-// (every recording lives under Recordings); then all projects as a grid or a list.
-const VIEW_ICON = {
-  grid: '<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><rect x="1.5" y="1.5" width="4.5" height="4.5" rx="1"/><rect x="8" y="1.5" width="4.5" height="4.5" rx="1"/><rect x="1.5" y="8" width="4.5" height="4.5" rx="1"/><rect x="8" y="8" width="4.5" height="4.5" rx="1"/></svg>',
-  list: '<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M1.5 3h11M1.5 7h11M1.5 11h11"/></svg>',
-};
-let homeView = (() => { try { return localStorage.getItem('studio.home.view') === 'list' ? 'list' : 'grid'; } catch { return 'grid'; } })();
-const pills = (pr) => (pr || []).map((x) => `<i class="${x === 1 ? 'd' : x === 2 ? 'n' : ''}"></i>`).join('');
-const nextText = (p) => (p.next ? p.next : p.type ? 'All steps done' : 'Pick a type');
-
-let homeChannel = (() => { try { return localStorage.getItem('studio.home.channel') || 'all'; } catch { return 'all'; } })();
-function renderProjects(main, projects, takes, claudeNote, counts = {}, query = null) {
-  // The channel filter (≥ 2 channels): All · one button per channel, a select above four. #/?channel=<id> picks one.
-  const channels = counts.channels || [];
-  if (query?.get('channel')) homeChannel = query.get('channel');
-  if (homeChannel !== 'all' && !channels.some((c) => c.id === homeChannel)) homeChannel = 'all';
-  if (channels.length < 2) homeChannel = 'all';
-  const channelFilter = channels.length < 2 ? ''
-    : channels.length > 4
-      ? `<label class="ch-filter-sel"><span class="vh">Channel</span><select class="field sel" id="chanSel"><option value="all">All channels</option>${channels.map((c) => `<option value="${esc(c.id)}"${c.id === homeChannel ? ' selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>`
-      : `<div class="seg" id="chanFilter" role="group" aria-label="Filter by channel"><button type="button" data-c="all">All</button>${channels.map((c) => `<button type="button" data-c="${esc(c.id)}">${esc(c.name)}</button>`).join('')}</div>`;
-  const firstFormats = channels.find((c) => c.formats > 0);
-  const contextLine = (p) => [p.profileName, p.formatName].filter(Boolean).join(' · ');
-  const resume = projects.filter((p) => p.app && p.type).sort((a, b) => b.updated - a.updated)[0] || null;
-  main.replaceChildren(h(`<div class="home-wrap wide">
-    ${claudeNote}
-    <div class="home-head">
-      <div class="hh-title"><h1>Projects</h1><div class="sub">Pick up where you left off, or start a new video from one of your formats.</div></div>
-      <label class="search wide">${HOME_ICON.search}<span class="vh">Search projects</span><input id="q" type="search" placeholder="Search projects" autocomplete="off"></label>
-      <span class="theme-slot" id="themeSlot"></span>
-      <button class="btn rec" id="recBtn" title="Make a project and record a take into it"><span class="rec-dot"></span>Record</button>
-      <button class="btn primary" id="newBtn">+ New video</button>
-    </div>
-    <div id="band"></div>
-    <div class="take-banners" id="takeBanner"></div>
-    <div class="list-head"><b>All projects</b>
-      ${channelFilter}
-      <div class="seg" id="filter" role="group" aria-label="Filter by type">
-        <button data-f="all">All</button>${Object.entries(STATUS.formats).map(([k, v]) => `<button data-f="${k}">${esc(v.replace(/ \(.*\)$/, ''))}</button>`).join('')}<button data-f="old">Earlier edits</button></div>
-      <span class="gap"></span><span class="sub" id="shown"></span>
-      <div class="seg view-seg" role="group" aria-label="Show projects as"><button data-v="grid" aria-label="Grid" title="Grid">${VIEW_ICON.grid}</button><button data-v="list" aria-label="List" title="List">${VIEW_ICON.list}</button></div></div>
-    <div id="grid"></div>
-  </div>`));
-  $('#themeSlot', main).replaceWith(themeSwitch());
-  $('#newBtn', main).onclick = () => newProjectDialog(null, takes);
-  $('#recBtn', main).onclick = () => newProjectDialog('record', takes);
-
-  // The band: carry on with the last project, and what else needs you.
-  const band = $('#band', main);
-  if (resume) {
-    const pr = resume.progress || [], names = resume.steps || [];
-    const waiting = projects.filter((p) => p.app && p.type && p !== resume && (p.waiting || p.next))
-      .sort((a, b) => (b.waiting > 0) - (a.waiting > 0) || b.updated - a.updated).slice(0, 4);
-    const el = h(`<section class="band">
-      <a class="band-res" href="#/p/${encodeURIComponent(resume.id)}">
-        <span class="thumb"><img alt="" decoding="async" src="${thumbUrl(resume)}"><span class="ini" aria-hidden="true">${esc(resume.name.slice(0, 1))}</span></span>
-        <span class="r-body">
-          <span class="sub">Continue where you left off · ${contextLine(resume) ? `${esc(contextLine(resume))} · ` : ''}edited ${ago(resume.updated)}</span>
-          <span class="r-name">${esc(resume.name)}</span>
-          <span class="r-meta"><span class="badge">${esc(STATUS.formats[resume.type] || resume.type)}</span><span class="r-len sub" id="resumeLen"></span></span>
-          <span class="r-steps" style="--n:${pr.length || 1}" aria-label="${pr.filter((x) => x === 1).length} of ${pr.length} steps done">${pr.map((x, i) => `<span class="${x === 1 ? 'd' : x === 2 ? 'n' : ''}"><i></i><small>${esc(names[i] || '')}</small></span>`).join('')}</span>
-          <span class="gap"></span>
-          <span class="r-acts"><span class="r-go">${resume.next ? `Next: ${esc(resume.next)}` : 'All steps done'}<span>Open</span></span>${resume.waiting ? `<span class="r-wait">${resume.waiting} change${resume.waiting > 1 ? 's' : ''} waiting for Claude</span>` : ''}</span>
-        </span></a>
-      <div class="band-wait"><b class="bw-h">Waiting for you</b>
-        ${waiting.length ? waiting.map((p) => `<a class="bw-row" href="#/p/${encodeURIComponent(p.id)}"><span class="thumb"><img alt="" loading="lazy" decoding="async" src="${thumbUrl(p)}"><span class="ini" aria-hidden="true">${esc(p.name.slice(0, 1))}</span></span>
-          <span class="bw-t"><b>${esc(p.name)}</b><span class="sub">${p.waiting ? `${p.waiting} change${p.waiting > 1 ? 's' : ''} waiting to send` : `edited ${ago(p.updated)}`}</span></span>
-          <span class="bw-go">${esc(p.waiting ? 'Save changes' : p.next)} →</span></a>`).join('') : '<p class="sub">Nothing else waiting. Every other project is done or hasn’t started.</p>'}
-      </div></section>`);
-    el.querySelectorAll('.thumb').forEach(wireThumb);
-    band.append(el);
-    // How long the video is (the locked cut, else the take) and how many scenes it has.
-    api(`/api/projects/${encodeURIComponent(resume.id)}/summary`).then((m) => {
-      const bits = [m.length ? `${Math.floor(Math.round(m.length) / 60)}:${String(Math.round(m.length) % 60).padStart(2, '0')}${m.cut ? '' : ' (whole take)'}` : '', m.scenes ? `${m.scenes} scene${m.scenes > 1 ? 's' : ''}` : ''].filter(Boolean);
-      const box = $('#resumeLen', el);
-      if (box && bits.length) { box.textContent = bits.join(' · '); box.title = m.cut ? 'Length of the locked cut' : 'Length of the take (no locked cut yet)'; }
-    }).catch(() => {});
-  } else {
-    band.append(h(`<section class="band band-first"><div><b>Start your first video</b><span class="sub">Record a take, or start from one you've already recorded.</span></div><span class="gap"></span><button class="btn primary" data-a="new">+ New video</button></section>`));
-    $('[data-a=new]', band).onclick = () => newProjectDialog(null, takes);
-  }
-
-  // A take that isn't in any project yet (newest first), and built-in recorder takes left unsaved: offer them here.
-  const tb = $('#takeBanner', main);
-  const fresh = takes.find((t) => !t.used);
-  if (fresh) {
-    const b = h(`<div class="take-banner"><span class="tb-ic" aria-hidden="true">${HOME_ICON.take}</span>
-      <span class="tt"><b>New take · ${esc(takeLabel(fresh.id))}</b><span class="sub">${esc(takeWhat(fresh))} · ${gb(fresh.bytes)} · not in a project yet</span></span>
-      <button class="btn dark small" data-a="use">Start a project with it</button><a class="btn ghost small" href="#/recordings">All ${takes.length} recording${takes.length === 1 ? '' : 's'} →</a></div>`);
-    $('[data-a=use]', b).onclick = () => newProjectDialog(fresh.id);
-    tb.append(b);
-  }
-  api('/api/rec-unfinished').then(({ takes: open }) => {
-    for (const u of open || []) {
-      const b = h(`<div class="take-banner unsaved"><span class="tb-ic" aria-hidden="true">${HOME_ICON.take}</span>
-        <span class="tt"><b>Unsaved take · ${esc(new Date(u.started).toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' }))}</b><span class="sub">For ${esc(u.project)} · about ${clock(u.seconds).replace(/\.\d$/, '')} · ${gb(u.bytes)} · the page closed before it was saved</span></span>
-        <button class="btn dark small" title="Make the take files from what was recorded and add the take to its project">Finish it</button></div>`);
-      $('button', b).onclick = async () => {
-        try { await rec.recover(u.project, u.take); location.hash = `#/p/${encodeURIComponent(u.project)}`; } catch (e) { toast(e.message); }
-      };
-      tb.prepend(b);
-    }
-  }).catch(() => {});
-
-  const grid = $('#grid', main), q = $('#q', main);
-  const draw = () => {
-    const term = q.value.trim().toLowerCase();
-    const kind = (p) => (homeFilter === 'all' || (homeFilter === 'old' ? !p.type : p.type === homeFilter))
-      && (homeChannel === 'all' || p.profileId === homeChannel);
-    const list = projects.filter((p) => p !== resume || term).filter(kind)
-      .filter((p) => !term || p.name.toLowerCase().includes(term) || p.id.includes(term));
-    // The count is every project the filter shows, the one in "Continue where you left off" too (it isn't repeated in
-    // the grid), so it matches the sidebar's Projects number.
-    const shown = list.length + (resume && !term && kind(resume) ? 1 : 0);
-    main.querySelectorAll('#filter button').forEach((b) => { b.classList.toggle('on', b.dataset.f === homeFilter); b.setAttribute('aria-pressed', String(b.dataset.f === homeFilter)); });
-    main.querySelectorAll('#chanFilter button').forEach((b) => { b.classList.toggle('on', b.dataset.c === homeChannel); b.setAttribute('aria-pressed', String(b.dataset.c === homeChannel)); });
-    main.querySelectorAll('.view-seg button').forEach((b) => { b.classList.toggle('on', b.dataset.v === homeView); b.setAttribute('aria-pressed', String(b.dataset.v === homeView)); });
-    grid.className = homeView === 'list' ? 'plist' : 'grid';
-    $('#shown', main).textContent = `${shown} project${shown === 1 ? '' : 's'}`;
-    if (!projects.length) return grid.replaceChildren(h(`<div class="empty"><b>No projects yet</b><span class="sub">Start one with New project or Record.</span>${firstFormats ? `<a class="btn small" href="${channelHref(firstFormats.id, 'formats')}">Start from a format</a>` : ''}</div>`));
-    if (!list.length) return grid.replaceChildren(h(`<div class="empty"><b>Nothing matches</b><span class="sub">Try another word or filter.</span></div>`));
-    const type = (p) => (p.type ? esc(STATUS.formats[p.type] || p.type) : 'Earlier edit');
-    if (homeView === 'list') {
-      grid.replaceChildren(h(`<div class="pl-head"><span></span><span>Project</span><span>Type</span><span>Steps</span><span>Next</span><span>Edited</span></div>`), ...list.map((p) => {
-        const row = h(`<a class="pl-row" href="#/p/${encodeURIComponent(p.id)}">
-          <span class="thumb"><img alt="" loading="lazy" decoding="async" src="${thumbUrl(p)}"><span class="ini" aria-hidden="true">${esc(p.name.slice(0, 1))}</span></span>
-          <span class="pl-name"><b>${esc(p.name)}</b>${contextLine(p) ? `<small class="sub">${esc(contextLine(p))}</small>` : ''}</span><span class="badge">${type(p)}</span>
-          <span class="pl-steps">${p.progress ? `<span class="pills">${pills(p.progress)}</span><span class="sub">${p.progress.filter((x) => x === 1).length} of ${p.progress.length}</span>` : '<span class="sub">–</span>'}</span>
-          <span class="${p.next ? 'next' : 'sub'}">${esc(nextText(p))}${p.waiting ? ` <span class="pl-wait">${p.waiting} waiting</span>` : ''}</span>
-          <span class="sub">${ago(p.updated)}</span></a>`);
-        wireThumb($('.thumb', row));
-        return row;
-      }));
-      return;
-    }
-    grid.replaceChildren(...list.map((p) => {
-      const card = h(`<a class="card" href="#/p/${encodeURIComponent(p.id)}">
-        <span class="thumb"><img alt="" loading="lazy" decoding="async" src="${thumbUrl(p)}"><span class="ini" aria-hidden="true">${esc(p.name.slice(0, 1))}</span>${p.progress ? `<span class="pills on-thumb" aria-hidden="true">${pills(p.progress)}</span>` : ''}</span>
-        <span class="name">${esc(p.name)}</span>
-        ${contextLine(p) ? `<span class="sub card-ctx">${esc(contextLine(p))}</span>` : ''}
-        <span class="meta"><span>${type(p)}</span><span aria-hidden="true">·</span>
-          <span class="${p.next ? 'next' : ''}">${esc(nextText(p))}</span>
-          <span class="ago">${ago(p.updated)}</span></span></a>`);
-      wireThumb($('.thumb', card));
-      return card;
-    }));
-  };
-  main.querySelectorAll('#filter button').forEach((b) => (b.onclick = () => { homeFilter = b.dataset.f; draw(); }));
-  const pickChannel = (id) => {
-    homeChannel = id;
-    try { localStorage.setItem('studio.home.channel', id); } catch {}
-    history.replaceState(null, '', id === 'all' ? '#/' : `#/?channel=${encodeURIComponent(id)}`);
-    draw();
-  };
-  main.querySelectorAll('#chanFilter button').forEach((b) => (b.onclick = () => pickChannel(b.dataset.c)));
-  const chanSel = $('#chanSel', main);
-  if (chanSel) chanSel.onchange = () => pickChannel(chanSel.value);
-  main.querySelectorAll('.view-seg button').forEach((b) => (b.onclick = () => { homeView = b.dataset.v; try { localStorage.setItem('studio.home.view', homeView); } catch {} draw(); }));
-  q.oninput = draw;
-  draw();
-}
-
-function takeRow(t, label = 'Use') {
-  const row = h(`<div class="take-row"><span class="ti" aria-hidden="true">${HOME_ICON.take}</span>
-    <span class="tt"><b>${esc(takeLabel(t.id))}</b><span class="sub">${esc(takeWhat(t))} · ${gb(t.bytes)}</span></span>
-    <button class="btn small" title="Start a new project from this take">${label}</button></div>`);
-  $('button', row).onclick = () => newProjectDialog(t.id);
+function takeRow(t) {
+  const row = h(`<div class="take-row"><span class="ti" aria-hidden="true">${TAKE_ICON}</span>
+    <span class="tt"><b>${esc(takeLabel(t.id))}</b><span class="sub">${esc(takeWhat(t))} · ${gb(t.bytes)}${t.used ? ' · in a video' : ''}</span></span>
+    <button class="btn small" title="Make an Untitled video with this take and open it">Start a video from it</button></div>`);
+  $('button', row).onclick = () => newVideo({ take: t.id });
   return row;
 }
 
@@ -387,12 +224,12 @@ function renderRecordings(main, takes) {
   main.replaceChildren(h(`<div class="home-wrap">
     <div class="home-head"><div class="hh-title"><h1>Recordings</h1><div class="sub mono">${esc(tilde(STATUS.recordingsDir))}</div></div>
       <button class="btn rec" id="rec2"><span class="rec-dot"></span>Record a new take</button></div>
-    <p class="sub lead">Every take you've recorded, newest first. Start a project from one and Video Octopus copies it in.</p>
+    <p class="sub lead">Every take you've recorded, newest first. Start a video from one and Video Octopus copies it in.</p>
     <div class="take-list wide" id="all"></div></div>`));
-  $('#rec2', main).onclick = () => newProjectDialog('record', takes);
+  $('#rec2', main).onclick = () => newVideo({ record: true });
   const all = $('#all', main);
   if (!takes.length) all.append(h(`<div class="empty"><b>No recordings yet</b><span class="sub">Press Record a new take to make one.</span></div>`));
-  for (const t of takes) all.append(takeRow(t, 'New project'));
+  for (const t of takes) all.append(takeRow(t));
 }
 
 function setupScreen() {
@@ -409,159 +246,48 @@ function setupScreen() {
   return { teardown: () => document.body.classList.remove('in-home') };
 }
 
-// New project: a name, the type (which picks the steps and the frame shape) and where the recording comes
-// from: record a new take now, an earlier take, or later. pick = 'record', a take id, or null.
-async function newProjectDialog(pick, takes, selectedFormat = null, profileId = null) {
-  const [list, projects, profiles] = await Promise.all([takes || api('/api/takes'), api('/api/projects').catch(() => []), api('/api/profiles')]);
-  const canRecord = true; // the recorder is in Video Octopus itself (its panel says when this browser can't record)
-  const modal = $('#modal');
-  const types = Object.entries(STATUS.formats);
-  const info = STATUS.formatInfo || {};
-  let type = selectedFormat?.type || types[0]?.[0] || 'tutorial', style = null, upload = null; // upload: the file picked with "Import a file…"
-  // The folder the project gets: the server's slug of the name, -2, -3… when it's taken.
-  const ids = new Set(projects.map((p) => p.id));
-  const slug = (n) => String(n).toLowerCase().normalize('NFKD').replace(/[^\w\s-]/g, '').trim().replace(/[\s_]+/g, '-').replace(/-+/g, '-').slice(0, 60) || 'project';
-  const folderOf = (n) => { const b = slug(n); let f = b; for (let i = 2; ids.has(f); i++) f = `${b}-${i}`; return f; };
-  // The newest takes, plus the newest one no project uses yet (the default) and the one picked; More takes… opens
-  // the rest in the same list, each with when, how long, how big and which project uses it.
-  const free = list.find((t) => !t.used);
-  const shown = list.slice(0, 4);
-  if (free && !shown.includes(free)) shown.push(free);
-  if (pick && pick !== 'record' && !shown.some((t) => t.id === pick)) { const t = list.find((x) => x.id === pick); if (t) shown.unshift(t); }
-  const rest = list.filter((t) => !shown.includes(t));
-  let take = pick === 'record' ? (canRecord ? 'record' : free?.id || list[0]?.id || '') : pick || free?.id || (canRecord ? 'record' : list[0]?.id || '');
-  const opt = (value, title, sub, extra = '') => `<label class="np-t"><input type="radio" name="ptake" value="${esc(value)}"${value === take ? ' checked' : ''}><span class="np-tt"><b>${esc(title)}</b><small>${esc(sub)}</small></span>${extra}</label>`;
-  const mmss = (x) => { const r = Math.round(x); return `${Math.floor(r / 60)}:${String(r % 60).padStart(2, '0')}`; };
-  const takeSub = (t) => [takeWhat(t), t.duration ? mmss(t.duration) : null, gb(t.bytes),
-    t.projects?.length ? `in ${t.projects.map((n) => `“${n}”`).join(', ')}` : t.used ? 'in a project' : 'not in a project yet'].filter(Boolean).join(' · ');
-  const d = h(`<div class="dialog np" role="dialog" aria-modal="true" aria-labelledby="npTitle">
-    <div class="np-head"><div><h3 id="npTitle">New video</h3><div class="sub">A folder in your studio. The type picks the steps and the frame shape.</div></div>
-      <button class="btn ghost small np-x" id="cancelX" aria-label="Close">${HOME_ICON.close}</button></div>
-    <label class="fl" for="pname">What's the video about?</label>
-    <input class="field big" id="pname" placeholder="e.g. Cut Editor walkthrough" autocomplete="off" aria-describedby="npErr">
-    <div class="np-err" id="npErr" role="alert" hidden>Give the video a name first. It becomes the project's folder.</div>
-    <div class="sub np-folder" id="npFolder"></div>
-    <div class="learn-toolbar"><label>Profile · channel, brand or series<select id="npProfile"><option value="">No profile</option>${profiles.profiles.map(p=>`<option value="${p.id}">${esc(p.name)}${p.brand?'':' · brand optional'}</option>`).join('')}</select></label><label>Video format<select id="npFormat"><option value="">Choose a profile first</option></select></label></div>
-    <p class="sub" id="npContext">Enabled core workflows and current studio instructions will be included.</p>
-    <div class="fl" id="typeLabel">Video setup</div><p class="sub" id="npSetupHint">Choose a saved format above to fill this in, or choose a setup yourself.</p>
-    <div class="types" role="radiogroup" aria-labelledby="typeLabel">${types.map(([k, v]) => `<button type="button" class="type" role="radio" data-k="${k}"><span class="ty-shape ${info[k]?.aspect === '9:16' ? 'tall' : 'wide'}${info[k]?.camera === false ? ' nocam' : ''}" aria-hidden="true"></span><b>${esc(v)}</b><small>${esc(info[k]?.hint || '')}</small>
-      ${info[k]?.blocks?.length ? `<span class="ty-blocks" aria-label="Starts with: ${esc(info[k].blocks.map((b) => b.label).join(', '))}">${info[k].blocks.map((b) => `<i class="t-${esc(b.type)}${b.optional ? ' opt' : ''}">${esc(b.label)}</i>`).join('')}</span>` : ''}
-      ${info[k]?.steps?.length ? `<small class="ty-n">${info[k].steps.length} steps</small>` : ''}</button>`).join('')}</div>
-    <div class="np-style" id="styleRow" hidden><div class="fl" id="styleLabel">Style</div><div class="seg wide" role="radiogroup" aria-labelledby="styleLabel" id="styles"></div></div>
-    <div class="fl" id="takeLabel">Recording</div>
-    <div class="np-takes" role="radiogroup" aria-labelledby="takeLabel">
-      ${canRecord ? opt('record', 'Record a new take now', 'Opens the record setup when the project is made', '<span class="rec-dot" aria-hidden="true"></span>') : ''}
-      ${shown.map((t) => opt(t.id, takeLabel(t.id), takeSub(t))).join('')}
-      ${rest.length ? `<button type="button" class="np-t np-more" id="npMore" aria-expanded="false" aria-controls="npAll"><span class="np-tt"><b>More takes…</b><small>${rest.length} more, oldest ${esc(takeLabel(rest.at(-1).id))}</small></span><span aria-hidden="true">›</span></button>
-        <div class="np-all" id="npAll" role="group" aria-label="All takes" hidden>${rest.map((t) => opt(t.id, takeLabel(t.id), takeSub(t))).join('')}</div>` : ''}
-      ${opt('file', 'Import a file…', 'Any video or sound file from this computer (or drop one here)', '<input type="file" id="npFileIn" hidden accept="video/*,audio/*,.mov,.mp4,.m4v,.mkv,.webm,.wav,.m4a,.mp3,.aif,.aiff,.flac">')}
-      ${opt('', 'Add one later', 'Record or pick a take from inside the project')}
-    </div>
-    <div class="actions"><span class="np-chain" id="npChain"></span><button class="btn ghost" id="cancel">Cancel</button><button class="btn primary" id="create">Create</button></div></div>`);
-  modal.replaceChildren(d); modal.hidden = false;
-  let contextToken=0, selectedContext=null;
-  const contextPreview=async()=>{const token=++contextToken;selectedContext=null;const f=profiles.formats.find(f=>f.id===$('#npFormat',d).value);try{const x=await api('/api/video-context',{profileId:$('#npProfile',d).value||null,formatId:f?.id||null,type});if(token!==contextToken)return;selectedContext=x;$('#npContext',d).textContent=`${x.profileName||'No profile'} · ${x.brandVersion?'saved brand':'no brand added'} · ${f?`${f.name} · ${x.versionId?'reviewed style guide included':'ready to use; no style guide added'}`:'no saved format selected'} · ${x.skills.length} skills: ${x.skills.map(s=>s.name).join(', ')}. This setup is saved for this video.`;}catch(e){if(token===contextToken)$('#npContext',d).textContent=e.message;}};
-  const formatOptions=()=>{const profileId=$('#npProfile',d).value,fs=profiles.formats.filter(f=>f.profileId===profileId);$('#npFormat',d).innerHTML=`<option value="">${!profileId?'Choose a profile first':fs.length?'Choose a saved format (optional)':'No formats saved for this profile'}</option>`+fs.map(f=>`<option value="${f.id}">${esc(f.name)} · ${f.activeVersion?'with style guide':'basic setup'}</option>`).join('');$('#npFormat',d).disabled=!fs.length;};
-  $('#npProfile',d).onchange=()=>{formatOptions();sync();};
-  $('#npFormat',d).onchange=()=>{const f=profiles.formats.find(f=>f.id===$('#npFormat',d).value);if(f)type=f.type;sync();};
-  const sync = () => {
-    const f=profiles.formats.find(f=>f.id===$('#npFormat',d).value);if(f&&f.type!==type)$('#npFormat',d).value='';contextPreview();
-    const selected=profiles.formats.find(f=>f.id===$('#npFormat',d).value);
-    $('#npSetupHint',d).textContent=selected?`Set by ${selected.name}. Changing the setup switches to a video without this saved format.`:'Choose a saved format above to fill this in, or choose a setup yourself.';
-    d.querySelectorAll('.type').forEach((x) => { x.classList.toggle('on', x.dataset.k === type); x.setAttribute('aria-checked', String(x.dataset.k === type)); });
-    // Shorts are one format with styles inside (talking head, long-form teaser, plus the studio's own from .studio/formats.json).
-    const styles = info[type]?.styles || [];
-    $('#styleRow', d).hidden = !styles.length;
-    if (!styles.some((x) => x.id === style)) style = styles[0]?.id || null;
-    $('#styles', d).innerHTML = styles.map((x) => `<button type="button" role="radio" data-s="${esc(x.id)}" title="${esc(x.hint)}" class="${x.id === style ? 'on' : ''}" aria-checked="${x.id === style}">${esc(x.label)}</button>`).join('');
-    d.querySelectorAll('#styles [data-s]').forEach((b) => (b.onclick = () => { style = b.dataset.s; sync(); }));
-    $('#create', d).textContent = take === 'record' ? 'Create and record' : take === 'file' ? 'Create and import' : 'Create';
-    // The type's steps, as a chain under the choices.
-    const chain = stepChain(info[type]?.steps);
-    $('#npChain', d).textContent = chain;
-    $('#npChain', d).title = (info[type]?.steps || []).map((s) => s.name || s.label).join(' → ');
-  };
-  const folder = () => {
-    const n = $('#pname', d).value.trim();
-    $('#npFolder', d).innerHTML = `Folder: <span class="mono">${esc(STATUS.projectsDir)}/${n ? esc(folderOf(n)) : '…'}</span>`;
-  };
-  // Create with no name: say so under the box, outline it and give it a small shake (the dialog may be scrolled).
-  const nameMissing = (on) => {
-    const f = $('#pname', d);
-    f.classList.toggle('invalid', on);
-    f.toggleAttribute('aria-invalid', on);
-    $('#npErr', d).hidden = !on;
-    if (!on) return;
-    f.classList.remove('shake'); void f.offsetWidth; f.classList.add('shake');
-    f.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    f.focus();
-  };
-  $('#pname', d).addEventListener('input', () => { folder(); if ($('#pname', d).value.trim()) nameMissing(false); });
-  folder();
-  d.querySelectorAll('.type').forEach((b) => (b.onclick = () => { type = b.dataset.k; sync(); }));
-  // Import a file…: pick (or drop) a video or sound file; it's copied into the project as its take after Create.
-  const fileIn = $('#npFileIn', d), fileOpt = fileIn.closest('label');
-  const setFile = (f) => {
-    if (!f) return;
-    if (!/\.(mov|mp4|m4v|mkv|webm|wav|m4a|mp3|aif|aiff|caf|flac)$/i.test(f.name)) { toast('Pick a video (.mov, .mp4…) or a sound file (.wav, .m4a, .mp3…).'); return; }
-    upload = f; take = 'file';
-    $('input[value=file]', d).checked = true;
-    $('small', fileOpt).textContent = `${f.name} · ${gb(f.size)} · click to pick another`;
-    if (!$('#pname', d).value.trim()) { $('#pname', d).value = f.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim(); folder(); }
-    sync();
-  };
-  fileIn.onchange = () => setFile(fileIn.files[0]);
-  fileOpt.addEventListener('click', (e) => { if (take === 'file' && e.target !== fileIn) { e.preventDefault(); fileIn.click(); } });
-  d.querySelectorAll('input[name=ptake]').forEach((r) => (r.onchange = () => { take = r.value; if (take === 'file' && !upload) fileIn.click(); sync(); }));
-  $('#npMore', d)?.addEventListener('click', (e) => {
-    const all = $('#npAll', d), b = e.currentTarget;
-    all.hidden = false; b.hidden = true; b.setAttribute('aria-expanded', 'true');
-    (all.querySelector('input:checked') || all.querySelector('input'))?.focus();
-  });
-  d.addEventListener('dragover', (e) => { if ([...e.dataTransfer.types].includes('Files')) { e.preventDefault(); d.classList.add('drop'); } });
-  d.addEventListener('dragleave', (e) => { if (!d.contains(e.relatedTarget)) d.classList.remove('drop'); });
-  d.addEventListener('drop', (e) => { e.preventDefault(); d.classList.remove('drop'); setFile(e.dataTransfer.files[0]); });
-  if(selectedFormat){$('#npProfile',d).value=selectedFormat.profileId;formatOptions();$('#npFormat',d).value=selectedFormat.id;}
-  else {
-    // From a channel page: that channel, unless it is archived (New video refuses archived channels).
-    const channel = profileId && profiles.profiles.find((p) => p.id === profileId && !p.archived);
-    if (channel) $('#npProfile', d).value = channel.id;
-    formatOptions();
+// New video (design V2 §6, board "New video B"): makes an "Untitled video" at once and opens it. The server gives it
+// the last-used style and format (settings lastNewVideo), unless it was started from a style (profileId; null = No
+// style) or a format (formatId). opts.take: a recorded take to copy in; opts.file: a file to import as its take;
+// opts.record: open the record panel. The name is automatic until the creator renames it (server/naming.mjs).
+let creatingVideo = false;
+async function newVideo(opts = {}) {
+  if (creatingVideo) return null;
+  creatingVideo = true;
+  try {
+    const b = { untitled: true };
+    if (opts.formatId) b.formatId = opts.formatId;
+    else if ('profileId' in opts) b.profileId = opts.profileId;
+    if (opts.take) b.take = opts.take;
+    const { id } = await api('/api/projects', b);
+    if (opts.record) pendingRecord = id;
+    if (opts.file) await importTakeFile(id, opts.file);
+    location.hash = `#/p/${encodeURIComponent(id)}`;
+    return id;
+  } catch (e) {
+    toast(e.message);
+    return null;
+  } finally {
+    creatingVideo = false;
   }
-  sync();
-  const close = () => { modal.hidden = true; document.removeEventListener('keydown', esc_); };
-  const esc_ = (e) => { if (e.key === 'Escape') close(); };
-  document.addEventListener('keydown', esc_);
-  $('#cancel', d).onclick = close;
-  $('#cancelX', d).onclick = close;
-  modal.onclick = (e) => { if (e.target === modal) close(); };
-  const create = async () => {
-    const name = $('#pname', d).value.trim();
-    if (!name) return nameMissing(true);
-    if (take === 'file' && !upload) return fileIn.click();
-    if(!selectedContext)return toast('Wait for the selected setup, or resolve its message before creating the video.');
-    $('#create', d).disabled = true;
-    try {
-      const { id } = await api('/api/projects', { name, type, style, profileId:$('#npProfile',d).value||null,formatId:$('#npFormat',d).value||null,versionId:selectedContext?.versionId||null,contextExpected:selectedContext||null,take: take && take !== 'record' && take !== 'file' ? take : undefined });
-      if (take === 'record') pendingRecord = id;
-      if (take === 'file') {
-        // The file streams into the project's source/ and becomes its take (server: importUpload).
-        $('#create', d).textContent = `Copying ${upload.name}…`;
-        try {
-          const r = await fetch(`/api/projects/${encodeURIComponent(id)}/take-upload?name=${encodeURIComponent(upload.name)}`, { method: 'POST', headers: { 'X-Studio': '1', 'Content-Type': 'application/octet-stream' }, body: upload });
-          const j = await r.json().catch(() => ({}));
-          if (!r.ok) throw new Error(j.error || `copying failed (${r.status})`);
-          toast(`${upload.name} is the take. Making a playback copy…`);
-        } catch (err) { toast(`The project is made, but the file didn't come in: ${err.message}`); }
-      }
-      close(); location.hash = `#/p/${encodeURIComponent(id)}`;
-    } catch (e) { toast(e.message); $('#create', d).disabled = false; }
-  };
-  $('#create', d).onclick = create;
-  $('#pname', d).onkeydown = (e) => { if (e.key === 'Enter') create(); };
-  setTimeout(() => $('#pname', d).focus(), 30);
 }
 
+// A video or sound file from this computer becomes the project's take: it streams into source/ (server: importUpload).
+const TAKE_FILE = /\.(mov|mp4|m4v|mkv|webm|wav|m4a|mp3|aif|aiff|caf|flac)$/i;
+async function importTakeFile(id, file) {
+  if (!TAKE_FILE.test(file.name)) { toast('Pick a video (.mov, .mp4…) or a sound file (.wav, .m4a, .mp3…).'); return false; }
+  toast(`Copying ${file.name}…`);
+  try {
+    const r = await fetch(`/api/projects/${encodeURIComponent(id)}/take-upload?name=${encodeURIComponent(file.name)}`, { method: 'POST', headers: { 'X-Studio': '1', 'Content-Type': 'application/octet-stream' }, body: file });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || `copying failed (${r.status})`);
+    toast(`${file.name} is the take. Making a playback copy…`);
+    return true;
+  } catch (err) {
+    toast(`The file didn't come in: ${err.message}`);
+    return false;
+  }
+}
 // ---------- project ----------
 // Layout A: the steps are a rail in the top bar with the
 // next one lit, Claude on the left, the picture with its timeline in the middle, and an inspector on the
@@ -585,11 +311,6 @@ const TABS = [
   ['renders', 'Renders', 'Finished videos'],
   ['post', 'Post', 'Title, description and captions for each platform'],
 ];
-// The steps as a chain for the New project dialog, in their plain names: "Record → Clean up → … → Add zooms".
-const stepChain = (steps = []) => {
-  const names = steps.map((s) => s.name || s.label);
-  return (names.length > 6 ? [...names.slice(0, 4), '…', names.at(-1)] : names).join(' → ');
-};
 
 function clearBar() {
   $('.bar').classList.remove('tight');
@@ -602,9 +323,54 @@ function clearBar() {
 async function openProject(id) {
   await loadStatus();
   let P = await api(`/api/projects/${encodeURIComponent(id)}`);
-  document.title = `${P.name} · Video Octopus`;
   document.body.classList.add('in-project');
-  $('#crumbs').innerHTML = `<span>/</span><b title="${esc(P.name)}">${esc(P.name)}</b>${P.type ? `<span class="badge ${P.type}">${esc(STATUS.formats[P.type])}</span>` : ''}`;
+  // The bar's left side (design V2 §6–7): the name (click to rename), a line under it, and the style picker.
+  const crumbs = $('#crumbs');
+  crumbs.innerHTML = `<span>/</span><span class="pt"><button type="button" class="pt-name" id="ptName" title="Rename this video"></button><span class="pt-sub" id="ptSub"></span></span>`;
+  const paintName = () => {
+    document.title = `${P.name} · Video Octopus`;
+    const btn = $('#ptName');
+    if (!btn) return;
+    btn.textContent = P.name;
+    btn.classList.toggle('auto', P.nameSource === 'auto' && !P.autoNamedBy);
+    // Until it is named, say who names it; then the video setup.
+    $('#ptSub').textContent = P.nameSource === 'auto' && !P.autoNamedBy ? 'Claude names it after the first take' : P.type ? STATUS.formats[P.type] || '' : '';
+  };
+  paintName();
+  $('#ptName').onclick = () => {
+    const btn = $('#ptName');
+    const input = h(`<input class="pt-edit" aria-label="Video name" maxlength="120">`);
+    input.value = P.nameSource === 'auto' && !P.autoNamedBy ? '' : P.name;
+    input.placeholder = P.name;
+    btn.replaceWith(input);
+    input.focus();
+    input.select();
+    let done = false;
+    const finish = async (save) => {
+      if (done) return;
+      done = true;
+      const name = input.value.trim();
+      input.replaceWith(btn);
+      if (save && name && name !== P.name) {
+        try {
+          await api(`/api/projects/${encodeURIComponent(id)}/rename`, { name });
+          Object.assign(P, { name, nameSource: 'manual' });
+          toast('Renamed. Automatic naming leaves your name alone.');
+        } catch (e) { toast(e.message); }
+      }
+      paintName();
+    };
+    input.onkeydown = (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+      if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+    };
+    input.onblur = () => finish(true);
+  };
+  const picker = makeStylePicker({ id, getP: () => P, formatInfo: STATUS.formatInfo || {}, onChanged: async (r) => {
+    if (r.typeChanged) return router(); // another video setup: other steps, so the page starts again
+    await refresh();
+  } });
+  crumbs.append(picker.el);
   const modes = [['manual', 'Ask before changes'], ['acceptEdits', 'File edits OK'], ['auto', 'Auto (safe steps)'], ['bypassPermissions', 'Full access']];
   $('#barActions').replaceChildren(
     h(`<button class="btn rec" id="recBtn" title="Record a take (${HOTKEY} also starts and stops it)"><span class="rec-dot"></span><span id="recText">Record</span><kbd>${HOTKEY}</kbd></button>`),
@@ -644,6 +410,7 @@ async function openProject(id) {
 
   // tabs
   let tab = 'canvas';
+  let paintStart = () => {}; // the empty video's start screen, once it exists (below)
   // A tab that got something new while you were on another one glows (and shows its count or a dot) until you open
   // it: the first scenes, a new render, the cut after Clean up, the post kit written, or the tab a finished step's
   // "Show me" points at (the strip's green done moment, web/rail.js).
@@ -692,6 +459,7 @@ async function openProject(id) {
     renderOtherInspector();
     if (t === 'canvas') canvas.resume(); else canvas.pause();
     if (t === 'scenes') scenes.show(); else scenes.hide();
+    paintStart();
     applyFold();
   };
   // Claude folds to a rail: by itself on Scenes (where the list, picture and panel need the room), and ⌘J
@@ -799,6 +567,28 @@ async function openProject(id) {
     newestRender: () => { if (!P.renders.length) return null; renderSel = P.renders[0].file; renderRenders(true); return $('[data-pane=renders] .rd-main', el); },
   } });
   rail.dock($('#dock', el));
+
+  // An empty video (no take yet) starts on the start screen (web/start-screen.js), and Claude asks what it's about.
+  const hasTake = () => Boolean(P.canvas?.screen || P.canvas?.cam || P.canvas?.audio || P.roles?.files?.length);
+  const start = makeStartScreen({
+    hotkey: HOTKEY,
+    onRecord: () => $('#recBtn')?.click(),
+    onFile: (file) => importTakeFile(id, file),
+    onPackage: () => setTab('packaging'),
+  });
+  $('.tab-body', el).append(start.el);
+  paintStart = () => {
+    const empty = !hasTake();
+    start.show(empty && tab === 'canvas');
+    el.classList.toggle('no-take', empty);
+    const hello = $('#emptyChat', el);
+    if (empty && hello && !hello.dataset.start) {
+      hello.dataset.start = '1';
+      hello.innerHTML = `<b>What's this one about?</b><br>A sentence is enough. ${esc(window.STUDIO_AGENT || 'Claude')} can outline a script or suggest hooks first.
+        <span class="start-chips"><button type="button" class="qr" data-ask="Outline a script for this video. Ask me what it's about first if you need to.">Outline a script</button><button type="button" class="qr" data-ask="Give me 5 hooks for this video. Ask me what it's about first if you need to.">Give me 5 hooks</button></span>`;
+      for (const b of hello.querySelectorAll('[data-ask]')) b.onclick = () => chat.send(b.dataset.ask);
+    }
+  };
   $('#exportBtn').onclick = () => setTab('renders');
   // No ffmpeg, no export: the button says where to get it (Setup's Tools card installs it after an OK).
   if (STATUS?.ffmpeg === false) Object.assign($('#exportBtn'), { disabled: true, title: 'Exporting needs ffmpeg: Setup → Tools installs it' });
@@ -809,6 +599,9 @@ async function openProject(id) {
   // steps
   async function refresh() {
     P = await api(`/api/projects/${encodeURIComponent(id)}`);
+    paintName();
+    picker.update();
+    paintStart();
     tabNews();
     renderSteps();
     renderJobs();
@@ -1159,6 +952,15 @@ async function openProject(id) {
   es.onmessage = (m) => {
     const ev = JSON.parse(m.data);
     if (ev.t === 'files') return softRefresh();
+    // Named automatically (the agent's proposal, or the Packaging working title): the bar shows it at once.
+    if (ev.t === 'renamed') {
+      if (!ev.replay && ev.name && ev.name !== P.name) {
+        Object.assign(P, { name: ev.name, autoNamedBy: ev.by || 'agent' });
+        paintName();
+        toast(`Named “${ev.name}”. Click the name to change it.`);
+      }
+      return;
+    }
     if (ev.t === 'busy') softRefresh(); // the rail shows Prepare running / done
     if (ev.t === 'usage') { if (!ev.replay && ev.engine === STATUS?.engine) showUsage(ev); return; }
     if (ev.t === 'take') {
@@ -1204,7 +1006,7 @@ async function openProject(id) {
   setTab(pendingRecord !== id && TABS.some(([k]) => k === lastTab) ? lastTab : 'canvas');
   if (pendingRecord === id) { pendingRecord = null; setTimeout(() => $('#recBtn')?.click(), 250); }
   else setTimeout(() => rail.maybeHelp(), 300); // once, on the first project page after this shipped (settings help.stepsIntro)
-  return { teardown: () => { es.close(); chat.destroy(); railRO.disconnect(); rail.destroy(); waveStop?.(); rdCmp?.destroy(); canvas.destroy(); scenes.destroy(); sound.destroy(); post.destroy(); packaging.destroy(); recorder.destroy(); blocks.destroy(); document.removeEventListener('click', closeMenus); document.removeEventListener('keydown', foldKeys); removeEventListener('message', onCutMessage); cutPanel.destroy(); clearBar(); } };
+  return { teardown: () => { es.close(); picker.destroy(); chat.destroy(); railRO.disconnect(); rail.destroy(); waveStop?.(); rdCmp?.destroy(); canvas.destroy(); scenes.destroy(); sound.destroy(); post.destroy(); packaging.destroy(); recorder.destroy(); blocks.destroy(); document.removeEventListener('click', closeMenus); document.removeEventListener('keydown', foldKeys); removeEventListener('message', onCutMessage); cutPanel.destroy(); clearBar(); } };
 }
 
 // ---------- export receipt: prints out of a slot when an export finishes ----------
@@ -1554,7 +1356,7 @@ function makeChat(root, id, ext = {}, opts = {}) {
         if ($('.sp-t', sess).textContent === 'This session' && !ev.text.startsWith('/')) setTitle(ev.text.replace(/\s+/g, ' ').slice(0, 60));
         break;
       }
-      case 'text': { lastText = ev.text; const display = ev.text.replace(/```octopus-memory[\s\S]*?```/g, `\n[Proposed lessons → Review in Memories](#/channel/_/memories?chat=${encodeURIComponent(id)})\n`); const n = add(h(`<div class="msg-ai">${md(display)}</div>`), ev); n.dataset.ts = ev.ts || ''; break; }
+      case 'text': { lastText = ev.text; const display = ev.text.replace(/```octopus-name[ \t]*\r?\n([\s\S]*?)```/g, (m, n) => `\n*Name for this video: ${n.trim().split('\n')[0]}*\n`).replace(/```octopus-memory[\s\S]*?```/g, `\n[Proposed lessons → Review in Memories](#/style/_/memories?chat=${encodeURIComponent(id)})\n`); const n = add(h(`<div class="msg-ai">${md(display)}</div>`), ev); n.dataset.ts = ev.ts || ''; break; }
       case 'undo-offer': undoOffer = ev; if (turnOver && !busy) showChips(); break;
       case 'proposals': {
         // Claude's turn left proposed shots or zooms: "Claude proposed 3 shots and 6 zooms · Show me · Keep all · No
@@ -1643,7 +1445,7 @@ function makeChat(root, id, ext = {}, opts = {}) {
     if (pinned && !ev.replay) toBottom();
   }
 
-  return { handle, sendSkill: (name) => send(`/${name} for this project`), note: (text) => handle({ t: 'note', text }), reveal,
+  return { handle, send: (text) => send(text), sendSkill: (name) => send(`/${name} for this project`), note: (text) => handle({ t: 'note', text }), reveal,
     paintProposals: () => { for (const n of [...propBlocks]) paintProposal(n); },
     setStep: (name) => { if (name === stepName) return; stepName = name; paintComposer(); },
     destroy: () => { follow.disconnect(); grown.disconnect(); } };

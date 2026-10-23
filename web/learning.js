@@ -4,7 +4,7 @@ import { projectProfilePanel } from './profiles.js';
 import { loadScript, scriptCard } from './prompter.js';
 import { channelHref } from './nav.js';
 const E='/api/learning';
-const videoSetups=[
+export const videoSetups=[
  {id:'tutorial',name:'Long-form · on camera',example:'Long-form explainers with me on camera',hint:'A landscape tutorial with a presenter or screen recording. Starts with the tutorial workflow.'},
  {id:'faceless',name:'Long-form · voiceover',example:'Narrated documentary explainers',hint:'A landscape video led by narration and supporting visuals, without a talking-head workflow.'},
  {id:'short',name:'Short / Reel',example:'YouTube Shorts',hint:'A vertical short video. Starts with the short-form workflow.'},
@@ -174,23 +174,28 @@ export function rememberChannel(profileId) {
   try { if (profileId) localStorage.setItem(LAST_CHANNEL_KEY, profileId); } catch {}
 }
 
-export function newChannelDialog({ onCreated } = {}) {
-  dialog('New channel', '<p class="sub">A YouTube channel, brand or series. Add its video formats next; each one learns its own skill.</p>' + field('Channel name', 'name', '', 'input', 'My main YouTube channel'), async (b) => {
+// A style's optional one-line description (up to 200 characters; design V2 §5).
+const describeField = (value = '') => `<label>Description <span class="sub">(optional)</span><input name="description" value="${esc(value)}" maxlength="200" placeholder="Me on camera, teaching with my screen"></label>`;
+
+// New style. `name` prefills it (the editor's "+ New style from this video").
+export function newChannelDialog({ onCreated, name = '' } = {}) {
+  dialog('New style', '<p class="sub">A folder for one way you make videos: its brand, research, assets and memories, plus the formats inside it. Call it whatever you like.</p>'
+    + field('Style name', 'name', name, 'input', 'Tutorials') + describeField(), async (b) => {
     const p = await api(`${E}/profiles`, b);
     await onCreated?.(p);
-  }, 'Create channel');
+  }, 'Create style');
 }
 
 export function renameChannelDialog(p, { onDone } = {}) {
-  dialog('Rename channel', field('Channel name', 'name', p.name) + '<p class="sub">Existing videos keep the names they were made with.</p>', async (b) => {
-    const result = await api(`${E}/profiles/${p.id}/update`, { expected: p.revision || 1, name: b.name });
+  dialog('Rename style', field('Style name', 'name', p.name) + describeField(p.description || '') + '<p class="sub">Existing videos keep the names they were made with.</p>', async (b) => {
+    const result = await api(`${E}/profiles/${p.id}/update`, { expected: p.revision || 1, name: b.name, description: b.description || '' });
     if (result?.warning) toast(result.warning);
     await onDone?.();
-  }, 'Rename');
+  }, 'Save');
 }
 
 export async function archiveChannel(p, archive, { onDone } = {}) {
-  if (archive && !await confirmBox({ title: `Archive ${p.name}?`, text: 'The channel and its formats are hidden from New video. Nothing is deleted, existing videos are untouched, and you can restore it from All channels.', ok: 'Archive channel' })) return false;
+  if (archive && !await confirmBox({ title: `Archive ${p.name}?`, text: 'The style and its formats are hidden from New video. Nothing is deleted, existing videos are untouched, and you can restore it from My styles.', ok: 'Archive channel' })) return false;
   const result = await api(`${E}/profiles/${p.id}/${archive ? 'archive' : 'unarchive'}`, { expected: p.revision || 1 });
   toast(result?.warning || (archive ? `${p.name} archived.` : `${p.name} restored.`));
   await onDone?.();
@@ -223,17 +228,17 @@ export function newFormatDialog({ profiles, profileId = null, onCreated } = {}) 
 // The channel's options (the hub's ··· menu): rename, a new format, archive or restore.
 export function channelMenuItems(p, { onChange, newFormat } = {}) {
   return [
-    { label: 'Rename channel', run: () => renameChannelDialog(p, { onDone: onChange }) },
+    { label: 'Rename or describe', run: () => renameChannelDialog(p, { onDone: onChange }) },
     ...(!p.archived && newFormat ? [{ label: 'New format', run: newFormat }] : []),
     '-',
     p.archived
-      ? { label: 'Restore channel', run: () => archiveChannel(p, false, { onDone: onChange }) }
-      : { label: 'Archive channel', danger: true, run: () => archiveChannel(p, true, { onDone: onChange }) },
+      ? { label: 'Restore style', run: () => archiveChannel(p, false, { onDone: onChange }) }
+      : { label: 'Archive style', danger: true, run: () => archiveChannel(p, true, { onDone: onChange }) },
   ];
 }
 
 // The channel hub's Formats tab: this channel's formats beside the format home, with Talk to this format.
-// `channelId` fixes the channel; `basePath` is the address the selection is written to (#/channel/<id>/formats).
+// `channelId` fixes the channel; `basePath` is the address the selection is written to (#/style/<id>/formats).
 // `onFormatsChange` runs after a format is made or archived (the sidebar's count); `onChannelChange` after the
 // channel itself changes (restore from the archived notice).
 export async function renderLearning(root, { makeChat, startVideo, channelId, basePath, onFormatsChange, onChannelChange } = {}) {
@@ -395,7 +400,7 @@ export async function renderLearning(root, { makeChat, startVideo, channelId, ba
   function page() {
     const open = talking && view.format;
     const notice = legacyStyle
-      ? `<p class="notice vf-legacy">Use legacy style notes as an example: <b>${esc(legacyStyle)}</b>. Choose the channel and format, open ${TERMS.talk} and start a new conversation; the notes are added to it. The original files and projects stay unchanged.</p>`
+      ? `<p class="notice vf-legacy">Use legacy style notes as an example: <b>${esc(legacyStyle)}</b>. Choose the style and format, open ${TERMS.talk} and start a new conversation; the notes are added to it. The original files and projects stay unchanged.</p>`
       : '';
     return `<div class="learn-page vf3-page">${notice}
       <div class="vf3${open ? ' talking' : ''}">
@@ -417,7 +422,7 @@ export async function renderLearning(root, { makeChat, startVideo, channelId, ba
     if (!p) {
       return `<section class="vf3-pane vf3-formats" aria-label="Formats" data-scroll="formats">
         <div class="vf-pane-head"><h2>Formats</h2><button type="button" class="btn small" data-action="channel">+ ${TERMS.channel}</button></div>
-        <p class="vf-none">Create a channel first.</p>
+        <p class="vf-none">Create a style first.</p>
       </section>`;
     }
     const rows = view.formats.map((f) => {
@@ -428,7 +433,7 @@ export async function renderLearning(root, { makeChat, startVideo, channelId, ba
       </button>`;
     }).join('');
     const empty = p.archived
-      ? '<div class="vf-empty"><p class="sub">No formats.</p></div>' // the hub's banner says the channel is archived
+      ? '<div class="vf-empty"><p class="sub">No formats.</p></div>' // the hub's banner says the style is archived
       : `<div class="vf-empty"><b>No formats yet</b><p class="sub">A format is a repeatable kind of video, such as long-form explainers or Shorts.</p>${button('+ Format', 'format', 'small primary')}</div>`;
     return `<section class="vf3-pane vf3-formats" aria-label="Formats in ${esc(p.name)}" data-scroll="formats">
       <div class="vf-pane-head">
@@ -440,8 +445,8 @@ export async function renderLearning(root, { makeChat, startVideo, channelId, ba
       <div class="vf-pane-foot">
         <label class="learn-check vf-toggle"><input type="checkbox" data-show-archived${showArchived ? ' checked' : ''}>Show archived formats</label>
         <details class="vf-how"><summary>How formats work</summary>
-          <p><b>A format</b> is a repeatable kind of video for this channel. Its <b>skill</b> is the guide you teach it by talking to it, reviewed and saved as versions.</p>
-          <p>Saving a new version affects only future videos; existing videos keep the version they started with. The channel's <a href="${channelHref(p.id, 'brand')}">Brand tab</a> holds identity and voice; <a href="#/settings/editing/look">Video defaults</a> hold starting appearance.</p>
+          <p><b>A format</b> is a repeatable kind of video for this style. Its <b>skill</b> is the guide you teach it by talking to it, reviewed and saved as versions.</p>
+          <p>Saving a new version affects only future videos; existing videos keep the version they started with. The style's <a href="${channelHref(p.id, 'brand')}">Brand tab</a> holds identity and voice; <a href="#/settings/editing/look">Video defaults</a> hold starting appearance.</p>
         </details>
       </div>
     </section>`;
@@ -455,12 +460,12 @@ export async function renderLearning(root, { makeChat, startVideo, channelId, ba
   function homeInner() {
     const { format: f, profile: p } = view;
     if (!p) {
-      return `<div class="empty vf-home-empty"><b>Create a channel to begin</b><p class="sub">A channel can be a YouTube channel, a brand or a series. Add its video formats next; each one learns its own skill.</p>${button(`+ ${TERMS.channel}`, 'channel', 'primary')}</div>`;
+      return `<div class="empty vf-home-empty"><b>Create a style to begin</b><p class="sub">A style is one way you make videos: a channel, a brand or a series. Add its video formats next; each one learns its own skill.</p>${button(`+ ${TERMS.channel}`, 'channel', 'primary')}</div>`;
     }
     if (!f) {
       return p.archived
-        ? `<div class="empty vf-home-empty"><b>${esc(p.name)} is archived</b><p class="sub">Restore it to add formats and make new videos.</p>${button('Restore channel', 'unarchiveChannel', 'primary')}</div>`
-        : `<div class="empty vf-home-empty"><b>No formats yet</b><p class="sub">A format is a kind of video you make for this channel (a Short, a deep explainer…). It is ready for New video as soon as you save it.</p>${button('+ New format', 'format', 'primary')}</div>`;
+        ? `<div class="empty vf-home-empty"><b>${esc(p.name)} is archived</b><p class="sub">Restore it to add formats and make new videos.</p>${button('Restore style', 'unarchiveChannel', 'primary')}</div>`
+        : `<div class="empty vf-home-empty"><b>No formats yet</b><p class="sub">A format is a kind of video you make for this style (a Short, a deep explainer…). It is ready for New video as soon as you save it.</p>${button('+ New format', 'format', 'primary')}</div>`;
     }
     const used = view.videos.get(f.id)?.length || 0;
     const number = activeNumber();
@@ -497,7 +502,7 @@ export async function renderLearning(root, { makeChat, startVideo, channelId, ba
           <button type="button" class="vf-icon vf-dots vf-more" data-action="formatMenu" aria-haspopup="menu" aria-expanded="false" aria-label="More options for ${esc(f.name)}">···</button>
         </div>
       </header>
-      ${archived ? `<p class="notice">${f.archived ? 'This format is archived' : 'Its channel is archived'}. It is hidden from New video; existing videos are untouched. ${f.archived ? button('Restore format', 'unarchiveFormat', 'small') : button('Restore channel', 'unarchiveChannel', 'small')}</p>` : ''}
+      ${archived ? `<p class="notice">${f.archived ? 'This format is archived' : 'Its style is archived'}. It is hidden from New video; existing videos are untouched. ${f.archived ? button('Restore format', 'unarchiveFormat', 'small') : button('Restore style', 'unarchiveChannel', 'small')}</p>` : ''}
       <div class="vf-tabs" role="tablist" aria-label="Format sections">
         ${tabs.map(([key, label]) => `<button type="button" role="tab" class="vf-tab" data-tab="${key}" aria-selected="${tab === key}" aria-controls="vfTabBody">${esc(label)}</button>`).join('')}
       </div>
@@ -1257,7 +1262,7 @@ export async function renderLearning(root, { makeChat, startVideo, channelId, ba
 
   async function archiveFormat(archive) {
     const f = view.format;
-    if (archive && !await confirmBox({ title: `Archive ${f.name}?`, text: 'It is hidden from the channel’s formats and New video, and its generated skill is unpublished. Nothing is deleted, existing videos are untouched, and you can restore it with Show archived.', ok: 'Archive format' })) return;
+    if (archive && !await confirmBox({ title: `Archive ${f.name}?`, text: 'It is hidden from the style’s formats and New video, and its generated skill is unpublished. Nothing is deleted, existing videos are untouched, and you can restore it with Show archived.', ok: 'Archive format' })) return;
     warn(await api(`${E}/formats/${f.id}/${archive ? 'archive' : 'unarchive'}`, { expected: f.revision || 1 }), archive ? `${f.name} archived.` : `${f.name} restored.`);
     if (archive) { fid = null; sid = null; talking = false; }
     await paint();

@@ -12,6 +12,11 @@ const hash = (s) => createHash('sha256').update(s).digest('hex');
 const json = (v) => JSON.stringify(v);
 const parse = (r) => r && JSON.parse(r.data);
 const fail = (s) => { throw new Error(s); };
+const describe = (d) => {
+  if (d == null || d === '') return { description: '' };
+  if (typeof d !== 'string' || d.length > 200) fail('A description can be at most 200 characters.');
+  return { description: d.replace(/\s+/g, ' ').trim() };
+};
 const text = (s, max = 200) => typeof s === 'string' && s.trim() && s.length <= max ? s.trim() : fail(`Enter text between 1 and ${max} characters.`);
 const focusAreas = ['scripting','pacing','visuals','captions','sound','knowledge'];
 export const FOCUS_AREAS = focusAreas;
@@ -134,7 +139,10 @@ export class LearningStore {
       versions: this.list('versions').map(({ package: ignored, ...v }) => v),
     };
   }
-  profile(name) { return this.put('profiles', { id: id(), name: text(name), revision: 1, created: now() }); }
+  // A style's optional one-line description (design V2 §5): up to 200 characters, '' clears it.
+  profile(name, description = '') {
+    return this.put('profiles', { id: id(), name: text(name), ...describe(description), revision: 1, created: now() });
+  }
   format(profileId, name, type, targetSeconds = 0) {
     const profile = this.get('profiles', profileId);
     if (profile.archived) fail('This channel is archived. Restore it before adding formats.');
@@ -151,9 +159,10 @@ export class LearningStore {
       return this.update(table, bump(item));
     });
   }
-  updateProfile(profileId, { expected, name } = {}) {
+  updateProfile(profileId, { expected, name, description } = {}) {
     return this.changeRecord('profiles', profileId, expected, 'This channel', (p) => {
       if (name !== undefined) p.name = text(name);
+      if (description !== undefined) Object.assign(p, describe(description));
     });
   }
   archiveProfile(profileId, expected, archived = true) {

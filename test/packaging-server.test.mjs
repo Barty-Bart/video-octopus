@@ -177,7 +177,7 @@ test('Packaging end to end with a fake Codex: Generate → 6 cards, refine → 1
   await upload(`project:${other}`, 'beta-shot.png', '&kind=image');
   assert.equal((await s.req(`/api/resources/upload?scope=global&name=x.png&kind=photo`, null, { raw: png(4, 4, () => [0, 0, 0]) })).status, 400, 'a photo must say who is in it');
   let view = await s.ok(P);
-  assert.deepEqual(view.resources.map((l) => l.label), ['All channels', 'Channel: Alpha channel', 'This video']);
+  assert.deepEqual(view.resources.map((l) => l.label), ['All styles', 'Style: Alpha channel', 'This video']);
   const names = view.resources.flatMap((l) => l.items.map((r) => r.name)).sort();
   assert.deepEqual(names, ['alpha-logo.png', 'friend.png', 'me.png', 'screenshot.png']);
   assert.equal(view.resources[0].items.find((r) => r.name === 'friend.png').attachable, false);
@@ -296,5 +296,5 @@ test('Packaging says why it cannot draw when Codex is not on a ChatGPT plan', as
   assert.match(view.status.reason, /local model/);
   const refused = await s.req(`/api/packaging/${vid}/generate`, {});
   assert.equal(refused.status, 409);
-  assert.deepEqual(view.resources.map((l) => l.label), ['All channels', 'This video'], 'a video without a channel has two levels');
+  assert.deepEqual(view.resources.map((l) => l.label), ['All styles', 'This video'], 'a video without a channel has two levels');
 });

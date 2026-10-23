@@ -72,7 +72,7 @@ export async function styleSection(host, { id, getP, onChange }) {
   const missing = cur && !styles.some((s) => s.name === cur);
   const sec = h(`<section class="kit-style"><h3>Legacy style</h3>
     <select class="field small" aria-label="This project's style"><option value="">No style</option>${styles.map((s) => `<option value="${esc(s.name)}"${s.name === cur ? ' selected' : ''}>${esc(s.name)}</option>`).join('')}${missing ? `<option value="${esc(cur)}" selected>${esc(cur)} (missing)</option>` : ''}</select>
-    <p class="sub">${cur && !missing ? esc(styles.find((s) => s.name === cur)?.note || '') : styles.length ? 'Claude reads the style when it edits and writes for this project.' : 'No legacy styles.'} <a href="#/channel/_/formats">${TERMS.formats}</a></p></section>`);
+    <p class="sub">${cur && !missing ? esc(styles.find((s) => s.name === cur)?.note || '') : styles.length ? 'Claude reads the style when it edits and writes for this project.' : 'No legacy styles.'} <a href="#/style/_/formats">${TERMS.formats}</a></p></section>`);
   $('select', sec).onchange = async (e) => {
     try {
       await api(`/api/projects/${encodeURIComponent(id)}/style`, { style: e.target.value });
@@ -143,7 +143,7 @@ async function uploadFile(file, { kind, style, note }, onProgress) {
 }
 
 // ---------- New style from samples ----------
-export function newStyleDialog() { location.hash='#/channel/_/formats'; }
+export function newStyleDialog() { location.hash='#/style/_/formats'; }
 
 // ---------- the Library's Claude (side panel) ----------
 function makeMiniChat(box, onFiles) {
@@ -387,7 +387,7 @@ export function renderLibrary(main, side) {
       <div class="style-md">Loading…</div>
       <div class="actions"><button class="btn" data-a="reveal">Show in ${fileManager()}</button><button class="btn primary" data-a="x">Close</button></div></div>`);
     modal.replaceChildren(d); modal.hidden = false;
-    const reuse=h('<button class="btn primary">Use notes as an example</button>');reuse.onclick=()=>{modal.hidden=true;location.hash='#/channel/_/formats?legacyStyle='+encodeURIComponent(it.name);};d.append(reuse);
+    const reuse=h('<button class="btn primary">Use notes as an example</button>');reuse.onclick=()=>{modal.hidden=true;location.hash='#/style/_/formats?legacyStyle='+encodeURIComponent(it.name);};d.append(reuse);
     const close = () => { modal.hidden = true; };
     $('.np-x', d).onclick = close; $('[data-a=x]', d).onclick = close;
     modal.onclick = (e) => { if (e.target === modal) close(); };

@@ -1,3 +1,14 @@
+# v0.1.0-beta.14
+
+- **Themes.** Appearance is now Light, Dark or Match system, with four accent colours (orange, blue, green, violet), replacing the ten looks. Your previous look is mapped automatically on first start (light looks → Light, dark looks → Dark, the default → Match system) and a one-time note says so. A light/dark switch sits in page headers. Unused looks and font families were removed.
+- **Sidebar.** A slimmer rail you can collapse to icons (remembered), with Projects, Recordings, My styles and Tools; **Ask Claude** is a rail button (⌘J) instead of the floating pill.
+- **Projects home.** A Continue banner with a real frame from your latest video and its next step, a "waiting for you" strip, and large thumbnail tiles you can filter by style.
+- **Styles.** What were channels are now called styles throughout the app (My styles, each with Formats · Brand · Memories). Old links keep working. Styles can have a short description.
+- **New video opens straight away** as "Untitled video" with your last style and format, and asks how to start: Record now, Drop footage, or Idea & thumbnail first (Packaging). Switch style or format from the editor's top bar (after Build, only formats with the same video setup). Claude names the video once you describe it, or your Packaging working title does; a name you set yourself is never replaced.
+- **Settings** in six groups (General, Agent, Recording, Editing & sound, Export, Storage) with search; old settings links land in the right place.
+
+Verified with 327 unit tests on Node 24.22.1 and 22.22.1, the format-skill and learning runtimes, and disposable browser checks in light, dark and system at 1440, 980 and 375 px. Not run: e2e suites, Windows UI, real-provider naming. This is a source update on main; the downloadable tagged prerelease remains separate.
+
 # v0.1.0-beta.13
 
 - **Packaging (first version).** An optional **Package** stage comes first on each video's rail and never blocks the rest. Its Packaging tab has a Codex chat (on your ChatGPT plan) that knows the video's memories and resources.

@@ -32,7 +32,7 @@ export async function appPage(hash, ctx) {
   if (askAvailable && drawerWasOpen(page)) setTimeout(() => { if (page === pageKey(location.hash)) openDrawer(); }, 0);
   if (hash.startsWith('#/settings')) return settingsPage(hash);
   if (hash === '#/setup') return setupPage(ctx, { back: backTo, assistantPanel });
-  // Channel pages (#/channel…, #/channels…) stay behind this gate, like Home (Direction A decision 6).
+  // Style pages (#/style…, #/styles…) stay behind this gate, like Home (Direction A decision 6).
   if (!hash.startsWith('#/p/') && !hash.startsWith('#/recordings') && !hash.startsWith('#/skills')) {
     // First time (or no studio folder yet): Setup opens by itself, until it's finished or skipped this session.
     const st = await api('/api/app/setup').catch(() => null);
@@ -723,11 +723,11 @@ const DRAW = {
     drawColors();
     return frag(
       group('Video defaults',
-        row('Formats', 'For pacing, captions, storytelling and format-specific visual rules, use a channel’s formats. Review the scene plan before applying those rules to a video.', h(`<a class="btn small" href="${channelHref('_', 'formats')}">Open formats</a>`)),
+        row('Formats', 'For pacing, captions, storytelling and format-specific visual rules, use a style’s formats. Review the scene plan before applying those rules to a video.', h(`<a class="btn small" href="${channelHref('_', 'formats')}">Open formats</a>`)),
         row('Background', 'Behind the picture in the picture-in-picture, Boxed and Split layouts.', sw),
         row('Picture-in-picture frame', '', seg([['rounded', 'Rounded'], ['circle', 'Circle'], ['frame', 'Whole frame']], l.pip, (x) => save('look', { pip: x }).then(redraw)))),
-      group('Channel brand',
-        row('Colours, fonts and brand assets', 'Set these in each channel’s Brand tab. New video loads the channel’s approved brand; these global video controls do not replace it.', h(`<a class="btn small" href="${channelHref('_', 'brand')}">Open the Brand tab</a>`))),
+      group('Style brand',
+        row('Colours, fonts and brand assets', 'Set these in each style’s Brand tab. New video loads the style’s approved brand; these global video controls do not replace it.', h(`<a class="btn small" href="${channelHref('_', 'brand')}">Open the Brand tab</a>`))),
     );
   },
 };

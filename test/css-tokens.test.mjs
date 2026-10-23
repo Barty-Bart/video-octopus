@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const FILES = ['web/style.css', 'web/shell.css', 'web/memory.css', 'web/learning.css', 'web/packaging.css', 'web/onboarding.css'];
+const FILES = ['web/style.css', 'web/shell.css', 'web/memory.css', 'web/learning.css', 'web/packaging.css', 'web/onboarding.css', 'web/home.css'];
 
 const THEME_SELECTOR = /^:root(\[data-(theme|accent)="[a-z]+"\])*$/;
 
@@ -61,4 +61,11 @@ test('the old looks are gone', () => {
   assert.doesNotMatch(html, /looks\.css/);
   const css = readFileSync(new URL('../web/style.css', import.meta.url), 'utf8');
   assert.doesNotMatch(css, /data-look/);
+});
+
+// Phase B screens were rewritten on the theme roles: no older alias names (--bg, --panel, --muted…) in home.css.
+test('home.css uses the theme roles, not the older alias names', () => {
+  const css = readFileSync(new URL('../web/home.css', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const aliases = ['bg', 'panel', 'panel-2', 'panel-3', 'seg', 'muted', 'faint', 'ok', 'warn', 'bad', 'accent-ink', 'accent-hi', 'accent-line', 'accent-wash', 'inverse', 'pop-bg', 'line-2', 'line-3'];
+  for (const name of aliases) assert.doesNotMatch(css, new RegExp(`var\\(--${name}\\)`), name);
 });

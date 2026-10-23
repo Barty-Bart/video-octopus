@@ -7,7 +7,7 @@ import { settings, readJSON, writeJSON, globExists, mtime, slugify, studioTool, 
 import { defaultLayout, cutMap } from '../web/layout.js';
 import { motionNote } from './skills-gh.mjs';
 import { needsYou, lockState } from './cutreview.mjs';
-import { builtEnd, isBuilt } from './built.mjs'; // (functions only: built.mjs imports this module too)
+import { builtEnd, isBuilt, EXPORT_NAME } from './built.mjs'; // (read at call time only: built.mjs imports this module too)
 
 const VIDEO = /\.(mov|mp4|m4v|mkv|webm)$/i;
 // Sound-only files: they need no playback copy (the browser plays them) and have no picture. Only the recorder's
@@ -165,9 +165,13 @@ export function listProjects() {
       const id = basename(dir);
       const status = meta ? pipelineStatus(dir, meta.type) : null;
       const next = status?.steps.find((s) => s.id === status.next);
+      // The stage the video is at, as Home's Continue hero says it: "Step 3 of 6 · Cut".
+      const stages = status?.stages || [];
+      const at = stages.findIndex((x) => x.current);
       return {
         id,
         name: meta?.name || id,
+        nameSource: meta?.nameSource === 'auto' ? 'auto' : 'manual',
         type: formatId(meta?.type),
         updated: Math.max(mtime(dir), mtime(join(dir, 'work')), mtime(join(dir, 'WORKLOG.md'))),
         next: next ? next.name : null,
@@ -176,10 +180,22 @@ export function listProjects() {
         steps: status ? status.steps.map((s) => s.name) : null,
         // notes and changes waiting in the change package (Home's "waiting for you")
         waiting: (readJSON(join(dir, 'work', 'notes.json'), null)?.notes || []).filter((n) => n?.status === 'open').length,
+        stage: at >= 0 ? stages[at].name : null,
+        stageIndex: at >= 0 ? at + 1 : null,
+        stageCount: stages.length || null,
+        // A finished video in renders/ (Home's "Exported" badge), and whether the project has a take yet.
+        exported: (() => { try { return readdirSync(join(dir, 'renders')).some((f) => EXPORT_NAME.test(f)); } catch { return false; } })(),
+        hasTake: (meta?.takes || []).length > 0 || hasVideo(join(dir, 'source')),
         app: Boolean(meta),
       };
     })
     .sort((a, b) => (b.app - a.app) || (b.updated - a.updated));
+}
+
+// A take file (video or sound) straight inside a folder; dot files and partial copies don't count.
+function hasVideo(folder) {
+  const re = /\.(mp4|mov|m4v|mkv|webm|wav|m4a|mp3|aif|aiff|caf|flac)$/i;
+  try { return readdirSync(folder).some((f) => !f.startsWith('.') && !f.endsWith('.part') && re.test(f)); } catch { return false; }
 }
 
 // A project id is never given to a new project while something still belongs to it: an archived folder, or (through
@@ -190,7 +206,8 @@ let idInUse = () => false;
 export const setProjectIdCheck = (fn) => { idInUse = typeof fn === 'function' ? fn : () => false; };
 const projectIdTaken = (root, id) => existsSync(join(root, id)) || existsSync(join(root, '_archive', id)) || idInUse(id);
 
-export function createProject(name, type, style) {
+// extra: more project.json fields, e.g. { nameSource: 'auto' } for a video made as "Untitled video" (server/naming.mjs).
+export function createProject(name, type, style, extra = {}) {
   const formats = PIPELINES().formats;
   type = formatId(type);
   if (!formats[type]) throw new Error('Unknown project type');
@@ -205,7 +222,7 @@ export function createProject(name, type, style) {
   const today = new Date().toISOString().slice(0, 10);
   writeFileSync(join(dir, 'WORKLOG.md'),
     `# ${name}\n\nType: ${formats[type].label}${style ? ` (${styles.find((x) => x.id === style).label})` : ''}\nStarted: ${today} (Video Octopus app)\n\n## Log\n`);
-  saveProjectMeta(dir, { name, type, ...(style ? { shortStyle: style } : {}), created: today, takes: [], layout: defaultLayout(type) });
+  saveProjectMeta(dir, { name, type, ...(style ? { shortStyle: style } : {}), created: today, takes: [], layout: defaultLayout(type), ...extra });
   return id;
 }
 

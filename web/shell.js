@@ -1,5 +1,5 @@
 // The app shell (design V2 §2): the rail every non-project page shares, Settings included.
-// Top to bottom: logo · New video · Projects · Recordings · ─ · Channels · ─ · Tools: Library, Skills, Scheduled ·
+// Top to bottom: logo · New video · Projects · Recordings · ─ · My styles · ─ · Tools: Library, Skills, Scheduled ·
 // Ask Claude (⌘J) · Settings · the collapse toggle. Two widths: icons only (68px) or icons and names (232px),
 // settings appearance.sidebar, mirrored in localStorage so the early script in index.html sets <html data-rail>
 // before the first paint. At 980px and narrower it becomes a top bar with a Menu button that opens the rail, with
@@ -35,7 +35,7 @@ export function channelAvatar(channel, size = '') {
 
 const PAGE_NAMES = {
   projects: 'Projects', recordings: 'Recordings', library: 'Library', skills: 'Skills', scheduled: 'Scheduled',
-  channels: `All ${TERMS.channels.toLowerCase()}`, settings: 'Settings',
+  styles: TERMS.myStyles, settings: 'Settings',
 };
 
 // The Ask Claude button's tooltip: the agent and, on a Claude plan, its usage (the old sidebar card's contents).
@@ -63,7 +63,7 @@ export function sidebarMarkup({ active, counts = {}, takes = [], agent = null, f
     ? dot(`${counts.skillUpdates} core update${counts.skillUpdates === 1 ? '' : 's'} to review`) : '';
   const settingsDot = counts.update ? dot('A new version of Video Octopus is ready (Settings › General › Updates)') : '';
   const askWarn = agent && !agent.ok ? dot(`${agent.name || 'The agent'}: ${agent.sub || 'needs attention'}`, 'warn') : '';
-  const channelsOn = active.page === 'channels' || active.page === 'channel';
+  const stylesOn = active.page === 'styles' || active.page === 'style';
   const expanded = !forceIcons && currentAppearance().sidebar !== 'icons';
   return `<nav class="side-nav shell-nav${forceIcons ? ' force-icons' : ''}" id="shellNav" aria-label="Video Octopus">
       <div class="shell-nav-top">
@@ -74,7 +74,7 @@ export function sidebarMarkup({ active, counts = {}, takes = [], agent = null, f
       ${item('projects', '#/', 'Projects', 'projects')}
       ${item('recordings', '#/recordings', 'Recordings', 'recordings', recordingsDot)}
       <hr class="nav-sep">
-      <a class="nav-i${channelsOn ? ' on' : ''}" href="#/channels" data-tip="${esc(TERMS.channels)}"${channelsOn ? ' aria-current="page"' : ''}>${icon('layers', RAIL_ICON)}<span class="ni-t">${esc(TERMS.channels)}</span></a>
+      <a class="nav-i${stylesOn ? ' on' : ''}" href="#/styles" data-tip="${esc(TERMS.myStyles)}"${stylesOn ? ' aria-current="page"' : ''}>${icon('layers', RAIL_ICON)}<span class="ni-t">${esc(TERMS.myStyles)}</span></a>
       <hr class="nav-sep">
       <div class="nav-gl" aria-hidden="true">Tools</div>
       ${item('library', '#/library', 'Library', 'library', libraryDot)}
@@ -96,7 +96,7 @@ export function topBarMarkup(pageName) {
     </header>
     <div class="shell-scrim" data-shell-scrim hidden></div>`;
 }
-export const pageName = (active, channelName) => (active.page === 'channel' ? channelName || TERMS.channel : PAGE_NAMES[active.page] || 'Projects');
+export const pageName = (active, styleName) => (active.page === 'style' ? styleName || TERMS.channel : PAGE_NAMES[active.page] || 'Projects');
 
 // The rail's tooltips: with icons only, every item names itself on hover and keyboard focus; Ask Claude always shows
 // its agent and usage. One floating label on <body>, so the rail's own scrolling never clips it.

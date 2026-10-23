@@ -249,8 +249,8 @@ export class PackagingStore extends ProfileStore {
     this.syncFolder(safeFile(root, 'resources'), files);
     const levelName = (scope) => {
       const p = parseScope(scope);
-      if (p.level === 'global') return 'All channels';
-      if (p.level === 'profile') return `Channel: ${ids.profileId ? this.get('profiles', ids.profileId).name : ''}`;
+      if (p.level === 'global') return 'All styles';
+      if (p.level === 'profile') return `Style: ${ids.profileId ? this.get('profiles', ids.profileId).name : ''}`;
       if (p.level === 'format') return 'Format';
       return 'This video';
     };

@@ -93,6 +93,15 @@ export function trackTurns(id, chat, { broadcast }) {
   });
 }
 
+// A change Video Octopus itself makes to a window file while a turn runs (an automatic name from the agent's own reply,
+// server/naming.mjs) is not the agent's change: it goes into the turn's "before" as well, so Undo neither offers it nor
+// puts the old name back. patch: the top-level JSON fields that changed.
+export function keepInTurn(id, rel, patch) {
+  const t = turns.get(id);
+  if (typeof t?.before?.[rel] !== 'string') return;
+  try { t.before[rel] = JSON.stringify({ ...JSON.parse(t.before[rel]), ...patch }, null, 2) + '\n'; } catch { /* not JSON: leave it */ }
+}
+
 // The unfinished step the page shows, while that step still isn't done.
 export function unfinishedOf(id, pipeline) {
   const u = state().projects?.[id]?.unfinished;

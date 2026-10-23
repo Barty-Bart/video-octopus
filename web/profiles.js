@@ -5,7 +5,7 @@ const run=fn=>async e=>{const b=e?.currentTarget;if(b)b.disabled=true;try{await 
 function brandFields(b={},assets=[]){return ['identity','audience','voice','fonts','notes'].map(k=>field(({identity:'Brand identity and offering',audience:'Audience',voice:'Voice and tone',fonts:'Fonts',notes:'Brand guidance and uncertainties'})[k],k,b[k]||'')).join('')+field('Colours (hex codes, separated by commas)','colors',(b.colors||[]).join(', '))+`<fieldset><legend>Assets included in this brand version</legend>${assets.map(a=>`<label class="learn-check"><input type="checkbox" name="asset-${a.id}"${b.assets?.includes(a.id)?' checked':''}>${esc(a.name)}</label>`).join('')||'<p class="sub">Upload logos, images or fonts below.</p>'}</fieldset>`;}
 const values=(form,sources)=>{const v=Object.fromEntries(new FormData(form));return {...Object.fromEntries(['identity','audience','voice','fonts','notes'].map(k=>[k,v[k]||''])),colors:(v.colors||'').split(',').map(x=>x.trim()).filter(Boolean),assets:Object.keys(v).filter(k=>k.startsWith('asset-')).map(k=>k.slice(6)),sources:sources||[]};};
 const when = (iso) => { const d = new Date(iso); return Number.isNaN(+d) ? String(iso || '') : d.toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }); };
-// A channel's Brand tab (the channel hub, #/channel/<id>/brand): the approved brand, its assets, research and
+// A style’s Brand tab (the style hub, #/style/<id>/brand): the approved brand, its assets, research and
 // version history for one channel, as cards. New videos keep the version they were made with.
 // onBrandChange(profile) runs after a brand version is approved, saved or restored, so the hub's tab status, avatar
 // and sidebar can follow.
@@ -20,11 +20,11 @@ export function profileSettings({ makeChat, profileId, onBrandChange } = {}) {
   const data = await api('/api/profiles');
   if (!live) return;
   const p = data.profiles.find((x) => x.id === profileId);
-  if (!p) { root.innerHTML = '<div class="vo-card"><p class="learn-error">This channel no longer exists.</p></div>'; return; }
+  if (!p) { root.innerHTML = '<div class="vo-card"><p class="learn-error">This style no longer exists.</p></div>'; return; }
   const brand = p.brand?.brand || {};
   const lead = p.brand ? '' : `<section class="vo-card brand-lead">
     <h2>No brand yet</h2>
-    <p class="sub">Research a website or fill it in yourself. New videos in this channel load the approved brand.</p>
+    <p class="sub">Research a website or fill it in yourself. New videos in this style load the approved brand.</p>
     <div class="learn-actions"><button type="button" class="btn primary" data-go="research">Research a website</button><button type="button" class="btn" data-go="brand">Fill it in yourself</button></div>
    </section>`;
   const history = p.history.map((v) => `<li><span>${esc(when(v.created))} · ${esc(v.reason)}</span><button type="button" class="btn small" data-brand-version="${v.id}">Review version</button></li>`).join('');
@@ -36,7 +36,7 @@ export function profileSettings({ makeChat, profileId, onBrandChange } = {}) {
    </section>
    <section class="vo-card" aria-labelledby="assetsTitle">
     <div class="vo-card-head"><h2 id="assetsTitle">Images &amp; files</h2></div>
-    <p class="sub">Images and fonts you add at “This channel” can also be ticked in the brand above (save a brand version to include them).</p>
+    <p class="sub">Images and fonts you add at “This style” can also be ticked in the brand above (save a brand version to include them).</p>
     <div id="brandResources" class="rs-panel"></div>
    </section>
    <section class="vo-card" id="researchCard" aria-labelledby="researchTitle">
@@ -125,7 +125,7 @@ export function profileSettings({ makeChat, profileId, onBrandChange } = {}) {
    $('#approveBrand', el).onsubmit = run(async (e) => {
     e.preventDefault();
     await api(`/api/profile-research/${id}/approve`, { revision: proposal.revision, token: proposal.token, brand: values(e.target, proposal.brand.sources) });
-    toast('Approved for this channel.');
+    toast('Approved for this style.');
     await brandChanged();
    });
   });

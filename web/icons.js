@@ -19,6 +19,7 @@ const PATHS = {
   close: '<path d="M6 6l12 12M18 6L6 18"/>',
   search: '<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4-4"/>',
   back: '<path d="M14.5 6l-6 6 6 6"/>',
+  chevron: '<path d="M7 10l5 5 5-5"/>',
   check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
   portrait: '<rect x="7.5" y="3" width="9" height="18" rx="2"/>',
   landscape: '<rect x="3" y="7" width="18" height="10" rx="2"/>',

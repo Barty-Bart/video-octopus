@@ -124,12 +124,12 @@ export function mountResources(root, { profileId = null, project = null, onChang
     };
     const html = data.levels.map((l) => {
       if (l.videos) {
-        if (!l.videos.length) return `<div class="rs-level"><h3>${esc(l.label)}</h3><p class="sub">No videos in this channel yet. A video’s own resources are added in its Packaging tab, or here.</p></div>`;
+        if (!l.videos.length) return `<div class="rs-level"><h3>${esc(l.label)}</h3><p class="sub">No videos in this style yet. A video’s own resources are added in its Packaging tab, or here.</p></div>`;
         return `<div class="rs-videos"><h3>${esc(l.label)}</h3>${l.videos.map((v) => section(v, v.scope, v.name, v.items, 3)).join('')}</div>`;
       }
       return section(l, l.scope, l.label, l.items);
     }).join('');
-    root.innerHTML = `<p class="sub rs-lead">${project ? 'What Codex may use for this video. Changes reach it straight away.' : 'Photos of you, logos, shapes, reference thumbnails and style notes for Packaging. All channels reaches every video; this channel reaches its videos; a video’s own stay with it.'} Pictures marked “Someone else” are never sent to an image model.</p>${html}`;
+    root.innerHTML = `<p class="sub rs-lead">${project ? 'What Codex may use for this video. Changes reach it straight away.' : 'Photos of you, logos, shapes, reference thumbnails and style notes for Packaging. All styles reaches every video; this style reaches its videos; a video’s own stay with it.'} Pictures marked “Someone else” are never sent to an image model.</p>${html}`;
     root.querySelectorAll('form.rs-add').forEach((f) => wireAdd(f, changed));
     root.querySelectorAll('.rs-row').forEach((li) => {
       const r = all.find((x) => x.id === li.dataset.id);

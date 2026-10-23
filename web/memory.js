@@ -18,7 +18,7 @@ function keepFor(name, levels, selected) {
   const channelFirst = [...levels].sort((a, b) => (levelId(a) === 'global') - (levelId(b) === 'global'));
   const choices = channelFirst.map(level => {
     const id = levelId(level), global = id === 'global';
-    return `<label class="memory-keep-choice"><input type="radio" name="${esc(name)}" value="${esc(id)}"${id === selected ? ' checked' : ''}><span><b>${global ? 'Everything' : 'This channel'}</b><small>${global ? 'All channels' : esc(level.name)}</small></span></label>`;
+    return `<label class="memory-keep-choice"><input type="radio" name="${esc(name)}" value="${esc(id)}"${id === selected ? ' checked' : ''}><span><b>${global ? 'Everything' : 'This style'}</b><small>${global ? 'All channels' : esc(level.name)}</small></span></label>`;
   }).join('');
   return `<fieldset class="memory-keep"><legend>Keep for</legend><div class="memory-keep-choices">${choices}</div><p class="sub memory-hint">${hintHTML()}</p></fieldset>`;
 }
@@ -26,7 +26,7 @@ function keepFor(name, levels, selected) {
 function levelChip(m, names) {
   if (m.origin) return `<span class="memory-level from">${m.origin.kind === 'format' ? 'From a format' : 'From a video'}: ${esc(m.origin.name)}</span>`;
   if (m.scope === 'global') return '<span class="memory-level everything">Everything</span>';
-  return `<span class="memory-level channel">${esc(names.get(m.scope) || 'Channel')}</span>`;
+  return `<span class="memory-level channel">${esc(names.get(m.scope) || 'Style')}</span>`;
 }
 // Where a pending memory starts: where it was proposed when that is a level, otherwise its channel, otherwise Everything.
 function suggestedLevel(m) {
@@ -76,7 +76,7 @@ export async function renderMemories(root, { profileId = null, profileName = '',
   if (onlyChat && !embedded) scope = (await api(`${E}?chat=${encodeURIComponent(onlyChat)}`)).scope;
   if (!embedded) onlyChat = null;
   projectNames = new Map((await api('/api/projects').catch(() => [])).map(p => [p.id, p.name]));
-  const levelName = () => profileId ? profileName || 'this channel' : 'Everything';
+  const levelName = () => profileId ? profileName || 'this style' : 'Everything';
   const reload = async () => {
     data = await api(profileId ? `${E}?profile=${encodeURIComponent(profileId)}` : `${E}?scope=${encodeURIComponent(scope)}`);
     // A channel also uses every approved Everything memory; they are shown read-only here and edited in All channels.
@@ -92,8 +92,8 @@ export async function renderMemories(root, { profileId = null, profileName = '',
     ];
     const tabBar = `<div class="seg mem-tabs scroll-row" role="group" aria-label="Memory views">${tabs.map(([key, label, n]) => `<button type="button" data-tab="${key}" class="${tab === key ? 'on' : ''}" aria-pressed="${tab === key}">${esc(label)}${n ? ` <span class="pill accent">${n}</span>` : n === 0 ? ' <span class="seg-n">0</span>' : ''}</button>`).join('')}</div>`;
     const intro = profileId
-      ? `<p class="sub">Lessons for every video in ${esc(levelName())}. They win over an <a href="#/channels/memories">Everything</a> memory on the same topic. A format’s style belongs in <a href="${channelHref(profileId, 'formats')}">its rules</a>; notes about one video stay in that video’s chat.</p>`
-      : `<p class="sub">Two levels: <b>Everything</b> reaches every channel and video; <b>This channel</b> reaches every video in that channel and wins when both cover the same topic. A format’s style belongs in its rules, and notes about one video stay in that video’s chat. Your current request and pinned project setup take precedence.</p>`;
+      ? `<p class="sub">Lessons for every video in ${esc(levelName())}. They win over an <a href="#/styles/memories">Everything</a> memory on the same topic. A format’s style belongs in <a href="${channelHref(profileId, 'formats')}">its rules</a>; notes about one video stay in that video’s chat.</p>`
+      : `<p class="sub">Two levels: <b>Everything</b> reaches every style and video; <b>This style</b> reaches every video in that style and wins when both cover the same topic. A format’s style belongs in its rules, and notes about one video stay in that video’s chat. Your current request and pinned project setup take precedence.</p>`;
     const head = embedded
       ? `<div class="tab-head"><div>${intro}</div><button class="btn primary" data-add>+ Memory</button></div>`
       : `<div class="home-head"><h1>Memories</h1><button class="btn primary" data-add>+ Memory</button></div><p>Preferences that carry into your next video. Review proposed lessons, choose where each one applies, and keep only what helps.</p>${intro}<label>Applies to<select data-scope>${options(data.scopes, scope)}</select></label>`;
@@ -148,9 +148,9 @@ export async function renderMemories(root, { profileId = null, profileName = '',
     }
     // Everything memories a channel inherits: read-only here, with a link to where they are edited.
     if (tab === 'approved' && inherited.length) {
-      list.append(h(`<h3 class="mem-sub">From Everything <span class="sub">· used by every channel</span></h3>`));
+      list.append(h(`<h3 class="mem-sub">From Everything <span class="sub">· used by every style</span></h3>`));
       for (const m of inherited) {
-        list.append(h(`<article class="memory-card inherited"><div class="memory-head"><p class="memory-text">${esc(m.text)}</p><a class="memory-level everything" href="#/channels/memories" title="Edit in All channels › Memories">Everything</a></div><p class="sub">${esc(m.key)}</p></article>`));
+        list.append(h(`<article class="memory-card inherited"><div class="memory-head"><p class="memory-text">${esc(m.text)}</p><a class="memory-level everything" href="#/styles/memories" title="Edit in My stynnels › Memories">Everything</a></div><p class="sub">${esc(m.key)}</p></article>`));
       }
     }
   };
@@ -179,7 +179,7 @@ export async function renderMemories(root, { profileId = null, profileName = '',
   // Approved: the text and its level; an older format/video memory offers Move to channel up front.
   function approvedCard(m, names, act) {
     const moves = m.levels.filter(l => l.scope !== m.scope);
-    const moveButton = l => `<button class="btn${m.origin ? '' : ' ghost small'}" data-move="${esc(l.scope)}">${l.scope === 'global' ? 'Move to everything' : 'Move to channel'}</button>`;
+    const moveButton = l => `<button class="btn${m.origin ? '' : ' ghost small'}" data-move="${esc(l.scope)}">${l.scope === 'global' ? 'Move to everything' : 'Move to style'}</button>`;
     const upFront = m.origin ? moves.filter(l => l.scope !== 'global').map(moveButton).join('') : '';
     const inMenu = moves.filter(l => !m.origin || l.scope === 'global').map(moveButton).join('');
     const card = h(`<article class="memory-card"><div class="memory-head"><p class="memory-text">${esc(m.text)}</p>${levelChip(m, names)}</div><p class="sub">${esc(m.key)} · revision ${m.revision} · ${esc(m.source === 'agent' ? 'Agent proposal' : 'Saved by you')} · ${esc(new Date(m.updated).toLocaleString())}</p><div class="learn-actions">${upFront}<details class="memory-menu"><summary class="btn ghost small">Options</summary><div class="memory-menu-items">${inMenu}<button class="btn ghost small" data-history>History</button><button class="btn ghost small" data-edit>Edit</button><button class="btn ghost small" data-op="expire">Expire</button><button class="btn ghost small" data-op="forget">Forget</button></div></details></div><div data-detail></div></article>`);
