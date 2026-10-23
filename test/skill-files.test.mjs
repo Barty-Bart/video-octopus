@@ -191,7 +191,9 @@ test('limits: 300 files per skill and 1 GB per file (sparse files, nothing large
   const big = join(dir, 'work/assets/huge.mov');
   writeFileSync(big, '');
   truncateSync(big, MAX_SKILL_FILE_BYTES + 1);
-  assert.ok(statSync(big).blocks * 512 < 1024 * 1024, 'sparse: no real gigabyte written');
+  // Windows reports no block count (and NTFS doesn't make truncated files sparse), so only check where it can be read.
+  const { blocks } = statSync(big);
+  if (typeof blocks === 'number') assert.ok(blocks * 512 < 1024 * 1024, 'sparse: no real gigabyte written');
   writeDraft(store, s, { rules: [rule(s)], workflow: 'Plan.', assets: [{ file: 'work/assets/huge.mov' }] });
   assert.throws(() => store.proposal(s.id), /larger than 1 GB/);
   // The Add files path refuses it too, before staging.

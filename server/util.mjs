@@ -93,6 +93,28 @@ function replaceWith(tmp, path, text) {
   writeFileSync(path, text);
 }
 
+// Moving a folder that a process just used: on Windows the folder stays locked until the process has really exited,
+// and a virus scanner or indexer can hold it a moment longer (EBUSY, EPERM or EACCES). Wait, then retry for about
+// three seconds in all before giving up with the original error.
+export async function renameFolder(from, to) {
+  for (let wait = 50; ; wait *= 2) {
+    try { return renameSync(from, to); }
+    catch (e) {
+      if (!LOCKED.has(e.code) || wait > 1600) throw e;
+      await new Promise((r) => setTimeout(r, wait));
+    }
+  }
+}
+
+// Resolves once a child process has exited (at once if it already has), or after `ms` if it hangs on.
+export function processExited(proc, ms = 5000) {
+  if (!proc || proc.exitCode !== null || proc.signalCode !== null) return Promise.resolve();
+  return new Promise((done) => {
+    const timer = setTimeout(done, ms);
+    proc.once('exit', () => { clearTimeout(timer); done(); });
+  });
+}
+
 // ---- request bodies ----
 // An error a route answers with its own HTTP status: the routes' catches send `e.status || 400` (or 500).
 export const httpError = (status, message) => Object.assign(new Error(message), { status });

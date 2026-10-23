@@ -4,7 +4,7 @@ import { createReadStream, existsSync, statSync, readdirSync, watch, renameSync,
 import { homedir } from 'node:os';
 import { join, extname, relative, basename, dirname, sep } from 'node:path';
 import { createSceneSandbox, sandboxOrigin } from './generated-sandbox.mjs';
-import { settings, saveSettings, inside, readJSON, writeJSON, readJSONBody, expandHome, reveal, state, patchState, setProjectState, mtime, APP_DIR, LOCAL_DIR } from './util.mjs';
+import { settings, saveSettings, inside, readJSON, writeJSON, readJSONBody, renameFolder, processExited, expandHome, reveal, state, patchState, setProjectState, mtime, APP_DIR, LOCAL_DIR } from './util.mjs';
 import { claudeInfo, ChatSession, forReplay } from './claude.mjs';
 import { makeChat, staleChat, foreignSession, enginesView, modelSourceView, engineName, agentStatus, ENGINES } from './engines.mjs';
 import { listProjects, createProject, projectDir, projectMeta, saveProjectMeta, listTakes, importTake, importTakeFrom, makeProxies,
@@ -434,7 +434,7 @@ async function route(req, res) {
       const aid = String(b.id || '');
       if (!/^[\w.-]+$/.test(aid) || aid.startsWith('.') || !existsSync(join(arch, aid))) return send(res, 400, { error: 'No such archived project.' });
       if (existsSync(join(projectsRoot(), aid))) return send(res, 400, { error: `A project called ${aid} exists already.` });
-      renameSync(join(arch, aid), join(projectsRoot(), aid));
+      await renameFolder(join(arch, aid), join(projectsRoot(), aid));
       return send(res, 200, { restored: aid });
     }
     return send(res, 400, { error: 'Unknown archive action' });
@@ -764,8 +764,11 @@ async function route(req, res) {
     watchers.get(id)?.close(); watchers.delete(id);
     // The live chat stops with it: its process must not keep working (or be continued) in a folder that moved.
     // Its saved session, log and database rows stay under this id for a restore (ids are never reused).
+    // On Windows its folder stays locked until the process has exited, so wait for that before moving it.
+    const proc = chats.get(id)?.proc;
     chats.get(id)?.kill(); chats.delete(id); stepRuns.delete(id);
-    renameSync(dir, to);
+    await processExited(proc);
+    await renameFolder(dir, to);
     return send(res, 200, { archived: to });
   }
   if (action === '/rename') {

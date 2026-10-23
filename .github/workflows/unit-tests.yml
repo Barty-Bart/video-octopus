@@ -20,10 +20,10 @@ jobs:
         os: [macos-15, windows-2025]
         node: ['22.16.0', '24.x']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
       # test/windows-export.test.mjs runs real FFmpeg and ffprobe (it skips, visibly, without them). Neither runner
