@@ -2,7 +2,7 @@
 // the move of brand-asset blobs into the file store, the Codex image item mapping, cutting a contact sheet and the
 // board's rules. Synthetic studios and images only; no agent, model or network.
 //   node --test test/packaging.test.mjs
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, realpathSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -23,11 +23,15 @@ process.on('exit', () => rmSync(LOCAL, { recursive: true, force: true }));
 const { codexImage, imageSize, sheetBoxes, cutBoxes, fitThumbnail, usageLimitText, SHEET_GRID } = await import('../server/images.mjs');
 
 const sha = (b) => createHash('sha256').update(b).digest('hex');
+// Temporary studios are removed once every test has finished: a test's own after-hooks close its stores, and
+// Windows can't delete a folder while its SQLite file is still open (hooks run in the order they were added).
+const roots = [];
+after(() => { for (const root of roots) rmSync(root, { recursive: true, force: true }); });
 function studio(t) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'octopus-packaging-')));
   writeFileSync(join(root, 'CLAUDE.md'), 'Synthetic studio.');
   syncSkills({ studio: root, fresh: true });
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  roots.push(root);
   return root;
 }
 const open = (t, root) => { const s = new PackagingStore(root); t.after(() => { try { s.close(); } catch {} }); return s; };

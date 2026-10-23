@@ -3,7 +3,7 @@
 //   node --test test/packaging-server.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -286,7 +286,10 @@ test('Packaging end to end with a fake Codex: Generate → 6 cards, refine → 1
 test('Packaging says why it cannot draw when Codex is not on a ChatGPT plan', async (t) => {
   const s = await startServer(t, { engine: 'claude' });
   const vid = (await s.ok('/api/projects', { name: 'Plain video', type: 'short' })).id;
-  write(join(s.local, 'settings.json'), JSON.stringify({ ...JSON.parse(readFileSync(join(s.local, 'settings.json'), 'utf8')), claude: { engine: 'claude', codexProvider: 'ollama' } }));
+  // Replace the file in one step (write, then rename), as the app does: the running server may read it at any moment.
+  const settingsFile = join(s.local, 'settings.json');
+  write(`${settingsFile}.tmp`, JSON.stringify({ ...JSON.parse(readFileSync(settingsFile, 'utf8')), claude: { engine: 'claude', codexProvider: 'ollama' } }));
+  renameSync(`${settingsFile}.tmp`, settingsFile);
   await sleep(300);
   const view = await s.ok(`/api/packaging/${vid}`);
   assert.equal(view.status.available, false);
