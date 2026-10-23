@@ -219,3 +219,39 @@
 @media (min-width: 981px) {
   body:has(.vf3.talking .vf3-chat):not(:has(#modal:not([hidden]))) .ask-claude { right: calc(460px + 24px); }
 }
+
+/* ---- Files tab (skill assets and knowledge) and the Storage page's skill files ---- */
+.vf-files { display: grid; gap: 10px; }
+.vf-files-bar { display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap; }
+.vf-segs { display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: calc(var(--ctl-radius) * 7 / 9); background: var(--panel-2); }
+.vf-seg { padding: 4px 10px; border: 0; border-radius: calc(var(--ctl-radius) * 5 / 9); background: transparent; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
+.vf-seg.on { background: var(--panel); color: var(--text); font-weight: 600; box-shadow: 0 0 0 1px var(--line); }
+.vf-file-list { list-style: none; margin: 0; padding: 0; display: grid; }
+.vf-file { display: flex; align-items: center; gap: 10px; padding: 9px 4px; border-top: 1px solid var(--line-3); min-width: 0; }
+.vf-file:first-child { border-top: 0; }
+.vf-file.pending { background: color-mix(in srgb, var(--warn) 9%, var(--panel)); border-radius: 6px; }
+.vf-file.discarded { opacity: 0.6; }
+.vf-file-main { flex: 1; min-width: 0; display: grid; gap: 2px; line-height: 1.4; overflow-wrap: anywhere; }
+.vf-file-main small, .vf-file-note { font-size: 12px; color: var(--muted); }
+.vf-file-note { color: var(--text-2); }
+.vf-file-name { font-family: var(--mono); }
+.vf-file-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.vf-empty-files { padding: 6px 0; }
+.vf-empty-files p { margin: 6px 0 0; line-height: 1.5; }
+@container vfhome (max-width: 560px) {
+  .vf-file { flex-wrap: wrap; row-gap: 6px; }
+  .vf-file-main { flex-basis: 100%; }
+  .vf-file-actions { justify-content: flex-start; }
+}
+.storage-files { margin-top: 28px; display: grid; gap: 8px; }
+.storage-files h2 { margin: 0; font-size: 16px; }
+.storage-files h3 { margin: 12px 0 0; font-size: 14px; }
+.storage-files p { margin: 0; line-height: 1.5; overflow-wrap: anywhere; }
+.storage-files ul { margin: 6px 0 0; padding-left: 18px; }
+.storage-unused { list-style: none; padding: 0 !important; display: grid; max-height: 260px; overflow: auto; border: 1px solid var(--line-3); border-radius: 8px; }
+.storage-unused li { display: flex; justify-content: space-between; gap: 10px; padding: 6px 10px; border-top: 1px solid var(--line-3); overflow-wrap: anywhere; }
+.storage-unused li:first-child { border-top: 0; }
+.storage-unused small { color: var(--muted); white-space: nowrap; }
+.storage-backup { margin: 4px 0 0; }
+.storage-backup label { min-width: min(320px, 100%); }
+.storage-page { padding-bottom: 96px; }

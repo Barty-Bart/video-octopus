@@ -2,14 +2,14 @@
 import { createServer } from 'node:http';
 import { createReadStream, existsSync, statSync, readdirSync, watch, renameSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, extname, relative, basename, dirname } from 'node:path';
+import { join, extname, relative, basename, dirname, sep } from 'node:path';
 import { createSceneSandbox, sandboxOrigin } from './generated-sandbox.mjs';
 import { settings, saveSettings, inside, readJSON, writeJSON, readJSONBody, expandHome, reveal, state, patchState, setProjectState, mtime, APP_DIR, LOCAL_DIR } from './util.mjs';
 import { claudeInfo, ChatSession, forReplay } from './claude.mjs';
 import { makeChat, staleChat, foreignSession, enginesView, modelSourceView, engineName, agentStatus, ENGINES } from './engines.mjs';
 import { listProjects, createProject, projectDir, projectMeta, saveProjectMeta, listTakes, importTake, importTakeFrom, makeProxies,
   pipelineStatus, stepPrompt, formats, listSkills, roles, proxyName, sources, projectsRoot, probe, probeFile, formatId, formatInfo, isAudio, isTakeFile,
-  importUpload, lockedCut, appendWorklog, setSkipped, takeDuration } from './studio.mjs';
+  importUpload, lockedCut, appendWorklog, setSkipped, takeDuration, setProjectIdCheck } from './studio.mjs';
 import { openCutEditor, cutPlan, cutEditorRoute, closeAll } from './cuteditor.mjs';
 import { onProjectFiles, syncCutItem, retimeOnSave, syncDocItems, markPackageBase, cutTake, saveCut } from './cutsync.mjs';
 import { cutReviewRoute, markEdits } from './cutreview.mjs';
@@ -27,7 +27,7 @@ import { buildSteps, renderKind } from './built.mjs';
 import { appRoute } from './setup.mjs';
 import { onboardingRoute, ffmpegReady, setupBusy } from './onboarding.mjs';
 import { createStudio, defaultStudioPath } from './starter.mjs';
-import { profileRoute, profileBusy, killProfileResearch, createConfiguredProject, pinnedContext, profilePalette } from './profiles.mjs';
+import { profileRoute, profileBusy, killProfileResearch, createConfiguredProject, pinnedContext, profilePalette, projectIdHasRows, hasPinnedContext } from './profiles.mjs';
 import { memoryRoute } from './memory.mjs';
 import { learningRoute, learningProjectContext, projectLearning, guardLearnedStep, learningBusy, killLearning } from './learning.mjs';
 import { assistantRoute, killAssistant, assistantBusy } from './assistant.mjs';
@@ -64,6 +64,8 @@ setActivityProbe(() => [
   (setupBusy() || downloadsBusy()) && 'An installation or model download is running.',
 ].filter(Boolean));
 const streams = new Map(); // project id -> Set(res)
+// An archived project keeps its id with everything saved under it: its chat state and log, and its database rows.
+setProjectIdCheck((id) => Boolean(state().projects[id]) || existsSync(join(LOCAL_DIR, 'chats', `${id}.jsonl`)) || projectIdHasRows(id));
 const watchers = new Map();
 // Which ways of trimming at a cut are on, for the usage log (Settings → Editing: A always, B and C optional).
 const trimModes = () => { const e = section('editing'); return ['A', e.trimHighlight && 'B', e.trimLens && 'C'].filter(Boolean).join('+'); };
@@ -85,8 +87,10 @@ function chatFor(id) {
   if (staleChat(chats.get(id))) { chats.get(id).kill(); chats.delete(id); switched = true; }
   if (!chats.has(id)) {
     const chat = makeChat(id, () => projectContext(id));
-    // pi runs inside the project's folder: weaker models write paths like "work/x.json" relative to where they run.
-    // (Claude Code and Codex run in the studio folder, where they find its skills and notes; pi gets those passed in.)
+    // A project with a pinned setup (every project made since channel profiles) runs in its own folder on every agent,
+    // with its pinned skills passed in. A legacy project's Claude Code or Codex chat runs in the studio folder, where they
+    // find its skills and notes; pi always runs in the project's folder (weaker models write "work/x.json" relative to it).
+    // projectContext() tells the agent which of the two it is.
     chat.memoryBinding = { project: id };
     chat.projectScope = () => pinnedContext(id, projectDir(id));
     chat.cwd = () => (chat.projectScope() || chat.engine === 'pi') ? projectDir(id) || settings().studio : settings().studio;
@@ -116,8 +120,11 @@ function projectContext(id) {
   const src = dir ? roles(dir).take.map((f) => `source/${f}`).join(', ') : '';
   return [
     `You are the chat panel inside Video Octopus, the creator's local video editing app. Everything you do is for one project.`,
-    engineName() === 'pi' && dir ? `Your studio folder: ${s.studio}. Your working directory is this project's folder (${dir}): write project files by their path inside it (work/blocks.json, project.json).` : `Your studio folder (your working directory): ${s.studio}`,
-    `Project folder: ${dir ? relative(s.studio, dir) : id} (type: ${fmt})${src ? `; source files: ${src}` : ''}.`,
+    // The same choice as chatFor's chat.cwd: the project's folder when it has a pinned setup, or for pi.
+    dir && (engineName() === 'pi' || hasPinnedContext(id))
+      ? `Your working directory is this project's folder, ${dir}: write project files by their path inside it (work/blocks.json, project.json). The studio folder is ${s.studio}.`
+      : `Your working directory is the studio folder, ${s.studio}.`,
+    `Project folder: ${dir ? relative(s.studio, dir).split(sep).join('/') : id} (inside the studio; type: ${fmt})${src ? `; source files: ${src}` : ''}.`,
     `Recorder takes have a screen file and a webcam file that start together and carry the same microphone audio. A take can also be camera only (just <stamp>_webcam.mp4 from Video Octopus's recorder, or _webcam.mov in an older take, with the mic) or mic only (just <stamp>_audio.wav, 24-bit PCM, no picture: the canvas and the export show the layout's background under its sound; it can also be a block's file, e.g. a voiceover sponsor read).`,
     `Work inside the project folder: source/ for originals (never change them), work/ for intermediate files, renders/ for videos, WORKLOG.md for the log.`,
     `Don't write outside this project's folder (other projects, the studio's library, memory, notes and logs, anything else), except a file the studio's own instructions (its CLAUDE.md, AGENTS.md, skills) tell you to write; when you do, say so in your reply: which file, and why. In Auto mode Video Octopus asks the creator before a change outside the project anyway. Temporary files are fine anywhere temporary.`,
@@ -755,6 +762,9 @@ async function route(req, res) {
     let to = join(arch, id);
     for (let i = 2; existsSync(to); i++) to = join(arch, `${id}-${i}`);
     watchers.get(id)?.close(); watchers.delete(id);
+    // The live chat stops with it: its process must not keep working (or be continued) in a folder that moved.
+    // Its saved session, log and database rows stay under this id for a restore (ids are never reused).
+    chats.get(id)?.kill(); chats.delete(id); stepRuns.delete(id);
     renameSync(dir, to);
     return send(res, 200, { archived: to });
   }

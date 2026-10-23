@@ -1,9 +1,10 @@
 // SQLite owns skill versions and choices. Working files project them into ONE discoverable directory.
 import { defaultSkillSummary, validateSkillSummary } from './skill-summary.mjs';
 import { sqlSkillState, saveSkillSnapshot, stageSqlSkills, sqlSkillHistory, sqlLearnedSkillSummary } from './skill-db.mjs';
+import { projectedPaths, readProjectedManifest } from './file-store.mjs';
 // Deliberately standalone: importing this module performs no IO, starts no app and reads no user settings.
 import { existsSync, lstatSync, readdirSync, readFileSync, writeFileSync, mkdirSync, renameSync, rmSync,
-  copyFileSync, chmodSync, openSync, closeSync, fsyncSync } from 'node:fs';
+  copyFileSync, chmodSync, openSync, closeSync, fsyncSync, utimesSync, constants as fsConstants } from 'node:fs';
 import { resolve, join, dirname, relative, sep } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -36,8 +37,14 @@ const clone = (v) => JSON.parse(JSON.stringify(v));
 const GENERATED_ID = /^format\.[a-f0-9-]{36}$/;
 const GENERATED_NAME = /^format-[a-f0-9]{8}$/;
 let generatedSource = null;
+let generatedProjector = null;
 // The app registers the generator once (server/learning.mjs). Without it, existing generated publications are kept.
-export function registerGeneratedSkills(fn) { generatedSource = typeof fn === 'function' ? fn : null; }
+// project(studio, folders) clones file-store files (listed in a generated folder's manifest) into published folders;
+// those files are never part of a skill snapshot, so their bytes stay out of SQLite.
+export function registerGeneratedSkills(fn, { project = null } = {}) {
+  generatedSource = typeof fn === 'function' ? fn : null;
+  generatedProjector = typeof project === 'function' ? project : null;
+}
 const kindOf = (e) => e.mode === 'generated' ? 'format' : e.mode === 'custom' ? 'personal' : e.mode === 'override' ? 'customized-core' : 'core';
 const present = (p) => { try { return lstatSync(p); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } };
 
@@ -55,13 +62,17 @@ function safe(root, rel) {
 function tree(dir) {
   const out = {};
   let bytes = 0, count = 0;
-  const walk = (d) => {
+  // Files a generated skill lists as file-store projections are not skill content: they are left out here.
+  const walk = (d, skip = new Set()) => {
     if (!existsSync(d)) return;
+    const projected = withProjected(d, skip);
     for (const name of readdirSync(d).sort()) {
       if (name === '.DS_Store' || name === '__pycache__') continue;
-      const p = join(d, name), st = lstatSync(p);
+      const p = join(d, name);
+      if (projected.has(p)) continue;
+      const st = lstatSync(p);
       if (st.isSymbolicLink() || (!st.isFile() && !st.isDirectory())) throw new Error(`Unsupported skill file: ${p}. No files were replaced.`);
-      if (st.isDirectory()) walk(p);
+      if (st.isDirectory()) walk(p, projected);
       else {
         if (++count > 10000 || (bytes += st.size) > 128 * 1024 * 1024) throw new Error('Skill files exceed the safe update limit (10,000 files / 128 MB).');
         out[relative(dir, p).split(sep).join('/')] = { hash: hash(readFileSync(p)), executable: Boolean(st.mode & 0o111) };
@@ -82,15 +93,25 @@ function fingerprint(p) {
   if (st.isSymbolicLink()) throw new Error(`Refusing a symbolic link: ${p}`);
   return st.isDirectory() ? digest(p, true) : hash(readFileSync(p));
 }
-function copy(from, to) {
+// Absolute paths of file-store projections listed by dir's manifest, added to the ones inherited from its parents.
+function withProjected(dir, inherited) {
+  const own = projectedPaths(dir);
+  if (!own.size) return inherited;
+  const all = new Set(inherited);
+  for (const p of own) all.add(join(dir, ...p.split('/')));
+  return all;
+}
+function copy(from, to, skip = new Set()) {
+  if (skip.has(from)) return;
   const st = present(from);
   if (!st) return;
   if (st.isSymbolicLink()) throw new Error(`Refusing a symbolic link: ${from}`);
   if (st.isDirectory()) {
     mkdirSync(to, { recursive: true });
+    const projected = withProjected(from, skip);
     for (const name of readdirSync(from)) {
       if (name === '.DS_Store' || name === '__pycache__') continue;
-      copy(join(from, name), join(to, name));
+      copy(join(from, name), join(to, name), projected);
     }
   } else if (st.isFile()) {
     mkdirSync(dirname(to), { recursive: true }); copyFileSync(from, to); chmodSync(to, st.mode & 0o777);
@@ -227,6 +248,7 @@ function commit(studio, next, staged, before, reason, fault) {
   write(jp, j);
   for (let i = 0; i < TARGETS.length; i++) {
     const target = safe(studio, TARGETS[i]); mkdirSync(dirname(target), { recursive: true });
+    if (i === 0) carryProjected(target, join(tx, 'next', '0'));
     if (existsSync(target)) renameSync(target, join(tx, 'before', String(i)));
     fault?.(`before-install-${i}`);
     renameSync(join(tx, 'next', String(i)), target);
@@ -238,6 +260,40 @@ function commit(studio, next, staged, before, reason, fault) {
   rmSync(jp);
   return next;
 }
+// File-store projections are not in the snapshot. Unchanged ones (same path and hash in the old and new manifest) move
+// into the new publication instead of being copied again; the projector verifies and completes them afterwards.
+function carryProjected(from, to) {
+  if (!existsSync(from) || !existsSync(to)) return;
+  for (const name of readdirSync(to)) {
+    const next = join(to, name), prev = join(from, name);
+    if (!present(prev)?.isDirectory()) continue;
+    const wanted = readProjectedManifest(next);
+    if (!wanted.length) continue;
+    const had = new Map(readProjectedManifest(prev).map((f) => [f.path, f.sha256]));
+    for (const f of wanted) {
+      if (had.get(f.path) !== f.sha256) continue;
+      try {
+        const src = safe(prev, f.path), dst = safe(next, f.path);
+        if (!present(src)?.isFile() || present(dst)) continue;
+        mkdirSync(dirname(dst), { recursive: true });
+        renameSync(src, dst);
+      } catch {}
+    }
+  }
+}
+// Clone file-store files into the published generated skills. Problems are reported, never fatal to a skill sync.
+function projectGenerated(studio) {
+  if (!generatedProjector) return [];
+  try {
+    const entries = Object.values(readState(studio)?.entries || {});
+    const folders = entries.filter((e) => e.mode === 'generated' && e.published?.folder).map((e) => e.published.folder);
+    return generatedProjector(studio, folders) || [];
+  } catch (e) { return [e.message]; }
+}
+function withFileProblems(view, problems) {
+  if (problems.length) view.fileProblems = problems;
+  return view;
+}
 function provenUnmodified(found, legacy) {
   const files = tree(found.dir); delete files[MARKER];
   const prefix = `.claude/skills/${found.folder}/`;
@@ -246,6 +302,57 @@ function provenUnmodified(found, legacy) {
   return recorded.every((p) => existsSync(join(found.dir, p.slice(prefix.length))) &&
     hash(readFileSync(join(found.dir, p.slice(prefix.length))), 'sha1') === legacy.files[p]);
 }
+// Notices about generated skills Video Octopus put back (below), for the next chat to show once (claude.mjs skillRoot).
+const skillNotices = [];
+export const takeSkillNotices = () => skillNotices.splice(0);
+const editedStamp = () => new Date().toISOString().replace(/[:.]/g, '-');
+function keepEditedAside(studio, folder, label) {
+  const live = safe(studio, `.claude/skills/${folder}`);
+  if (!existsSync(live)) {
+    skillNotices.push(`The format skill ${label} was deleted outside Video formats, so Video Octopus put its saved version back.`);
+    return null;
+  }
+  const aside = safe(studio, `.studio/edited-skill-files/${editedStamp()}-${folder}`);
+  mkdirSync(dirname(aside), { recursive: true });
+  renameSync(live, aside);
+  skillNotices.push(`The format skill ${label} was changed outside Video formats, so Video Octopus put its saved version back. The changed copy is kept in ${aside}.`);
+  console.warn(skillNotices.at(-1));
+  return aside;
+}
+// Startup sync (syncSkills, database projection): when every changed file is inside a generated format skill's
+// folder, move those folders aside so the sync republishes them from the database. Returns false otherwise.
+function isolateGenerated(studio, state, changedPaths) {
+  const generated = new Map(Object.values(state?.entries || {}).filter((e) => e.mode === 'generated' && e.published?.folder).map((e) => [e.published.folder, e]));
+  const folders = new Set(changedPaths.map((p) => p.split('/')[0]));
+  if (![...folders].every((f) => generated.has(f))) return false;
+  for (const f of folders) keepEditedAside(studio, f, generated.get(f).name);
+  return true;
+}
+// A chat is starting and a generated format skill's files don't match its publication (an agent or the creator edited
+// one): keep the edited folder aside, put the database's version back with its file-store files, and carry on. Only
+// that skill is touched; the next chat says what happened. Returns false when the database copy can't be verified.
+function restoreGenerated(studio, entries) {
+  return lock(studio, () => {
+    const stage = join(manager(studio), `restore-${randomUUID()}`);
+    const staged = [join(stage, 'active'), join(stage, 'overrides'), join(stage, 'custom')];
+    try {
+      staged.forEach((p) => mkdirSync(p, { recursive: true }));
+      stageSqlSkills(studio, staged);
+      for (const e of entries) {
+        const canonical = join(staged[0], e.published.folder);
+        if (!existsSync(join(canonical, 'SKILL.md')) || digest(canonical) !== e.published.hash) return false;
+      }
+      for (const e of entries) {
+        keepEditedAside(studio, e.published.folder, e.name);
+        copy(join(staged[0], e.published.folder), safe(studio, `.claude/skills/${e.published.folder}`));
+      }
+    } finally { rmSync(stage, { recursive: true, force: true }); }
+    const problems = projectGenerated(studio);
+    for (const p of problems) skillNotices.push(p);
+    return true;
+  });
+}
+
 // Apply the generated list (explicit, or from the registered generator) to the skill entries.
 // Returns [id, rendered folder] pairs to publish. Generated entries the list no longer names are dropped,
 // except those the generator could not rebuild this time (keep), which retain their current publication.
@@ -288,7 +395,7 @@ export function syncSkills({ studio, appRoot = APP, fresh = false, action = null
     const recovered = recover(studio);
     const old = readState(studio);
     requireRevision(old, action);
-    if (old?.held && !action && sqlSkillState(studio)) return skillsView({ studio, appRoot });
+    if (old?.held && !action && sqlSkillState(studio)) return withFileProblems(skillsView({ studio, appRoot }), projectGenerated(studio));
     if (old?.held && !['refresh', 'restore', 'regenerate', 'restore-sql'].includes(action?.action))
       throw new Error('This restored skill snapshot is held. Resume updates before changing a skill choice; comparison remains available.');
     const before = TARGETS.map((p) => fingerprint(safe(studio, p)));
@@ -302,7 +409,11 @@ export function syncSkills({ studio, appRoot = APP, fresh = false, action = null
         stageSqlSkills(studio,staged);
         for(let i=0;i<3;i++) {
           const disk=tree(safe(studio,TARGETS[i])), canonical=tree(staged[i]);
-          if(Object.keys(disk).some(p=>JSON.stringify(disk[p])!==JSON.stringify(canonical[p])))
+          let changed=Object.keys(disk).filter(p=>JSON.stringify(disk[p])!==JSON.stringify(canonical[p]));
+          // Edits inside generated format skills only: those are rebuilt from the database (their edited folders kept
+          // aside) instead of blocking every skill update. Any other edit still needs Refresh or Rebuild.
+          if(i===0&&changed.length&&isolateGenerated(studio,old,changed))changed=[];
+          if(changed.length)
             throw new Error('Working skill files changed. Use Skills → Refresh / import file edits to save them, or Rebuild agent files to restore the database version. Your files are unchanged.');
         }
       } else staged.forEach((p,i)=>copy(join(studio,TARGETS[i]),p));
@@ -596,7 +707,7 @@ export function syncSkills({ studio, appRoot = APP, fresh = false, action = null
       if (recovered) next.recovery = `Recovered interrupted update ${recovered}; extra files are kept in that backup.`;
       const changed = JSON.stringify(next) !== priorSemantic || staged.some((p, i) => fingerprint(p) !== before[i]);
       if (changed || !sqlSkillState(studio)) commit(studio, next, staged, before, a ? `Skill choice: ${a}` : reason || (old ? 'Bundled skill update' : 'Legacy skill migration'), fault);
-      return skillsView({ studio, appRoot });
+      return withFileProblems(skillsView({ studio, appRoot }), projectGenerated(studio));
     } finally { rmSync(stage, { recursive: true, force: true }); }
   });
 }
@@ -662,7 +773,7 @@ export function compareSkill({ studio, appRoot = APP, id, revision } = {}) {
 }
 
 // All three harnesses use this exact publication. Never give an agent backups, defaults and overrides as extra roots.
-export function activeSkillRoot({ studio, appRoot = APP } = {}) {
+export function activeSkillRoot({ studio, appRoot = APP, repaired = false } = {}) {
   if (!studio) return null;
   if (existsSync(join(manager(studio), 'journal.json'))) throw new Error('A skill update needs recovery. Restart Video Octopus before starting a chat.');
   const s = readState(studio);
@@ -675,15 +786,25 @@ export function activeSkillRoot({ studio, appRoot = APP } = {}) {
       (e.mode === 'default' && e.published.apiVersion !== catalog.apiVersion)))
       throw new Error('Published skills have incompatible or unknown app API metadata. Refresh skills before starting a chat; saved custom versions will be preserved.');
   }
-  const root = safe(studio, '.claude/skills'), seen = new Set();
+  const root = safe(studio, '.claude/skills'), seen = new Set(), edited = [];
   for (const found of directories(root)) {
     const e = s.entries[found.id];
+    // A changed generated format skill doesn't block the chat: it is put back from the database below.
+    if (e?.mode === 'generated' && e.published && !e.disabled && e.published.folder === found.folder && e.published.hash !== found.hash && !repaired) {
+      edited.push(e); seen.add(found.name.toLowerCase()); continue;
+    }
     if (!e?.published || e.disabled || e.published.folder !== found.folder || e.published.hash !== found.hash || seen.has(found.name.toLowerCase()))
       throw new Error('Skill files changed. Open Settings → Updates and refresh skills before starting a chat.');
     seen.add(found.name.toLowerCase());
   }
-  for (const e of Object.values(s.entries)) if (e.published && !existsSync(join(root, e.published.folder, 'SKILL.md')))
+  for (const e of Object.values(s.entries)) if (e.published && !existsSync(join(root, e.published.folder, 'SKILL.md'))) {
+    if (e.mode === 'generated' && !e.disabled && !repaired) { edited.push(e); continue; }
     throw new Error('A skill was deleted. Refresh skills in Settings → Updates to preserve that choice.');
+  }
+  if (edited.length) {
+    if (!restoreGenerated(studio, edited)) throw new Error('Skill files changed. Open Settings → Updates and refresh skills before starting a chat.');
+    return activeSkillRoot({ studio, appRoot, repaired: true });
+  }
   const sources = [...directories(safe(studio, 'skills/overrides')), ...directories(safe(studio, 'skills/custom'))];
   const sourceIds = new Set();
   for (const source of sources) {
@@ -699,6 +820,61 @@ export function activeSkillRoot({ studio, appRoot = APP } = {}) {
   if (Object.keys(tree(root)).some((p) => /(^|\/)SKILL\.md$/i.test(p) && !expected.has(p)))
     throw new Error('An unregistered or nested skill was found. Keep its files and resolve it in Settings → Updates before starting a chat.');
   return root;
+}
+
+// A chat that should see only some generated format skills (a format conversation: its channel's; brand research:
+// none) gets its own skill root instead of the studio's: every other published skill plus the allowed format skills,
+// cloned (copy-on-write where the disk supports it, file-store files included) into
+// .studio/scoped-skills/<key>/.claude/skills. Laid out like a project's pinned context, so Claude Code loads it with
+// --add-dir; Codex and pi get the skills folder itself. Reused while the publications are the same; a copy whose files
+// changed is replaced. Returns { root, hidden }: hidden = the generated skill names this chat must not see.
+export function scopedSkillRoot({ studio, formatIds = [], appRoot = APP } = {}) {
+  const live = activeSkillRoot({ studio, appRoot });
+  if (!live) return null;
+  const s = readState(studio), allowed = new Set(formatIds);
+  const published = Object.values(s.entries).filter((e) => e.published && !e.disabled && !(e.mode === 'override' && forkProblem(e, loadSkillCatalog(appRoot).apiVersion)));
+  const visible = published.filter((e) => e.mode !== 'generated' || allowed.has(e.formatId));
+  const hidden = published.filter((e) => e.mode === 'generated' && !allowed.has(e.formatId)).map((e) => e.name);
+  const key = hash(JSON.stringify(visible.map((e) => [e.id, e.published.folder, e.published.hash]).sort())).slice(0, 24);
+  const parent = safe(studio, '.studio/scoped-skills'), base = join(parent, key), root = join(base, '.claude', 'skills');
+  const intact = () => existsSync(join(base, 'ready.json')) && visible.every((e) => existsSync(join(root, e.published.folder, 'SKILL.md')) && digest(join(root, e.published.folder)) === e.published.hash);
+  if (intact()) { touch(base); return { root, hidden }; }
+  const staging = join(parent, `.staging-${randomUUID()}`);
+  try {
+    for (const e of visible) cloneTree(join(live, e.published.folder), join(staging, '.claude', 'skills', e.published.folder));
+    write(join(staging, 'ready.json'), { at: stamp(), skills: visible.map((e) => e.name).sort() });
+    if (existsSync(base)) renameSync(base, join(parent, `.replaced-${randomUUID()}`));
+    renameSync(staging, base);
+  } finally { rmSync(staging, { recursive: true, force: true }); }
+  pruneScoped(parent, key);
+  return { root, hidden };
+}
+// The names of the published generated format skills (Claude Code isolation: skillOverrides).
+export function generatedSkillNames({ studio } = {}) {
+  const s = studio ? readState(studio) : null;
+  return Object.values(s?.entries || {}).filter((e) => e.mode === 'generated' && e.published).map((e) => e.name);
+}
+// A whole skill folder, file-store projections included (scopedSkillRoot). Symbolic links are refused, as everywhere.
+function cloneTree(from, to) {
+  const st = lstatSync(from);
+  if (st.isSymbolicLink()) throw new Error(`Refusing a symbolic link: ${from}`);
+  if (st.isDirectory()) {
+    mkdirSync(to, { recursive: true });
+    for (const name of readdirSync(from)) if (name !== '.DS_Store' && name !== '__pycache__') cloneTree(join(from, name), join(to, name));
+  } else if (st.isFile()) {
+    copyFileSync(from, to, fsConstants.COPYFILE_FICLONE);
+    chmodSync(to, st.mode & 0o777);
+  } else throw new Error(`Unsupported skill file: ${from}`);
+}
+const touch = (dir) => { try { const now = new Date(); utimesSync(dir, now, now); } catch {} };
+// Scoped roots nobody used for a day, and replaced copies, go (a running chat keeps the one it started with).
+function pruneScoped(parent, keep) {
+  const day = Date.now() - 24 * 3600 * 1000;
+  for (const name of readdirSync(parent)) {
+    if (name === keep || name.startsWith('.staging-')) continue;
+    const dir = join(parent, name);
+    try { if (name.startsWith('.replaced-') ? lstatSync(dir).mtimeMs < Date.now() - 3600 * 1000 : lstatSync(dir).mtimeMs < day) rmSync(dir, { recursive: true, force: true }); } catch {}
+  }
 }
 
 // Per-turn context: unavailable forks must not be rediscovered as executable instructions.

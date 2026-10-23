@@ -2,16 +2,19 @@ import { TERMS } from '../web/terms.js';
 import { databaseBackups, previewDatabaseRestore, restoreDatabase } from './database-recovery.mjs';
 import { createHash } from 'node:crypto';
 import { startExtraction, extractionStatus, stopExtraction, extractionBusy, stopAllExtractions } from './learning-extraction.mjs';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, createWriteStream, rmSync } from 'node:fs';
+import { Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { join } from 'node:path';
 import { createConfiguredProject, profileBusy, killProfileResearch } from './profiles.mjs';
 import { ProfileStore } from './profile-store.mjs';
 import { safeFile, formatSkillName, formatSkillId } from './learning-store.mjs';
-import { generateFormatSkills } from './format-skills.mjs';
-import { beginMaintenance, endMaintenance } from './maintenance.mjs';
+import { generateFormatSkills, projectPublishedFiles } from './format-skills.mjs';
+import { FileStore, MAX_SKILL_FILES, MAX_SKILL_FILE_BYTES, formatBytes } from './file-store.mjs';
+import { beginMaintenance, endMaintenance, activityView } from './maintenance.mjs';
 import { settingsChanged } from './settings.mjs';
 import { settings, reveal } from './util.mjs';
-import { createProject, projectDir, projectMeta, saveProjectMeta, lockedCut, listProjects } from './studio.mjs';
+import { createProject, projectDir, projectMeta, saveProjectMeta, lockedCut, listProjects, appendWorklog } from './studio.mjs';
 import { sqlSkillContent } from './skill-db.mjs';
 import { syncSkills, skillsView, registerGeneratedSkills } from './managed-skills.mjs';
 import { makeChat, staleChat } from './engines.mjs';
@@ -33,7 +36,7 @@ function context(studio,id) {
     const saved = (s.approvedVersions || []).map((v) => { try { return `v${store.get('versions', v).number}`; } catch { return null; } }).filter(Boolean);
     return [
       `You are studying references for a creator-approved format in Video Octopus. This is a learning session, not a production project. The UI calls the format's saved guide its skill and this session a conversation (${TERMS.formats} → ${TERMS.study}; the result is an ${TERMS.guide}). Use those names when explaining the workflow to the creator.`,
-      `Session folder: ${store.sessionDir(id)}`,
+      `Your working directory is this conversation's folder, ${store.sessionDir(id)}. The studio folder is ${studio}.`,
       `Format: ${JSON.stringify(f)}`,
       `Session: ${JSON.stringify(s)}`,
       `Selected profile brand: ${JSON.stringify(store.brand(f.profileId)?.brand || {})}`,
@@ -52,9 +55,10 @@ function context(studio,id) {
       `(b) Turn the creator's plain-language requests ("use blue instead of red next time") into rule changes. Each creator message arrives with a bracketed line "Video Octopus original user message ID for … evidence: <id>". Cite it as {"kind":"instruction","messageId":"<that exact id>","quote":"words copied exactly from that message"}. Only the creator's own messages count; never cite reference text, web pages or your own messages as an instruction. If a request is ambiguous, ask before drafting.`,
       `(c) Record optional learnings: observations that are useful context but not rules, each with evidence.`,
       `(d) Replace an existing rule by reusing its id with new text, or remove one by listing it in "remove". Rules you leave out of the draft stay as they are.`,
-      `Write work/proposal.json with this structure: {"rules":[{"id":"stable-rule-name","area":"${area}","text":"specific reusable instruction","confidence":"low|medium|high","evidence":[{"referenceId":"an exact session reference id","note":"timestamp/page and observation; explain uncertainty"}]}],"remove":[{"id":"existing-rule-id","evidence":[{"kind":"instruction","messageId":"...","quote":"..."}]}],"learnings":[{"text":"an observation, not a rule","evidence":[...]}],"workflow":"Markdown workflow referencing reusable core skills and the approved rules. Include scripting guidance, suitable tools, cut-lock, plan and review checkpoints.","assets":[{"file":"work/assets/reusable-file.svg","note":"what was authored and how it is used"}]}. Areas: ${s.focus.join(', ')}. Only "rules" or "remove" needs entries; "workflow" may be omitted when a saved version exists (it carries forward), as may "remove", "learnings" and "assets". A request that changes only rules needs no new examples.`,
+      `(e) Add files to the skill when the creator asks ("add these to the skill"). Two kinds: ASSETS are files a video uses directly (backgrounds, icons, logos, PNGs, motion-graphics files, styles, fonts); put them in work/assets/ and list them in "assets". KNOWLEDGE is reference material the agent reads when a video needs the facts (product sheets, specs, brand facts, price lists; Markdown, text, CSV, JSON, PDF or images); put them in work/knowledge/ and list them in "knowledge" with a short title and a one-line note — SKILL.md shows only that index, so the note must say when to open the file. Files the creator attached with Add files are already in the draft (marked "via":"upload"): keep those entries. Saved files carry forward; list a saved file's path (for example "assets/old-logo.png") in "removeFiles" only when the creator asks to remove it. Limits: ${MAX_SKILL_FILES} files per skill (assets and knowledge together), ${formatBytes(MAX_SKILL_FILE_BYTES)} per file. Current skill files: ${JSON.stringify([...(base?.assets || []), ...(base?.knowledge || [])].map((x) => ({ kind: x.kind, file: x.file, title: x.title, note: x.note })))}.`,
+      `Write work/proposal.json with this structure: {"rules":[{"id":"stable-rule-name","area":"${area}","text":"specific reusable instruction","confidence":"low|medium|high","evidence":[{"referenceId":"an exact session reference id","note":"timestamp/page and observation; explain uncertainty"}]}],"remove":[{"id":"existing-rule-id","evidence":[{"kind":"instruction","messageId":"...","quote":"..."}]}],"learnings":[{"text":"an observation, not a rule","evidence":[...]}],"workflow":"Markdown workflow referencing reusable core skills and the approved rules. Include scripting guidance, suitable tools, cut-lock, plan and review checkpoints.","assets":[{"file":"work/assets/reusable-file.svg","note":"what was authored and how it is used"}],"knowledge":[{"file":"work/knowledge/product-sheet.pdf","title":"Product sheet","note":"when to read it"}],"removeFiles":["assets/old-file.png"]}. Areas: ${s.focus.join(', ')}. At least one of "rules", "remove", "assets", "knowledge" or "removeFiles" needs entries; "workflow" may be omitted when a saved version exists (it carries forward), as may every other key. A request that changes only rules or files needs no new examples.`,
       `The draft may already contain rules with {"kind":"manual"} evidence: those are the creator's own direct edits. Keep them exactly as they are when you rewrite the draft, unless the creator asks you to change them. Never write manual evidence yourself.`,
-      `Evidence must be real and traceable; never invent rules to fill categories. Assets are optional, authored reusable components only; never copy entire source media into an approved package. The creator reviews all rules and the complete workflow before approval. Suggest edits, do not activate them.`,
+      `Evidence must be real and traceable; never invent rules to fill categories. Assets and knowledge are optional: add only files the creator supplied or asked for, or reusable components you authored; never copy entire studied source media into the skill. The creator reviews all rules and the complete workflow before approval. Suggest edits, do not activate them.`,
       s.project ? `Post-project recap source: ${s.project}. Read its WORKLOG, review notes and decisions. Distinguish deliberate creator choices from model mistakes and propose only supported lessons.` : '',
     ].filter(Boolean).join('\n');
   });
@@ -65,6 +69,8 @@ function chatFor(studio,id) {
   if(c) return c;
   const folder=use(studio,s=>s.sessionDir(s.get('sessions',id).id));
   c=makeChat(`_learning_${id}`,()=>context(studio,id)); c.cwd=()=>folder; c.guard=()=>folder; c.mode=()=> 'manual'; c.profileScoped=true;
+  // Only this channel's format skills (managed-skills.mjs scopedSkillRoot), on every agent.
+  c.skillScope=()=>({formatIds:use(studio,st=>{const f=st.get('formats',st.get('sessions',id).formatId);return st.list('formats').filter(x=>x.profileId===f.profileId).map(x=>x.id);})});
   // Each creator message carries its ID to the agent and is kept in SQLite as instruction-evidence provenance.
   c.instructionEvidence=true;
   c.listeners.add(ev=>{ if(ev.t==='user'&&!ev.brief&&!ev.replay){ try{use(studio,st=>st.recordMessage(id,{id:ev.eventId,text:ev.text,ts:ev.ts}));}catch(e){console.error('learning message:',e.message);} } });
@@ -79,32 +85,49 @@ export function learningProjectContext(meta) {
   if (!meta.learning?.versionId) return [];
   return current(s=>{ const v=s.version(meta.learning.versionId),f=s.get('formats',v.formatId),p=s.get('profiles',f.profileId);
     const active=f.activeVersion&&f.activeVersion!==v.id?s.get('versions',f.activeVersion):null;
-    return [`Pinned learning: ${p.name} / ${f.name} / v${v.number} (${v.id}). Read ${join(v.path,'guide.md')} and ${join(v.path,'SKILL.md')}; approved reusable assets are listed in ${join(v.path,'package.json')}. These exact snapshot files govern this project, even if the active format is newer.${active?` The format's active skill is now v${active.number}; it does not apply to this project.`:''} The format skill ${formatSkillName(f.id)} in the studio follows the active version; this project's pinned copy (named in its project context, when present) is the one to use. Editable custom skill copies are not the authority for an already pinned project.`,
+    return [`Pinned learning: ${p.name} / ${f.name} / v${v.number} (${v.id}). Read ${join(v.path,'guide.md')} and ${join(v.path,'SKILL.md')}; approved assets and knowledge files are listed in ${join(v.path,'package.json')} and are in the pinned format skill copy's assets/ and knowledge/ folders. These exact snapshot files govern this project, even if the active format is newer.${active?` The format's active skill is now v${active.number}; it does not apply to this project.`:''} The format skill ${formatSkillName(f.id)} in the studio follows the active version; this project's pinned copy (named in its project context, when present) is the one to use. Editable custom skill copies are not the authority for an already pinned project.`,
       `Project entry: ${meta.learning.entry || 'footage'}. Direction: ${meta.learning.brief || ''}. Target duration ${f.targetSeconds || 'unspecified'} seconds is a planning hint. Build preference: ${meta.learning.build || 'scene'}. For full build as well as scene-by-scene, stop for cut lock, plan approval and final review. ${f.type==='faceless'?'This is faceless: use imported or recorded narration, no talking-head zoom workflow and no automatic TTS provider.':''}`]; });
 }
 const projectName = (pid) => { const dir = projectDir(pid); return dir ? projectMeta(dir)?.name || null : null; };
-// Every skill sync (startup included) rebuilds the format skills from SQLite.
-registerGeneratedSkills((studio, stage) => generateFormatSkills(studio, stage, { projectName }));
-// Rebuild the generated format skills now. Returns a warning when it has to wait; startup and the next
-// approve, activate, rename or archive retry it. Approved versions are never affected by a failed rebuild.
+// Every skill sync (startup included) rebuilds the format skills from SQLite, then clones their files from the store.
+registerGeneratedSkills((studio, stage) => generateFormatSkills(studio, stage, { projectName }), { project: projectPublishedFiles });
+// Rebuild the generated format skills now. Returns a warning when it has to wait: it is then retried as soon as
+// nothing is working any more (retryWhenIdle), and at startup. Approved versions are never affected by a failed rebuild.
 export function rebuildFormatSkills(studio = settings().studio) {
   try { beginMaintenance('Updating format skills.'); }
-  catch (e) { return `Saved. The format skill will update when current work finishes (or on restart): ${e.message}`; }
+  catch (e) { retryWhenIdle(studio); return `Saved. The format skill will update when current work finishes (or on restart): ${e.message}`; }
   try {
     const view = syncSkills({ studio, reason: 'Format skill update' });
     settingsChanged('skills');
     if (view.held) return 'Saved. Skill updates are held after a restore, so the format skill updates when you resume them in Settings → Updates.';
-    return view.ok === false ? `Saved. Format skill update needs attention: ${view.error}` : null;
+    if (view.ok === false) return `Saved. Format skill update needs attention: ${view.error}`;
+    return view.fileProblems?.length ? `Saved. Skill files need attention: ${view.fileProblems.join(' ')}` : null;
   } catch (e) { return `Saved. Format skill update needs attention: ${e.message}`; }
   finally { endMaintenance(); }
 }
+// A rebuild that had to wait: checked twice a second while one is pending, and run once agents, exports
+// and other updates are idle (the same activity check beginMaintenance uses). The studio must still be the same one.
+let pendingRebuild = null;
+function retryWhenIdle(studio) {
+  if (pendingRebuild) { pendingRebuild.studio = studio; return; }
+  pendingRebuild = { studio, timer: setInterval(() => {
+    if (activityView().busy) return;
+    const { studio: target, timer } = pendingRebuild;
+    clearInterval(timer); pendingRebuild = null;
+    if (target !== settings().studio) return;
+    const warning = rebuildFormatSkills(target);
+    if (warning && !pendingRebuild) console.warn(`Format skill update: ${warning}`);
+  }, 500) };
+  pendingRebuild.timer.unref?.();
+}
+export const formatRebuildPending = () => Boolean(pendingRebuild);
 function formatSkillView(studio, store, formatId) {
   const f = store.get('formats', formatId), name = formatSkillName(f.id), view = skillsView({ studio });
   const entry = view.items?.find((x) => x.id === formatSkillId(f.id)) || null;
   const active = f.activeVersion ? store.get('versions', f.activeVersion) : null;
   return { id: formatSkillId(f.id), name, path: entry?.published ? join(studio, '.claude/skills', entry.published.folder) : null,
     published: Boolean(entry?.published), versionId: entry?.versionId || null, activeVersion: active?.id || null, activeNumber: active?.number || null,
-    current: Boolean(entry?.published) && entry.versionId === (active?.id || null), archived: store.formatArchived(f), problem: entry?.collision || null };
+    current: Boolean(entry?.published) && entry.versionId === (active?.id || null), pending: formatRebuildPending(), archived: store.formatArchived(f), problem: entry?.collision || null };
 }
 export function learnedPlan(id, dir) {
   const meta=projectMeta(dir),learning=projectLearning(id,meta);
@@ -131,6 +154,92 @@ function selection(store,b) {
   if (!['scene','full'].includes(b.build || 'scene')) throw Error('Choose a build preference.');
   return {v,f,learning:{profileId:f.profileId,formatId:f.id,versionId:v.id,entry:b.entry||'idea',build:b.build||'scene',brief:String(b.brief||'').slice(0,20000)}};
 }
+// A project's upgrade to another version of a format: what would change, checked before anything is written.
+// Only the project's own channel is allowed (a channel-less project joins the format's channel); the brand and memory
+// changes that brings are spelled out as notices, never applied silently.
+function upgradePlan(store,id,b) {
+  const dir=projectDir(id);
+  if(!dir)throw Error('Project not found.');
+  const meta=projectMeta(dir),current=projectLearning(id,meta);
+  const pick=selection(store,b);
+  if(current&&current.formatId!==pick.f.id)throw Error('Choose a version of this project format.');
+  if(meta.type!==pick.f.type)throw Error('Format must match the project type.');
+  const old=store.projectBundle(id),profile=store.get('profiles',pick.f.profileId),notices=[];
+  if(old?.profileId&&old.profileId!==pick.f.profileId)throw Error(`This video belongs to ${old.profileName?`the channel “${old.profileName}”`:'another channel'}. Choose one of that channel's formats.`);
+  let context=null;
+  if(old) {
+    const selected=store.bundle({profileId:pick.f.profileId,formatId:pick.f.id,versionId:pick.v.id,type:pick.f.type,allowArchived:true});
+    // The same channel keeps the brand version the video was made with; a channel-less video takes the channel's current one.
+    const sameChannel=old.profileId===pick.f.profileId;
+    context=store.validateBundle({...selected,brandVersion:sameChannel?old.brandVersion:selected.brandVersion,instructionVersion:old.instructionVersion});
+    if(!sameChannel)notices.push(selected.brandVersion?`Brand: this video now uses ${profile.name}'s approved brand.`:`Brand: ${profile.name} has no approved brand yet, so this video stays unbranded.`);
+    const chat=store.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_chats'").get()&&store.db.prepare('SELECT data FROM memory_chats WHERE id=?').get(id);
+    if(chat&&!sameChannel)notices.push(`Memories: this video's chat now also uses ${profile.name}'s and ${pick.f.name}'s memories. Its own memories stay.`);
+  }
+  const learning={...pick.learning,...current,versionId:pick.v.id};
+  return {dir,meta,current,learning,context,version:pick.v,format:pick.f,notices};
+}
+// Save the upgrade as one step: the learning pin, the context pin and the memory binding commit together, only after
+// the project's context files were rebuilt from them. A failure leaves the database, project.json and files as they were.
+function upgradeProject(store,id,b) {
+  const plan=upgradePlan(store,id,b);
+  if((plan.current?.versionId||null)!==b.expected)throw Error('Project changed. Review its upgrade again.');
+  const before=readFileSync(join(plan.dir,'project.json'));
+  let files=null;
+  try {
+    store.tx(()=>{
+      store.pin(id,plan.learning);
+      if(plan.context){store.pinContext(id,plan.context);store.rebindProjectMemory(id,plan.context);}
+      if(plan.context)files=store.replaceProjectFiles(id,plan.dir,'before-upgrade');
+      saveProjectMeta(plan.dir,{learning:plan.learning,...(plan.context?{context:plan.context}:{})});
+    });
+  } catch(e) {
+    files?.undo();
+    writeFileSync(join(plan.dir,'project.json'),before);
+    throw e;
+  }
+  appendWorklog(plan.dir,[`Upgraded to ${plan.format.name} v${plan.version.number}.`,...plan.notices].join(' '));
+  return {ok:true,notices:plan.notices};
+}
+// The draft as the format home shows it after a staged change: the session, plus its proposal or why it is not valid.
+function withProposal(store, session) {
+  let proposal = null, proposalError = null;
+  try { proposal = store.proposal(session.id); } catch (e) { proposalError = e.message; }
+  return { session, proposal, proposalError };
+}
+// "Add files": the request body is the file. It streams to a temporary file inside the studio (never held in memory),
+// with the per-file limit enforced while it arrives, and is then staged into the conversation's draft.
+async function stageUpload(req, url, formatId) {
+  const q = url.searchParams, sessionId = q.get('sessionId') || undefined;
+  if (sessionId && extractionStatus(settings().studio, sessionId)?.status === 'running') throw Error('Stop reference extraction before editing the draft.');
+  const temp = current((s) => s.files.incoming());
+  try {
+    let size = 0;
+    const limit = new Transform({
+      transform(chunk, encoding, done) {
+        size += chunk.length;
+        if (size > MAX_SKILL_FILE_BYTES) done(Error(`Files can be at most ${formatBytes(MAX_SKILL_FILE_BYTES)}.`));
+        else done(null, chunk);
+      },
+    });
+    await pipeline(req, limit, createWriteStream(temp, { flags: 'wx' }));
+    return current((s) => withProposal(s, s.stageDraftFile(formatId, {
+      sessionId, revision: q.has('revision') ? Number(q.get('revision')) : undefined,
+      kind: q.get('kind'), name: q.get('name'), note: q.get('note') || '', title: q.get('title') || '', tempPath: temp,
+    })));
+  } finally { rmSync(temp, { force: true }); }
+}
+// Show in Finder: the published skill's copy when there is one, otherwise the stored original.
+function revealFile(studio, store, formatId, path) {
+  const file = store.formatFiles(formatId).files.find((x) => x.file === path);
+  if (!file) throw Error('That file is not in the saved skill.');
+  const skill = formatSkillView(studio, store, formatId);
+  const published = skill.path ? safeFile(skill.path, file.file) : null;
+  const target = published && existsSync(published) ? published : store.files.locate(file.sha256);
+  if (!target) throw Error('The file is missing from the file store. Restore the skill file backup (Storage).');
+  reveal(target);
+  return { ok: true, path: target };
+}
 export async function learningRoute(req,res,url,{send,body,serveFile}) {
   if(!url.pathname.startsWith('/api/learning')) return false;
   const reply=(data,status=200)=>{send(res,status,data);return true;};
@@ -152,9 +261,11 @@ export async function learningRoute(req,res,url,{send,body,serveFile}) {
       }
       if(group==='formats' && id && action==='videos') return reply(current(s=>s.formatVideos(id)).map(row=>{const dir=projectDir(row.project),meta=dir?projectMeta(dir):null;return {...row,name:meta?.name||row.project,created:row.created||meta?.created||null,exists:Boolean(dir)};}));
       if(group==='formats' && id && action==='skill') return reply(current(s=>formatSkillView(studio,s,id)));
+      if(group==='formats' && id && action==='files') return reply(current(s=>s.formatFiles(id)));
+      if(group==='files' && !id) return reply(current(s=>s.fileReport()));
       if(group==='versions' && id) return reply(current(s=>s.version(id)));
       if(group==='sessions' && id) {
-        if(action==='asset'){const path=current(s=>{const a=s.proposal(id).assets.find(a=>a.file===url.searchParams.get('file'));if(!a)throw Error('Asset not in the proposal.');return safeFile(s.sessionDir(id),a.file);});serveFile(req,res,path);return true;}
+        if(action==='asset'){const path=current(s=>{const a=s.proposal(id).files.added.find(a=>a.file===url.searchParams.get('file'));if(!a)throw Error('File not in the proposal.');return safeFile(s.sessionDir(id),a.file);});serveFile(req,res,path);return true;}
         if(action==='suggestions')return reply(current(st=>{const file=safeFile(st.sessionDir(st.get('sessions',id).id),'work/suggested-examples.json');if(!existsSync(file))return [];const raw=readFileSync(file);if(raw.length>256*1024)throw Error('Suggested examples file is too large.');const rows=JSON.parse(raw);if(!Array.isArray(rows)||rows.length>20)throw Error('Suggest up to 20 examples.');return rows.map(r=>{const u=new URL(r.url);if(!['https:','http:'].includes(u.protocol)||u.username||u.password)throw Error('Suggestions must use public HTTP or HTTPS URLs without credentials.');return {name:String(r.name||u.hostname).slice(0,200),url:u.href,note:String(r.note||'').slice(0,2000)};});}));
         if(action==='extraction') return reply(extractionStatus(studio,id)||{status:'idle'});
         if(action==='proposal') return reply(current(s=>s.proposal(id)));
@@ -176,7 +287,13 @@ export async function learningRoute(req,res,url,{send,body,serveFile}) {
       const chunks=[];let size=0;for await(const chunk of req){size+=chunk.length;if(size>512*1024*1024)throw Error('Reference limit is 512 MB.');chunks.push(chunk);}
       return reply(current(s=>s.upload(id,Number(url.searchParams.get('revision')),url.searchParams.get('name'),Buffer.concat(chunks))));
     }
+    if(group==='formats' && id && action==='files') return reply(await stageUpload(req,url,id));
     const b=await body(req);
+    if(group==='files') {
+      if(id==='delete') return reply(current(s=>s.deleteUnusedFiles(b.hashes)));
+      if(id==='backup') return reply(new FileStore(studio).backupTo(b.folder));
+      return reply({error:'Unknown learning endpoint.'},404);
+    }
     if(group==='backups') {
       const pins=listProjects().map(p=>{const m=projectMeta(projectDir(p.id));return {name:p.name,project:p.id,versionId:projectLearning(p.id,m)?.versionId,...current(s=>s.projectBundle(p.id))};});
       if(action==='preview')return reply(previewDatabaseRestore(studio,id,pins));
@@ -202,6 +319,11 @@ export async function learningRoute(req,res,url,{send,body,serveFile}) {
           return {session,proposal,proposalError};
         }));
       }
+      if(action==='draft-file') {
+        if(b.sessionId&&extractionStatus(studio,b.sessionId)?.status==='running')throw Error('Stop reference extraction before editing the draft.');
+        return reply(current(s=>withProposal(s,s.draftFileChange(id,b))));
+      }
+      if(action==='reveal-file') return reply(current(s=>revealFile(studio,s,id,b.path)));
       if(action==='reveal-skill'){const skill=current(s=>formatSkillView(studio,s,id));if(!skill.path)throw Error('This format has no published skill yet.');reveal(skill.path);return reply({ok:true,path:skill.path});}
       if(action==='skill') return reply({warning:rebuildFormatSkills(studio),skill:current(s=>formatSkillView(studio,s,id))});
       let format;
@@ -217,11 +339,10 @@ export async function learningRoute(req,res,url,{send,body,serveFile}) {
       if(action==='plan-review'){const dir=projectDir(id);if(!dir)throw Error('Project not found.');return reply(learnedPlan(id,dir));}
       if(action==='approve-plan'){const dir=projectDir(id);if(!dir)throw Error('Project not found.');const plan=learnedPlan(id,dir);if(plan.token!==b.token)throw Error('Plan or cut changed. Review it again.');return reply(current(s=>{const learning={...projectLearning(id,projectMeta(dir)),planApproval:plan.token};s.pin(id,learning);saveProjectMeta(dir,{learning});return {ok:true};}));}
       if(action==='upgrade-preview') return reply(current(s=>{
-        const dir=projectDir(id);if(!dir)throw Error('Project not found.');const meta={...projectMeta(dir),learning:projectLearning(id,projectMeta(dir))},old=meta.learning?.versionId?s.version(meta.learning.versionId):null,next=s.version(b.versionId);
-        if(old && old.formatId!==next.formatId)throw Error('Choose a version of this project format.');
-        return {from:old?.id||null,to:next.id,oldRules:old?.rules||[],newRules:next.rules};
+        const plan=upgradePlan(s,id,b),old=plan.current?.versionId?s.version(plan.current.versionId):null;
+        return {from:old?.id||null,to:plan.version.id,oldRules:old?.rules||[],newRules:plan.version.rules,notices:plan.notices};
       }));
-      if(action==='upgrade') return reply(current(s=>{const dir=projectDir(id);if(!dir)throw Error('Project not found.');const meta={...projectMeta(dir),learning:projectLearning(id,projectMeta(dir))};if((meta.learning?.versionId||null)!==b.expected)throw Error('Project changed. Review its upgrade again.'); const pick=selection(s,b);if(meta.type!==pick.f.type)throw Error('Format must match the project type.'); if(meta.learning && meta.learning.formatId!==pick.f.id)throw Error('Choose a version of this project format.'); const learning={...pick.learning,...meta.learning,versionId:pick.v.id};const oldContext=s.projectBundle(id);let context=oldContext;if(oldContext){const selected=s.bundle({profileId:pick.f.profileId,formatId:pick.f.id,versionId:pick.v.id,type:pick.f.type,allowArchived:true});context={...selected,brandVersion:oldContext.brandVersion,instructionVersion:oldContext.instructionVersion};}s.tx(()=>{s.pin(id,learning);if(context)s.pinContext(id,context);});saveProjectMeta(dir,{learning,...(context?{context}:{})});if(context)s.restoreProjectFiles(id,dir);return {ok:true};}));
+      if(action==='upgrade') return reply(current(s=>upgradeProject(s,id,b)));
       if(action==='recap') return reply(current(s=>{const dir=projectDir(id),meta=dir&&projectMeta(dir);if(!meta?.learning)throw Error('Choose a learned format before a recap.');const session=s.session(meta.learning.formatId,{name:`Recap: ${meta.name}`,focus:b.focus||['scripting','pacing','visuals'],direction:b.direction||'',project:dir});return s.reference(session.id,session.revision,{kind:'note',name:'Creator project recap',note:b.note||'Review the project decisions and worklog; propose only evidence-backed lessons.'});}));
       return reply(current(s=>{const pick=selection(s,b);if(!b.name?.trim())throw Error('Name the project.'); const pid=createConfiguredProject({...b,type:pick.f.type,profileId:pick.f.profileId,formatId:pick.f.id,versionId:pick.v.id});return {id:pid};}));
     }

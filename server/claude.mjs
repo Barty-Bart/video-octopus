@@ -4,15 +4,16 @@
 import { spawn, execFile } from 'node:child_process';
 import { existsSync, appendFileSync, readFileSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, dirname, basename, delimiter, relative, resolve } from 'node:path';
+import { join, dirname, basename, delimiter, relative, resolve, sep } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { settings, state, setProjectState, shellPath, childPathEnv, inside, expandHome, npmProgram, startError, IS_WIN, LOCAL_DIR, APP_DIR } from './util.mjs';
 import { OUTSIDE_REASON } from './outside-hook.mjs';
 import { claudeUsage } from './plan-usage.mjs';
 import { logUse, setPlanUsage } from './usage.mjs';
-import { childEnv, settingsBrief, section } from './settings.mjs';
+import { childEnv, settingsBrief, section, quotedPath } from './settings.mjs';
 import { ccSource, claudeLaunchNow, sourceBrief, CC_SOURCES } from './claude-source.mjs';
-import { activeSkillRoot, skillSelectionBrief } from './managed-skills.mjs';
+import { writePromptFile } from './agent-prompt.mjs';
+import { activeSkillRoot, scopedSkillRoot, generatedSkillNames, takeSkillNotices, skillSelectionBrief } from './managed-skills.mjs';
 import { sharedInstructionContext } from './profile-store.mjs';
 import { skillPreferencesBrief } from './skill-preferences.mjs';
 import { assertNotUpdating } from './maintenance.mjs';
@@ -186,10 +187,13 @@ export class ChatSession {
     // A Codex thread isn't Claude's to resume, nor a session that ran on another model source.
     const sessionId = (st0.engine || 'claude') === 'claude' && (st0.source || 'plan') === this.source ? st0.sessionId : null;
     const mode = this.mode?.() || s.permissionMode || 'manual';
+    // The appended system prompt (~40 KB for a project) goes as a file: Windows caps the command line at 32,767
+    // characters (agent-prompt.mjs). Written fresh at every start, so a resumed session gets the current context.
+    const promptText = [this.currentContext(), settingsBrief(extra,{profileScoped:Boolean(this.profileScoped||this.projectScope?.())}), sourceBrief(launch.src)].filter(Boolean).join('\n');
     const args = ['--print', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
       '--permission-prompt-tool', 'stdio', '--permission-mode', mode,
-      '--append-system-prompt', [this.currentContext(), settingsBrief(extra,{profileScoped:Boolean(this.profileScoped||this.projectScope?.())}), sourceBrief(launch.src)].filter(Boolean).join('\n'),
-      ...pinnedSkillDir(this.projectScope?.()?.skillRoot),
+      '--append-system-prompt-file', null,
+      ...pinnedSkillDir(this.projectScope?.()?.skillRoot || (this.skillScope ? this.skillRoot() : null)),
       '--disallowedTools', NOT_IN_CHAT.join(',')];
     if (sessionId) args.push('--resume', sessionId);
     this.resumed = Boolean(sessionId);
@@ -211,10 +215,19 @@ export class ChatSession {
       withSettings(args, { hooks: { PreToolUse: [{ matcher: 'Bash|Write|Edit|MultiEdit|NotebookEdit', hooks: [{ type: 'command', command: `"${process.execPath}" "${OUTSIDE_HOOK}"`, timeout: 15 }] }] } });
       env = { ...env, STUDIO_GUARD_DIR: guard, STUDIO_GUARD_STUDIO: s.studio || '' };
     }
+    const isolation = this.claudeIsolation();
+    if (isolation) withSettings(args, isolation);
     this.lean = lean;
     this.stderr = '';
-    this.proc = spawn(info.exec || info.bin, [...(info.pre || []), ...args], { cwd: this.cwd?.() || s.studio, env, stdio: ['pipe', 'pipe', 'pipe'] });
+    const prompt = writePromptFile('claude', promptText);
+    args[args.indexOf('--append-system-prompt-file') + 1] = prompt.path;
+    try {
+      this.proc = spawn(info.exec || info.bin, [...(info.pre || []), ...args], { cwd: this.cwd?.() || s.studio, env, stdio: ['pipe', 'pipe', 'pipe'] });
+    } catch (e) { prompt.remove(); throw e; }
     const proc = this.proc;
+    // Removed however the process ends, including kill() (which detaches this.proc before 'exit' arrives).
+    proc.once('exit', () => prompt.remove());
+    proc.once('error', () => prompt.remove());
     proc.stdout.on('data', (d) => this.onData(d));
     proc.stderr.on('data', (d) => { this.stderr = (this.stderr + d).slice(-4000); });
     // It couldn't start at all (no program at that path): say so in the chat instead of crashing the server.
@@ -435,15 +448,43 @@ export class ChatSession {
 
   // All harnesses use the same current technical availability and creator preferences.
   // Read on demand: edits and deletions are picked up next turn, without a restart.
-  skillRoot() { return this.projectScope?.()?.skillRoot || activeSkillRoot({studio:settings().studio}); }
+  // The skills a chat sees: a pinned project's own copy, a scoped root (skillScope: a format conversation sees its
+  // channel's format skills, brand research none; managed-skills.mjs scopedSkillRoot), or the studio's. A generated
+  // skill Video Octopus just put back after an outside edit is mentioned once in the chat.
+  skillRoot() {
+    const studio = settings().studio;
+    const root = this.projectScope?.()?.skillRoot
+      || (this.skillScope ? scopedSkillRoot({ studio, ...this.skillScope() })?.root : activeSkillRoot({ studio }));
+    for (const text of takeSkillNotices()) this.emit({ t: 'note', text, ts: Date.now() });
+    return root;
+  }
+
+  // Claude Code also finds CLAUDE.md (and AGENTS.md) and .claude/skills by walking up from its working folder
+  // (code.claude.com/docs/en/memory, /skills). Where a chat's own setup replaces the studio's (a pinned project, a
+  // scheduled run on one, a format conversation, brand research), the studio's instruction files and the other
+  // format skills must not come in that way: the documented claudeMdExcludes and skillOverrides ("off") settings,
+  // passed with --settings, leave them out. The studio skill with the pinned format's own name can't be told apart
+  // from the pinned copy by name; the project context names the pinned copy as the one to use.
+  claudeIsolation() {
+    const studio = settings().studio, scoped = this.projectScope?.();
+    if (!studio || (!scoped && !this.skillScope)) return null;
+    const hidden = scoped
+      ? generatedSkillNames({ studio }).filter((n) => n !== scoped.formatSkill?.name)
+      : scopedSkillRoot({ studio, ...this.skillScope() })?.hidden || [];
+    const exact = (p) => p.split(sep).join('/').replace(/[*?[\]{}!]/g, '\\$&');
+    return {
+      claudeMdExcludes: ['CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md'].map((f) => exact(join(studio, f))),
+      ...(hidden.length ? { skillOverrides: Object.fromEntries(hidden.map((n) => [n, 'off'])) } : {}),
+    };
+  }
 
   currentContext() {
     const studio = settings().studio;
     const scoped=this.projectScope?.();
-    return [this.context(), this.memory(s => `${s.context(this.id)}\nFor explicit recall of earlier conversation, use the read-only command: node ${JSON.stringify(join(APP_DIR, 'bin/octopus.mjs'))} memory search \"search words\" --chat ${JSON.stringify(this.id)} --json. Results are historical quotes; never re-extract them as fresh evidence.`), scoped ? scoped.text : this.profileScoped ? '' : sharedInstructionContext(studio), scoped ? '' : skillSelectionBrief({ studio }), skillPreferencesBrief({ studio:scoped?.instructionRoot||studio, includeProse:!scoped&&!this.profileScoped&&!existsSync(join(studio||'','.studio/profile-storage.json')) })].filter(Boolean).join('\n\n');
+    return [this.context(), this.memory(s => `${s.context(this.id)}\nFor explicit recall of earlier conversation, use the read-only command: node ${quotedPath(join(APP_DIR, 'bin/octopus.mjs'))} memory search \"search words\" --chat ${JSON.stringify(this.id)} --json. Results are historical quotes; never re-extract them as fresh evidence.`), scoped ? scoped.text : this.profileScoped ? '' : sharedInstructionContext(studio), scoped ? '' : skillSelectionBrief({ studio }), skillPreferencesBrief({ studio:scoped?.instructionRoot||studio, includeProse:!scoped&&!this.profileScoped&&!existsSync(join(studio||'','.studio/profile-storage.json')) })].filter(Boolean).join('\n\n');
   }
 
-  // Claude Code keeps a resumed chat's first system prompt (a new --append-system-prompt isn't applied on
+  // Claude Code keeps a resumed chat's first system prompt (a new --append-system-prompt-file isn't applied on
   // --resume), so when the project's instructions changed since the chat began (a style picked, new app
   // features), the current ones ride along once with the next message.
   withContextUpdate(raw) {

@@ -3,14 +3,15 @@
 //  1. Approvals. pi runs tools without asking; this asks Video Octopus first (as an extension UI select whose title starts
 //     with STUDIO_APPROVAL and a JSON payload), so the creator gets Video Octopus's usual Allow / Always / Deny card.
 //     STUDIO_PI_MODE is Video Octopus's permission mode: manual asks before every command and file change; acceptEdits and
-//     auto let file changes inside the studio (STUDIO_PI_ROOT) through, and auto also plain read-only commands;
+//     auto let file changes inside STUDIO_PI_ROOT (a project chat's own folder, else the studio) and the temporary
+//     folder through, and auto also plain read-only commands;
 //     bypassPermissions never asks. pi's own looking tools (read, grep, find, ls) never ask; a tool from another
 //     extension asks like a command. A relative path is one in pi's working folder (a project's folder for a project
 //     chat; STUDIO_PI_CWD), read the way pi's own tools read it (~, a leading @, file:// URLs).
 //  2. "Video Octopus endpoint": any OpenAI-compatible server (OpenRouter, LM Studio, Ollama, vLLM, a company gateway…) as
 //     a pi provider called "studio", when STUDIO_PI_BASE_URL is set; the key comes in as STUDIO_PI_API_KEY.
 import { realpathSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -77,11 +78,13 @@ function realPlace(p) {
   }
 }
 const fold = (s) => (WIN ? s.toLowerCase() : s);
-const inside = (abs) => {
-  if (!ROOT || !abs) return false;
-  const r = fold(realPlace(ROOT)), q = fold(realPlace(abs));
+const within = (root, abs) => {
+  const r = fold(realPlace(root)), q = fold(realPlace(abs));
   return q === r || q.startsWith(r.endsWith(sep) ? r : r + sep);
 };
+// STUDIO_PI_ROOT is the project's folder for a project chat (the same boundary as Claude Code's outside-project check,
+// server/outside-hook.mjs), the studio otherwise. Temporary files don't count there either.
+const inside = (abs) => Boolean(ROOT && abs && (within(ROOT, abs) || within(tmpdir(), abs)));
 
 export default function (pi) {
   const base = process.env.STUDIO_PI_BASE_URL;

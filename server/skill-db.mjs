@@ -4,6 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, lstatSync, readdirSync, chmodSync } from 'node:fs';
 import { join, dirname, relative, resolve, sep } from 'node:path';
 import { createHash } from 'node:crypto';
+import { projectedPaths } from './file-store.mjs';
 const roots=['.claude/skills','skills/overrides','skills/custom'];
 const sha=b=>createHash('sha256').update(b).digest('hex');
 function safe(root,rel) {
@@ -30,7 +31,8 @@ export function saveSkillSnapshot(studio,state,reason) {
   const db=dbFor(studio,true);const files=[];let size=0;
   try{
     db.exec('BEGIN IMMEDIATE');
-    for(const root of roots){const base=safe(studio,root); const walk=dir=>{if(!existsSync(dir))return;for(const name of readdirSync(dir).sort()){const p=safe(dir,name),st=lstatSync(p);if(st.isDirectory())walk(p);else if(st.isFile()){if(name==='.DS_Store')continue;const bytes=readFileSync(p);size+=bytes.length;if(files.length>=30000||size>384*1024*1024)throw Error('Skill database import exceeds 384 MB / 30,000 files.');const hash=sha(bytes);db.prepare('INSERT OR IGNORE INTO skill_blobs(hash,bytes) VALUES(?,?)').run(hash,bytes);files.push({path:relative(studio,p).split(sep).join('/'),hash,mode:st.mode&0o777});}else throw Error('Unsupported skill file.');}};walk(base);}
+    // File-store projections listed by a generated skill's manifest are not snapshotted: their bytes stay in .studio/files.
+    for(const root of roots){const base=safe(studio,root); const walk=(dir,skip=new Set())=>{if(!existsSync(dir))return;const own=projectedPaths(dir);if(own.size){skip=new Set(skip);for(const x of own)skip.add(join(dir,...x.split('/')));}for(const name of readdirSync(dir).sort()){if(skip.has(join(dir,name)))continue;const p=safe(dir,name),st=lstatSync(p);if(st.isDirectory())walk(p,skip);else if(st.isFile()){if(name==='.DS_Store')continue;const bytes=readFileSync(p);size+=bytes.length;if(files.length>=30000||size>384*1024*1024)throw Error('Skill database import exceeds 384 MB / 30,000 files.');const hash=sha(bytes);db.prepare('INSERT OR IGNORE INTO skill_blobs(hash,bytes) VALUES(?,?)').run(hash,bytes);files.push({path:relative(studio,p).split(sep).join('/'),hash,mode:st.mode&0o777});}else throw Error('Unsupported skill file.');}};walk(base);}
     db.prepare('INSERT INTO skill_snapshots(id,created,reason,state,files) VALUES(?,?,?,?,?)').run(state.transaction,new Date().toISOString(),reason,JSON.stringify(state),JSON.stringify(files));
     db.prepare('INSERT INTO skill_head(singleton,snapshot) VALUES(1,?) ON CONFLICT(singleton) DO UPDATE SET snapshot=excluded.snapshot').run(state.transaction);
     db.exec('COMMIT');

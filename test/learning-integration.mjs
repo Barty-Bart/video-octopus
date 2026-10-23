@@ -20,7 +20,7 @@ if(process.env.OCTOPUS_TEST_AGENT==='1'){
  async function fakeLearningAgent(){
   const {writeFileSync}=await import('node:fs'),{join}=await import('node:path'),{createInterface}=await import('node:readline');
   const argv=process.argv.slice(2);if(argv.includes('--version')){console.log('9.9.9 synthetic');return;}if(argv[0]==='auth'){console.log('{"loggedIn":true,"authMethod":"fixture"}');return;}
-  const context=argv[argv.indexOf('--append-system-prompt')+1],mode=argv[argv.indexOf('--permission-mode')+1];
+  const context=(await import('node:fs')).readFileSync(argv[argv.indexOf('--append-system-prompt-file')+1],'utf8'),mode=argv[argv.indexOf('--permission-mode')+1];
   const isBrand=context.includes('brand onboarding research'),isLearning=context.includes('This is a learning session');
   if((isBrand||isLearning)&&mode!=='manual')throw Error('Study permission mode missing');
   let session=isLearning?JSON.parse(context.match(/^Session: (.+)$/m)[1]):null,referenceId=session?.references[0]?.id;

@@ -5,6 +5,7 @@ import { existsSync, readdirSync, readFileSync, copyFileSync, renameSync, mkdirS
 import { join, dirname } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { safeFile, learningId } from './learning-store.mjs';
+import { FileStore, TEXT_FILES } from './file-store.mjs';
 const digest=p=>existsSync(p)?createHash('sha256').update(readFileSync(p)).digest('hex'):null;
 export function databaseBackups(studio){const root=safeFile(studio,'.studio/learning-backups');if(!existsSync(root))return [];return readdirSync(root).flatMap(id=>{try{learningId(id);const manifest=safeFile(root,`${id}/manifest.json`),file=safeFile(root,`${id}/studio.sqlite`);if(!existsSync(manifest)||!existsSync(file))return [];return [{id,...JSON.parse(readFileSync(manifest)),bytes:lstatSync(file).size}];}catch{return [];}}).sort((a,b)=>b.created.localeCompare(a.created));}
 export function previewDatabaseRestore(studio,id,projects=[]){
@@ -29,8 +30,26 @@ export function previewDatabaseRestore(studio,id,projects=[]){
       const old=JSON.parse(row.data);return ['profileId','brandVersion','instructionVersion','skillSnapshot','formatId','versionId'].some(k=>(old[k]||null)!==(p[k]||null));
     }return false;
   }).map(p=>p.name);
-  return {id,counts,missingPins,token:createHash('sha256').update(`${digest(file)}:${digest(safeFile(studio,'.studio/studio.sqlite'))}`).digest('hex')};
+  return {id,counts,missingPins,missingFiles:missingSkillFiles(studio,db),token:createHash('sha256').update(`${digest(file)}:${digest(safeFile(studio,'.studio/studio.sqlite'))}`).digest('hex')};
  }finally{db.close();}
+}
+// Skill files the backup's versions use that are neither in the file store nor (for an older backup) still in its
+// SQLite blobs. Listed so the creator can restore the file store backup; a restore is not refused for them.
+function missingSkillFiles(studio,db){
+  const has=(table)=>db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table);
+  if(!has('versions'))return [];
+  const store=new FileStore(studio),blobs=has('learning_blobs'),formats=new Map();
+  if(has('formats'))for(const row of db.prepare('SELECT id,data FROM formats').all())formats.set(row.id,JSON.parse(row.data).name);
+  const missing=new Map();
+  for(const row of db.prepare('SELECT data FROM versions').all()){
+    const v=JSON.parse(row.data);
+    for(const f of v.package?.files||[]){
+      if(TEXT_FILES.has(f.file)||missing.has(f.sha256)||store.locate(f.sha256))continue;
+      if(blobs&&db.prepare('SELECT 1 FROM learning_blobs WHERE hash=?').get(f.sha256))continue;
+      missing.set(f.sha256,{sha256:f.sha256,file:f.file,format:formats.get(v.formatId)||null,version:v.number});
+    }
+  }
+  return [...missing.values()];
 }
 export function restoreDatabase(studio,id,token,projects=[]){
  const p=previewDatabaseRestore(studio,id,projects);if(token!==p.token)throw Error('Database or backup changed. Review the restore again.');
@@ -50,5 +69,5 @@ export function restoreDatabase(studio,id,token,projects=[]){
    for(const pair of sidecars)if(existsSync(pair.from)){renameSync(pair.from,pair.to);moved.push(pair);}
    renameSync(tmp,current);
  } catch(e){for(const pair of moved.reverse())if(existsSync(pair.to))renameSync(pair.to,pair.from);throw e;}
- return {ok:true,previous:saved,note:'Database restored. Media, projects and intake files remain in place. Generated skill files will be rebuilt from this database.'};
+ return {ok:true,previous:saved,missingFiles:p.missingFiles,note:'Database restored. Media, projects and intake files remain in place. Generated skill files will be rebuilt from this database.'+(p.missingFiles.length?` ${p.missingFiles.length} skill file${p.missingFiles.length===1?' is':'s are'} missing from the file store: restore the skill file backup.`:'')};
 }

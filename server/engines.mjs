@@ -3,8 +3,8 @@
 // Agent & model picks it (stored in the settings section "claude"); every chat (projects, the Video Octopus assistant, the
 // library's, scheduled runs) is made here, so the rest of Video Octopus never asks which one it is.
 import { ChatSession, claudeInfo, ENGINES } from './claude.mjs';
-import { CodexSession, codexInfo } from './codex.mjs';
-import { PiSession, piInfo, piModels } from './pi.mjs';
+import { CodexSession, codexInfo, codexSource } from './codex.mjs';
+import { PiSession, piInfo, piModels, piSource } from './pi.mjs';
 import { section } from './settings.mjs';
 import { settings } from './util.mjs';
 import { ccSource, sourceCheck, CC_SOURCES } from './claude-source.mjs';
@@ -44,14 +44,19 @@ export function guardLocal(chat) {
   return chat;
 }
 
-// A chat made before the engine (or Claude Code's model source) changed in Settings: true when it should be replaced
-// (and it isn't working). A Claude Code chat knows its source once it has started.
+// Where an engine's model comes from now: Claude Code's model source, Codex's provider, pi's own providers or endpoint.
+export const engineSource = (engine = engineName()) => engine === 'codex' ? codexSource() : engine === 'pi' ? piSource() : ccSource().id;
+// A chat made before the engine or its model source (Claude Code's model source, Codex's provider, pi's providers or
+// endpoint) changed in Settings: true when it should be replaced (and it isn't working). A chat knows its source once
+// it has started.
 export const staleChat = (chat) => Boolean(chat && !chat.busy && (chat.engine !== engineName()
-  || (chat.engine === 'claude' && chat.source && chat.source !== ccSource().id)));
-// A saved session (state.json) that another agent, or Claude Code on another model source, started: not this chat's to
-// carry on, so it goes to the earlier sessions.
+  || (chat.source && chat.source !== engineSource(chat.engine))));
+// A saved session (state.json) that another agent, or the same agent on another model source, started: not this chat's
+// to carry on, so it goes to the earlier sessions. Codex and pi saves from before sources were recorded have none.
 export const foreignSession = (st = {}, engine = engineName()) => Boolean(st.sessionId)
-  && ((st.engine || 'claude') !== engine || (engine === 'claude' && (st.source || 'plan') !== ccSource().id));
+  && ((st.engine || 'claude') !== engine
+    || (engine === 'claude' && (st.source || 'plan') !== ccSource().id)
+    || (engine !== 'claude' && Boolean(st.source) && st.source !== engineSource(engine)));
 
 // `source`: also ask Claude Code's model source what it is and which models it has (claude-source.mjs: read-only lists).
 export async function enginesView(refresh = false, { models = false, source = false } = {}) {

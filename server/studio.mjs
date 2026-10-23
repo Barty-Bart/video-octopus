@@ -182,6 +182,14 @@ export function listProjects() {
     .sort((a, b) => (b.app - a.app) || (b.updated - a.updated));
 }
 
+// A project id is never given to a new project while something still belongs to it: an archived folder, or (through
+// the check index.mjs registers) a saved chat, chat log or rows in the studio database (learning and context pins, a
+// memory binding). Those stay with the archived project, so restoring it brings it back as it was, and the new project
+// starts clean under the next free name (my-video-2).
+let idInUse = () => false;
+export const setProjectIdCheck = (fn) => { idInUse = typeof fn === 'function' ? fn : () => false; };
+const projectIdTaken = (root, id) => existsSync(join(root, id)) || existsSync(join(root, '_archive', id)) || idInUse(id);
+
 export function createProject(name, type, style) {
   const formats = PIPELINES().formats;
   type = formatId(type);
@@ -191,7 +199,7 @@ export function createProject(name, type, style) {
   const root = projectsRoot();
   mkdirSync(root, { recursive: true });
   let id = slugify(name);
-  for (let i = 2; existsSync(join(root, id)); i++) id = `${slugify(name)}-${i}`;
+  for (let i = 2; projectIdTaken(root, id); i++) id = `${slugify(name)}-${i}`;
   const dir = join(root, id);
   for (const sub of ['source', 'work', 'renders']) mkdirSync(join(dir, sub), { recursive: true });
   const today = new Date().toISOString().slice(0, 10);

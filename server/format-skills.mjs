@@ -7,6 +7,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, rmSyn
 import { join, dirname, relative, sep } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { LearningStore, safeFile, formatSkillName, formatSkillId } from './learning-store.mjs';
+import { FileStore, PROJECTED_MANIFEST, projectedManifest, readProjectedManifest, hashFile } from './file-store.mjs';
 
 // Bump when the generated layout or wording changes: unmodified pinned project copies are then regenerated.
 export const FORMAT_SKILL_GENERATOR = 1;
@@ -51,7 +52,9 @@ function write(dest, rel, body) {
 
 // Renders the skill folder for one version into dest (which must not exist yet).
 // names: { profileName, formatName } — current names for the studio skill, pinned names for a project copy.
-export function renderFormatSkill(store, { format, version, names, videos = null, pinned = false, activeNumber = null }, dest) {
+// Assets, knowledge and key frames are listed in PROJECTED_MANIFEST. With projectFiles they are cloned from the file
+// store now (a project's pinned copy); otherwise the projector clones them after the skill is published.
+export function renderFormatSkill(store, { format, version, names, videos = null, pinned = false, activeNumber = null, projectFiles = false }, dest) {
   const name = formatSkillName(format.id);
   const chain = lineage(store, version);
   const references = new Map();
@@ -61,6 +64,14 @@ export function renderFormatSkill(store, { format, version, names, videos = null
     (pinned ? `Pinned copy for one project; it governs that project even if the format has a newer version.`
       : `Use for videos made with this channel and format. A project pinned to another version follows its own pinned copy.`), 900);
   mkdirSync(dest, { recursive: true });
+  const projected = [];
+  const shaOf = (v, file) => (v.files || []).find((x) => x.file === file);
+  const place = (rel, entry) => {
+    if (!entry) return false;
+    projected.push({ path: rel, sha256: entry.sha256, size: entry.size ?? null });
+    if (projectFiles) store.files.project(entry.sha256, safeFile(dest, rel));
+    return true;
+  };
 
   const byArea = new Map();
   for (const r of version.rules) byArea.set(r.area, [...(byArea.get(r.area) || []), r]);
@@ -86,11 +97,8 @@ export function renderFormatSkill(store, { format, version, names, videos = null
     const frames = framesFor.get(ref.id);
     if (frames) {
       for (const fr of frames.frames) {
-        const source = safeFile(frames.version.path, fr.file);
-        if (!existsSync(source)) continue;
         const rel = `examples/${ref.id}/${fr.file.split('/').pop()}`;
-        mkdirSync(dirname(safeFile(dest, rel)), { recursive: true });
-        copyFileSync(source, safeFile(dest, rel));
+        if (!place(rel, shaOf(frames.version, fr.file))) continue;
         exampleLines.push(`- Key frame${fr.seconds === null || fr.seconds === undefined ? '' : ` near ${fr.seconds} s`}: ${rel.slice('examples/'.length)}`);
       }
     }
@@ -103,9 +111,19 @@ export function renderFormatSkill(store, { format, version, names, videos = null
   const assetLines = [];
   for (const a of version.assets || []) {
     const rel = `assets/${a.file.split('/').pop()}`;
-    copyFileSync(safeFile(version.path, a.file), safeFile(dest, rel));
-    assetLines.push(`- ${rel}: ${oneLine(a.note, 300)}`);
+    place(rel, { sha256: a.sha256, size: a.size ?? shaOf(version, a.file)?.size });
+    assetLines.push(`- ${rel}${a.note ? `: ${oneLine(a.note, 300)}` : ''}`);
   }
+  // Knowledge: product sheets, specs, brand facts, price lists. SKILL.md keeps only an index, so the agent opens a
+  // file when the task needs it.
+  const knowledge = version.knowledge || [];
+  if (knowledge.length) mkdirSync(join(dest, 'knowledge'), { recursive: true });
+  const knowledgeLines = knowledge.map((k) => {
+    const rel = `knowledge/${k.file.split('/').pop()}`;
+    place(rel, { sha256: k.sha256, size: k.size ?? shaOf(version, k.file)?.size });
+    return `- **${oneLine(k.title || k.name || rel, 120)}**${k.note ? ` — ${oneLine(k.note, 200)}` : ''} (${rel})`;
+  });
+  write(dest, PROJECTED_MANIFEST, projectedManifest(projected));
 
   const learnings = version.learnings || [];
   write(dest, 'learnings.md', [`# Learnings · ${title}`, '',
@@ -156,11 +174,13 @@ export function renderFormatSkill(store, { format, version, names, videos = null
     '',
     '- rules.md: every approved rule with its evidence.',
     '- examples/examples.md: studied references (links, original paths, notes) and key frames.',
-    '- assets/: approved reusable assets.' + (assetLines.length ? '' : ' None yet.'),
+    '- assets/: approved reusable assets (backgrounds, icons, motion graphics, styles).' + (assetLines.length ? '' : ' None yet.'),
     ...assetLines.map((x) => `  ${x}`),
+    ...(knowledgeLines.length ? ['- knowledge/: reference facts for this format (see the index below). Open a file only when the task needs it.'] : []),
     '- learnings.md: observations, not rules.',
     ...(videos ? ['- videos.md: projects made with each version.'] : []),
     '',
+    ...(knowledgeLines.length ? ['## Knowledge index', '', ...knowledgeLines, ''] : []),
     'These files are generated from the studio database: do not edit them. Propose changes in a format conversation (Video formats → Talk to this format); the creator reviews each draft and saves it as a new version.',
     '',
   ].join('\n');
@@ -201,7 +221,7 @@ function filesOf(dir) {
       const p = join(d, name), st = lstatSync(p);
       if (st.isSymbolicLink()) throw new Error('Generated project context cannot contain links.');
       if (st.isDirectory()) walk(p);
-      else if (name !== PINNED_MARKER) out[relative(dir, p).split(sep).join('/')] = sha(readFileSync(p));
+      else if (name !== PINNED_MARKER) out[relative(dir, p).split(sep).join('/')] = hashFile(p);
     }
   };
   walk(dir);
@@ -231,9 +251,41 @@ export function pinnedFormatSkill(store, bundle, skillRoot) {
   const staging = safeFile(skillRoot, `.${name}.staging-${randomUUID()}`);
   try {
     const pinnedFormat = { ...format, type: bundle.type || format.type };
-    renderFormatSkill(store, { format: pinnedFormat, version, names: { profileName: bundle.profileName, formatName: bundle.formatName }, pinned: true, activeNumber: null }, staging);
+    renderFormatSkill(store, { format: pinnedFormat, version, names: { profileName: bundle.profileName, formatName: bundle.formatName }, pinned: true, activeNumber: null, projectFiles: true }, staging);
     writeFileSync(safeFile(staging, PINNED_MARKER), JSON.stringify({ generator: FORMAT_SKILL_GENERATOR, formatId: format.id, versionId: version.id, files: filesOf(staging) }, null, 2));
     renameSync(staging, target);
   } finally { rmSync(staging, { recursive: true, force: true }); }
   return result;
+}
+
+// After every skill sync: clone each published format skill's assets, knowledge and key frames from the file store
+// (the managed-skills snapshot leaves them out, so SQLite never holds their bytes). A file that no longer matches is
+// kept aside in .studio/edited-skill-files and restored. Returns problems instead of failing the skill sync.
+export function projectPublishedFiles(studio, folders) {
+  const problems = [];
+  if (!folders.length) return problems;
+  const files = new FileStore(studio);
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  for (const folder of folders) {
+    let dir;
+    try {
+      dir = safeFile(studio, `.claude/skills/${folder}`);
+      if (!existsSync(join(dir, 'SKILL.md'))) continue;
+      for (const entry of readProjectedManifest(dir)) {
+        const target = safeFile(dir, entry.path);
+        if (existsSync(target)) {
+          const st = lstatSync(target);
+          if (st.isFile() && hashFile(target) === entry.sha256) continue;
+          const aside = safeFile(studio, `.studio/edited-skill-files/${stamp}-${folder}/${entry.path}`);
+          mkdirSync(dirname(aside), { recursive: true });
+          renameSync(target, aside);
+          problems.push(`${folder}/${entry.path} was changed outside Video formats. It was restored; the edited copy is in ${aside}.`);
+        }
+        files.project(entry.sha256, target);
+      }
+    } catch (e) {
+      problems.push(`${folder}: ${e.message}`);
+    }
+  }
+  return problems;
 }

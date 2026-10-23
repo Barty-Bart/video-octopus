@@ -20,7 +20,7 @@ Save useful preferences with **Remember this**, review proposed lessons, and reu
 | Exports | MP4; WAV, M4A/AAC and MP3; transcript text/Markdown; SRT/VTT and burned captions; layer exports and timeline XML. Tested platform coverage and limitations are listed below. |
 | Project formats | YouTube tutorial, faceless explainer, Short and product explainer. |
 
-> **v0.1.0-beta.9 — source update.** Video formats is now channels › formats › a format home with its own skill, taught and changed by talking to the format; settings saves are crash-safe and the status shows the selected agent. Reviewed scoped memories, searchable chat history, format research and example studies, a SQLite sound catalog, skills and instructions, brand profiles, and automatic New video context are included. Read the [release notes](docs/release-notes.md) and [verification limits](docs/managed-skills-verification.md) before relying on an untested workflow.
+> **v0.1.0-beta.10 — source update.** Formats can hold real files (assets and knowledge such as product sheets) kept outside the database; the app now needs Node 22.16+ or 24+ and checks Node and FFmpeg versions; agents get the right context in scheduled runs, upgrades and format conversations. Reviewed scoped memories, searchable chat history, format research and example studies, a SQLite sound catalog, skills and instructions, brand profiles, and automatic New video context are included. Read the [release notes](docs/release-notes.md) and [verification limits](docs/managed-skills-verification.md) before relying on an untested workflow.
 
 ### Six bundled starter skills
 
@@ -44,7 +44,7 @@ Motion-graphics infrastructure is built in, but a specialized motion-design skil
 Have these ready:
 
 - Git (and repository access for private copies).
-- Node.js **22.13 or newer**. Use a current Node 22 LTS or Node 24 release (Node 23.0–23.3 is unsupported). This SQLite workflow was tested on Node 24.21.0. The launchers check the minimum before opening the app.
+- Node.js **22.16 or newer on Node 22, or Node 24 or newer** (Node 24 LTS recommended). Node 23 is unsupported: its built-in SQLite lacks the full-text search (FTS5) that memories use. The launchers check the version and FTS5 before opening the app. Setup and Settings → Updates warn, without blocking, when Node is older than its line's latest security release (22.23.4 or 24.22.1 as of October 2026).
 - Chrome or Edge for the browser UI and recording.
 - For AI work, a separately installed agent and a usable model/provider. You can enter the editor without one.
 
@@ -72,7 +72,7 @@ The app creates a studio in local application storage by default (for example, `
 
 Setup scans Claude Code, Codex, LM Studio, Ollama and Pi, and checks tools such as FFmpeg and Python. **Continue works even when dependencies or agents are missing**; this does not make their dependent features ready.
 
-- **FFmpeg and ffprobe:** needed for media processing and export. Setup offers `brew install ffmpeg` when Homebrew is available on Mac, or `winget install --id Gyan.FFmpeg -e` on Windows. Both app-offered installation paths succeeded in the hosted tests. A Mac without Homebrew needs the manual installation path.
+- **FFmpeg and ffprobe:** needed for media processing and export. Setup shows their version and warns, without blocking, below FFmpeg 8.1.2: Video Octopus runs FFmpeg on downloaded example videos, and older releases have known flaws that crafted media files can exploit. Setup offers `brew install ffmpeg` when Homebrew is available on Mac, or `winget install --id Gyan.FFmpeg -e` on Windows. Both app-offered installation paths succeeded in the hosted tests. A Mac without Homebrew needs the manual installation path.
 - **Python and packages:** local transcription, cleanup tools and object separation need the packages listed in the studio's `requirements.txt`. Object separation requires Python 3.10 or newer. Setup reports missing packages; they are not bundled into the app or proven installed by the fresh-runner test.
 - **Models:** Whisper and SAM 2.1 weights are separate downloads. The optional “Check my machine” step recommends models, and Setup provides download controls. A successful version or metadata check does not prove a model can complete an editing task.
 - **Agents:** Claude Code normally uses its own sign-in; Codex can use its ChatGPT configuration or a supported local provider; Pi uses its configured provider/model or an OpenAI-compatible endpoint. A local model server alone is not an agent runtime: the selected Claude Code, Codex or Pi CLI must also be installed.
@@ -183,7 +183,7 @@ Keep personal material out of the application repository. Commit only generic te
 
 ## Data, network access and trust
 
-Media, projects and generated work are stored in your studio. Application settings and chat logs live in the checkout's ignored `local/` directory. Optional API keys saved through the app use macOS Keychain or Windows encryption tied to the signed-in user.
+Media, projects and generated work are stored in your studio. Application settings and chat logs live in the checkout's ignored `local/` directory. While a Claude Code or pi chat runs, its appended system prompt is a user-only file in `local/agent-prompts/` (Windows limits command lines to 32,767 characters); the file is removed when that agent process ends. Optional API keys saved through the app use macOS Keychain or Windows encryption tied to the signed-in user.
 
 Local storage does **not** mean every operation is offline. The selected agent/provider can receive prompts, context and files it reads; cloud transcription sends audio to the selected service. Update checks and optional skill installation contact GitHub; model downloads contact Hugging Face or the selected model server. Agent tools and third-party skills can make other network requests.
 

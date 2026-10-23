@@ -34,7 +34,17 @@ const AREAS = [
   { id: 'sound', name: 'Sound' },
   { id: 'knowledge', name: 'Knowledge' },
 ];
-const TABS = ['skill', 'examples', 'learnings', 'videos', 'history'];
+const TABS = ['skill', 'files', 'examples', 'learnings', 'videos', 'history'];
+// Skill files: same limits as server/file-store.mjs (shown to the creator, enforced by the server).
+const MAX_FILES = 300;
+const MAX_FILE_BYTES = 1024 ** 3;
+const KNOWLEDGE_TYPES = /\.(md|txt|csv|tsv|json|pdf|png|jpe?g|webp|gif|svg)$/i;
+const fileSize = (n) => {
+  if (n === null || n === undefined) return '';
+  if (n >= 1024 ** 3) return `${Math.round((n / 1024 ** 3) * 10) / 10} GB`;
+  if (n >= 1024 ** 2) return `${Math.round((n / 1024 ** 2) * 10) / 10} MB`;
+  return n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} bytes`;
+};
 const areaName = (id) => AREAS.find((a) => a.id === id)?.name || id;
 const conversationStatus = (status) => ({
   draft: 'Open',
@@ -70,7 +80,7 @@ const isLinkList = (text) => {
   return lines.length > 0 && lines.every((x) => /^https?:\/\/\S+$/i.test(x));
 };
 // Drafts that are simply not there yet are normal; anything else is a problem the creator should see.
-const quietDraftError = (message) => /^No proposal yet|has no rule changes yet/.test(message || '');
+const quietDraftError = (message) => /^No proposal yet|has no rule changes/.test(message || '');
 const PENCIL = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4z"/></svg>';
 
 // A POST that keeps the HTTP status, so 409 ("rebase needed") can be told apart from other refusals.
@@ -152,6 +162,7 @@ export async function renderLearning(root, { makeChat, startVideo } = {}) {
   let chat = null;
   let events = null;
   let intakeBusy = false;
+  let fileKind = 'all'; // Files tab filter: all, asset or knowledge
   const settings = new Map(); // per conversation: name, direction and study depth not yet saved
   const choices = new Map(); // per draft (conversation + token): Keep / Discard picked in the panel
 
@@ -208,10 +219,11 @@ export async function renderLearning(root, { makeChat, startVideo } = {}) {
     const format = formats.find((f) => f.id === fid) || null;
     const conversations = format ? newestConversations(format.id) : [];
     if (talking && !sid) sid = conversations.find((s) => s.status !== 'cancelled')?.id || null;
-    const [videoRows, active, skill] = await Promise.all([
+    const [videoRows, active, skill, files] = await Promise.all([
       Promise.all(formats.map((f) => api(`${E}/formats/${f.id}/videos`).catch(() => []))),
       format?.activeVersion ? api(`${E}/versions/${format.activeVersion}`).catch((e) => ({ error: e.message })) : null,
       format ? api(`${E}/formats/${format.id}/skill`).catch(() => null) : null,
+      format ? api(`${E}/formats/${format.id}/files`).catch((e) => ({ error: e.message })) : null,
     ]);
     view = {
       profiles,
@@ -223,6 +235,7 @@ export async function renderLearning(root, { makeChat, startVideo } = {}) {
       active: active && !active.error ? active : null,
       activeError: active?.error || null,
       skill,
+      files,
       videos: new Map(formats.map((f, i) => [f.id, videoRows[i]])),
       ...(format ? await findDrafts(conversations) : { panel: null, panelError: null, draft: null }),
     };
@@ -405,6 +418,7 @@ export async function renderLearning(root, { makeChat, startVideo } = {}) {
     const learnings = (view.active?.learnings?.length || 0);
     const tabs = [
       ['skill', TERMS.skill],
+      ['files', `Files · ${view.files?.totals?.count || 0}`],
       ['examples', `Examples · ${examples}`],
       ['learnings', `Insights · ${learnings}`],
       ['videos', `Videos · ${used}`],
@@ -433,6 +447,7 @@ export async function renderLearning(root, { makeChat, startVideo } = {}) {
   }
 
   function tabBody() {
+    if (tab === 'files') return filesTab();
     if (tab === 'examples') return examplesTab();
     if (tab === 'learnings') return learningsTab();
     if (tab === 'videos') return videosTab();
@@ -524,6 +539,7 @@ export async function renderLearning(root, { makeChat, startVideo } = {}) {
       ['rules.md', active ? plural(active.rules.length, 'rule') : ''],
       ['examples/', String(examples)],
       ['assets/', String(active?.assets?.length || 0)],
+      ['knowledge/', String(active?.knowledge?.length || 0)],
       ['learnings.md', String(active?.learnings?.length || 0)],
       ['videos.md', String(view.videos.get(f.id)?.length || 0)],
     ];
@@ -548,6 +564,117 @@ export async function renderLearning(root, { makeChat, startVideo } = {}) {
       </section>
       <section class="vf-card vf-note">Picked automatically when a new video is for <b>${esc(p.name)} › ${esc(f.name)}</b>. Videos keep the skill version they started with.</section>
     </aside>`;
+  }
+
+  // ---- Files: the skill's assets and knowledge, with the open draft's New / Changed / Removed files inline ----
+
+  function fileRow(file, { mark = null, discarded = false, staged = false } = {}) {
+    const title = file.kind === 'knowledge' && file.title ? file.title : file.name;
+    const added = file.addedIn?.number ? `added in v${file.addedIn.number}` : staged ? 'in the draft' : '';
+    const meta = [file.kind === 'knowledge' ? 'Knowledge' : 'Asset', fileSize(file.size), added].filter(Boolean).join(' · ');
+    const tag = mark ? `<span class="vf-tag ${mark.toLowerCase()}">${discarded ? `${mark} · discarded` : mark}</span>` : '';
+    const path = esc(file.path || file.file);
+    let actions = '';
+    if (staged) actions = `<button type="button" class="btn small ghost" data-file-unstage="${path}">Take out of draft</button>`;
+    else if (mark === 'Removed') actions = `<button type="button" class="btn small ghost" data-file-unstage="${path}">Keep it</button>`;
+    else {
+      actions = `<button type="button" class="btn small" data-file-reveal="${path}">Show in Finder</button>
+        <button type="button" class="btn small ghost" data-file-remove="${path}" aria-label="Remove ${esc(title)} from the skill">Remove</button>`;
+    }
+    return `<li class="vf-file${mark ? ' pending' : ''}${discarded ? ' discarded' : ''}">
+      <div class="vf-file-main">
+        ${mark === 'Removed' ? `<s>${esc(title)}</s>` : `<b>${esc(title)}</b>`}
+        ${title !== file.name ? `<small class="vf-file-name">${esc(file.name)}</small>` : ''}
+        ${file.note ? `<span class="vf-file-note">${esc(file.note)}</span>` : ''}
+        <small>${esc(meta)}</small>
+      </div>
+      ${tag}
+      <span class="vf-file-actions">${actions}</span>
+    </li>`;
+  }
+
+  function filesTab() {
+    const listed = view.files;
+    if (listed?.error) return `<div class="notice">The skill files could not be read: ${esc(listed.error)}</div>`;
+    const saved = listed?.files || [];
+    const draft = view.draft;
+    const pending = draft?.proposal?.files || { added: [], removed: [] };
+    const picked = draft?.proposal ? choiceMap(draft.session.id, draft.proposal.token) : new Map();
+    const removed = new Set(pending.removed.map((r) => r.path));
+    const replaced = new Set(pending.added.map((a) => a.path));
+    const shown = (kind) => fileKind === 'all' || fileKind === kind;
+    const rows = [
+      ...pending.added.filter((a) => shown(a.kind)).map((a) => fileRow(a, { mark: a.change === 'changed' ? 'Changed' : 'New', staged: true, discarded: picked.get(`file:${a.path}`) === 'discard' })),
+      ...saved.filter((x) => shown(x.kind) && !replaced.has(x.file)).map((x) => fileRow(x, { mark: removed.has(x.file) ? 'Removed' : null, discarded: picked.get(`file:${x.file}`) === 'discard' })),
+    ];
+    const totals = listed?.totals || { count: 0, assets: 0, knowledge: 0, bytes: 0 };
+    const changes = pending.added.length + pending.removed.length;
+    const filter = [['all', 'All', totals.count], ['asset', 'Assets', totals.assets], ['knowledge', 'Knowledge', totals.knowledge]]
+      .map(([key, label, n]) => `<button type="button" class="vf-seg${fileKind === key ? ' on' : ''}" data-file-kind="${key}" aria-pressed="${fileKind === key}">${label} · ${n}</button>`).join('');
+    const empty = !saved.length && !pending.added.length
+      ? `<div class="vf-empty-files"><b>No files yet</b><p class="sub"><b>Assets</b> are files videos use directly: backgrounds, icons, logos, motion graphics, styles. <b>Knowledge</b> is what the agent reads when a video needs the facts: product sheets, specs, brand facts, price lists. Added files go into a draft you review and save as a new version.</p></div>`
+      : rows.length ? '' : '<p class="sub vf-none">No files of this kind.</p>';
+    return `<section class="vf-card vf-files" aria-label="Skill files">
+      <div class="vf-card-head">
+        <h2>Files</h2>
+        ${changes ? `<button type="button" class="link-btn sub" data-action="openDraft">${plural(changes, 'file change')} waiting for review in “${esc(draft.session.name)}”</button>` : ''}
+        ${button('Add files', 'addFiles', 'small primary')}
+      </div>
+      <div class="vf-files-bar">
+        <div class="vf-segs" role="group" aria-label="Show files">${filter}</div>
+        <span class="sub">${totals.count} of ${MAX_FILES} files · ${fileSize(totals.bytes) || '0 bytes'} · up to ${fileSize(MAX_FILE_BYTES)} each</span>
+      </div>
+      ${empty}
+      ${rows.length ? `<ul class="vf-file-list">${rows.join('')}</ul>` : ''}
+    </section>`;
+  }
+
+  // Uploads go into a conversation draft (the open one, or the draft the Skill tab shows), never straight into the skill.
+  function addFilesDialog(sessionId = null) {
+    const f = view.format;
+    const el = dialog('Add files to the skill', `<p class="sub">Files go into a draft. Review and save it as a new skill version; videos already made keep theirs.</p>
+      <label>Kind<select name="kind">
+        <option value="asset">Asset · used in videos (backgrounds, icons, logos, motion graphics, styles)</option>
+        <option value="knowledge">Knowledge · facts the agent reads (product sheets, specs, price lists)</option>
+      </select></label>
+      <label>Files<input type="file" name="files" multiple required></label>
+      <label>Note (optional)<input name="note" maxlength="2000" placeholder="When the agent should use these files"></label>
+      <p class="sub">Up to ${MAX_FILES} files per skill, ${fileSize(MAX_FILE_BYTES)} each. Knowledge can be Markdown, text, CSV, JSON, PDF or images.</p>
+      <p class="sub" role="status" data-upload-status></p>`, async (b) => {
+      const files = [...$('[name=files]', el).files];
+      if (!files.length) throw Error('Choose at least one file.');
+      for (const file of files) {
+        if (file.size > MAX_FILE_BYTES) throw Error(`${file.name} is larger than ${fileSize(MAX_FILE_BYTES)}.`);
+        if (b.kind === 'knowledge' && !KNOWLEDGE_TYPES.test(file.name)) throw Error(`${file.name}: knowledge can be Markdown, text, CSV, JSON, PDF or an image.`);
+      }
+      let target = sessionId ? conversation(sessionId) : draftTarget();
+      let revision = target?.revision;
+      let last = null;
+      for (const [i, file] of files.entries()) {
+        $('[data-upload-status]', el).textContent = `Adding ${file.name} (${i + 1} of ${files.length})…`;
+        const query = new URLSearchParams({ kind: b.kind, name: file.name, note: b.note || '' });
+        if (target) { query.set('sessionId', target.id); query.set('revision', String(revision)); }
+        const res = await fetch(`${E}/formats/${f.id}/files?${query}`, { method: 'POST', headers: { 'X-Studio': '1' }, body: file });
+        const r = await res.json().catch(() => ({}));
+        if (!res.ok) throw Error(`${file.name}: ${r.error || `HTTP ${res.status}`}${i ? ' Earlier files were added.' : ''}`);
+        last = r;
+        target = r.session;
+        revision = r.session.revision;
+      }
+      sid = last.session.id;
+      await paint();
+      toast(last.proposalError ? `Added to the draft, but it needs attention: ${last.proposalError}` : `Added ${plural(files.length, 'file')} to the draft in “${last.session.name}”. Review and save it when ready.`);
+    }, 'Add to draft');
+  }
+
+  async function fileChange(action, path) {
+    const target = draftTarget();
+    const body = { action, path };
+    if (target) { body.sessionId = target.id; body.revision = target.revision; }
+    const res = await api(`${E}/formats/${fid}/draft-file`, body);
+    sid = res.session.id;
+    await paint();
+    toast(action === 'remove' ? `Removal added to the draft in “${res.session.name}”.` : 'Taken out of the draft.');
   }
 
   function examplesTab() {
@@ -653,7 +780,8 @@ export async function renderLearning(root, { makeChat, startVideo } = {}) {
           <p id="learnIntakeStatus" class="sub" role="status"></p>
           <div class="composer"><textarea id="input" rows="2" aria-label="Message the format assistant" placeholder="Drop videos or files, paste links, or ask for a change"></textarea><button class="send" id="sendBtn" aria-label="Send"><span class="l-send">↑</span><i class="stop-sq l-stop"></i></button></div>
           <div class="vf-compose-tools">
-            <button type="button" class="btn small" data-action="attach">Attach files</button>
+            <button type="button" class="btn small" data-action="attach" title="Add example videos or files to study">Attach files</button>
+            <button type="button" class="btn small" data-action="addFilesHere" title="Add assets or knowledge to the skill">Add to skill</button>
             <button type="button" class="btn small" data-action="study">${esc(studyLabel(s.status))}</button>
             <span class="sub vf-grow" id="learnRunHint">Changes are drafts until you save them.</span>
             <button type="button" class="vf-icon" data-action="studySettings" aria-expanded="false" aria-controls="vfSettings" aria-label="Study settings" title="Study settings">⚙</button>
@@ -860,7 +988,10 @@ export async function renderLearning(root, { makeChat, startVideo } = {}) {
     Object.assign(view, found);
     paintDraft();
     updateStudy();
-    if (tab === 'skill') paintHome();
+    if (tab === 'skill' || tab === 'files') {
+      view.files = await api(`${E}/formats/${fid}/files`).catch((e) => ({ error: e.message }));
+      paintHome();
+    }
     if (found.panel && found.panel.proposal.token !== before) toast('Draft ready. Keep or discard each change, then review and save.');
   }
 
@@ -879,6 +1010,19 @@ export async function renderLearning(root, { makeChat, startVideo } = {}) {
     </li>`;
   }
 
+  function fileChangeRow(item, choice) {
+    const kind = item.change === 'removed' ? 'file removal' : item.change === 'changed' ? 'file change' : 'new file';
+    const label = item.kind === 'knowledge' ? (item.title || item.name) : item.name;
+    const keep = choice !== 'discard';
+    return `<li class="vf-change${keep ? '' : ' discarded'}">
+      <div class="vf-change-text"><span class="sub">${item.kind === 'knowledge' ? 'Knowledge' : 'Asset'} · ${kind} · ${esc(fileSize(item.size))}</span>${item.change === 'removed' ? `<s>${esc(label)}</s>` : `<span>${esc(label)}</span>`}</div>
+      <span class="vf-keep" role="group" aria-label="Decision">
+        <button type="button" class="btn small${keep ? ' on' : ''}" data-choice="keep" data-rule="file:${esc(item.path)}" aria-pressed="${keep}">Keep</button>
+        <button type="button" class="btn small ghost${keep ? '' : ' on'}" data-choice="discard" data-rule="file:${esc(item.path)}" aria-pressed="${!keep}">Discard</button>
+      </span>
+    </li>`;
+  }
+
   function paintDraft() {
     const box = $('#vfDraft', root);
     if (!box) return;
@@ -890,10 +1034,11 @@ export async function renderLearning(root, { makeChat, startVideo } = {}) {
     if (!d) { box.innerHTML = ''; return; }
     const p = d.proposal, next = nextNumber(), picked = choiceMap(d.session.id, p.token);
     const items = [...p.rules, ...p.removals];
+    const fileItems = [...(p.files?.added || []), ...(p.files?.removed || [])];
     box.innerHTML = `<details class="vf-draft" open>
-      <summary><b>Draft · ${plural(items.length, 'change')}</b><span class="sub">saves as v${next}</span></summary>
+      <summary><b>Draft · ${plural(items.length + fileItems.length, 'change')}</b><span class="sub">saves as v${next}</span></summary>
       ${p.stale ? `<p class="vf-stale sub">Started from v${p.baseNumber || '—'}; the skill is now v${activeNumber() || '—'}. ${button('Rebase draft', 'rebasePanel', 'small')}</p>` : ''}
-      <ul class="vf-changes">${items.map((item) => changeRow(item, picked.get(item.id))).join('')}</ul>
+      <ul class="vf-changes">${items.map((item) => changeRow(item, picked.get(item.id))).join('')}${fileItems.map((item) => fileChangeRow(item, picked.get(`file:${item.path}`))).join('')}</ul>
       ${p.learnings.length ? `<p class="sub">Also saves ${plural(p.learnings.length, 'insight')}.</p>` : ''}
       <div class="learn-actions">${button(`Review and save as v${next}`, 'review', 'primary')}</div>
     </details>`;
@@ -947,15 +1092,30 @@ export async function renderLearning(root, { makeChat, startVideo } = {}) {
           <p class="sub">${evidenceText(r.evidence)}</p>
           ${select(r)}
         </article>`;
+      const fileCard = (x) => {
+        const choice = picked.get(`file:${x.path}`) === 'discard' ? 'discard' : 'keep';
+        const opts = x.change === 'removed'
+          ? [['keep', 'Remove this file'], ['discard', 'Keep the file (discard the removal)']]
+          : [['keep', x.change === 'changed' ? 'Replace the saved file' : 'Add this file'], ['discard', 'Discard this file']];
+        const label = x.kind === 'knowledge' ? (x.title || x.name) : x.name;
+        const open = x.change !== 'removed' ? ` · <a target="_blank" rel="noopener" href="${E}/sessions/${id}/asset?file=${encodeURIComponent(x.file)}">Open</a>` : '';
+        return `<article class="learn-rule" data-review-file="${esc(x.path)}">
+          <div class="vf-review-head"><b>${x.kind === 'knowledge' ? 'Knowledge' : 'Asset'}</b><span class="vf-tag ${x.change}">${x.change === 'new' ? 'New' : x.change === 'changed' ? 'Changed' : 'Removed'}</span></div>
+          <p>${x.change === 'removed' ? `<s>${esc(label)}</s>` : esc(label)} <span class="sub">${esc(x.path)} · ${esc(fileSize(x.size))}${open}</span></p>
+          ${x.note ? `<p class="sub">${esc(x.note)}</p>` : ''}
+          <label>Decision<select>${opts.map(([value, text]) => `<option value="${value}"${value === choice ? ' selected' : ''}>${text}</option>`).join('')}</select></label>
+        </article>`;
+      };
       el.innerHTML = `<h2 id="vfReviewTitle">Review and save as v${next}</h2>
         <p class="sub">Every change needs a decision. Saving makes v${next} the skill new videos use; videos already made keep their version.</p>
         ${p.stale ? `<div class="notice">This draft started from v${p.baseNumber || '—'}, but the format's skill changed since (now v${versionNumber(p.activeVersion) || '—'}). Rebase it onto the current version, check it, then save. ${button('Rebase draft', 'rebase', 'small')}</div>` : ''}
         ${p.rules.map(ruleCard).join('')}
         ${p.removals.map(removalCard).join('')}
+        ${[...p.files.added, ...p.files.removed].map(fileCard).join('')}
         ${p.learnings.length ? `<details open><summary>Insights saved with it (${p.learnings.length})</summary><ul>${p.learnings.map((l) => `<li>${esc(l.text)}</li>`).join('')}</ul></details>` : ''}
         <details${p.workflowChanged || !p.baseVersion ? ' open' : ''}><summary>Workflow${p.baseVersion && !p.workflowChanged ? ' (unchanged)' : ''}</summary><pre>${esc(p.workflow)}</pre></details>
-        <details><summary>Reusable assets (${p.assets.length})</summary>${p.assets.map((a) => `<p><a target="_blank" rel="noopener" href="${E}/sessions/${id}/asset?file=${encodeURIComponent(a.file)}">${esc(a.file)}</a> — ${esc(a.note)}</p>`).join('') || '<p>No assets proposed.</p>'}</details>
-        <label class="learn-check"><input type="checkbox" id="learnReviewed">I reviewed every change, the workflow and the asset list.</label>
+        <p class="sub">After saving, the skill holds ${p.files.count} of ${MAX_FILES} files (${esc(fileSize(p.files.bytes) || '0 bytes')}).</p>
+        <label class="learn-check"><input type="checkbox" id="learnReviewed">I reviewed every change, the workflow and the files.</label>
         <p class="learn-error" role="alert"></p>
         <div class="learn-actions"><button type="button" class="btn" data-close>Cancel</button>${button(`Save as v${next}`, 'approve', 'primary')}</div>`;
       el.querySelectorAll('[data-review][data-kind=rule] textarea').forEach((t) => {
@@ -977,7 +1137,8 @@ export async function renderLearning(root, { makeChat, startVideo } = {}) {
       });
       let v;
       try {
-        v = await post(`${E}/sessions/${id}/approve`, { revision: p.revision, token: p.token, decisions });
+        const fileDecisions = [...el.querySelectorAll('[data-review-file]')].map((card) => ({ path: card.dataset.reviewFile, action: $('select', card).value }));
+        v = await post(`${E}/sessions/${id}/approve`, { revision: p.revision, token: p.token, decisions, fileDecisions });
       } catch (e) {
         if (e.status !== 409) { errorBox().textContent = e.message; return; }
         errorBox().innerHTML = `${esc(e.message)} ${button('Rebase draft', 'rebase409', 'small')}`;
@@ -1167,6 +1328,8 @@ export async function renderLearning(root, { makeChat, startVideo } = {}) {
     openDraft: async () => { sid = view.draft.session.id; talking = true; await paint(); revealPanel(); },
     openConversation: async (el, id) => { sid = id; talking = true; await paint(); revealPanel(); },
     addRule: () => ruleDialog(null),
+    addFiles: () => addFilesDialog(),
+    addFilesHere: () => addFilesDialog(sid),
     rebaseDraft: async () => {
       const s = await api(`${E}/sessions/${view.draft.session.id}`);
       await post(`${E}/sessions/${s.id}/rebase`, { revision: s.revision });
@@ -1223,7 +1386,7 @@ export async function renderLearning(root, { makeChat, startVideo } = {}) {
   };
 
   root.onclick = async (e) => {
-    const el = e.target.closest('[data-action],[data-profile],[data-format],[data-tab],[data-channel-menu],[data-edit-rule],[data-choice],[data-remove-reference]');
+    const el = e.target.closest('[data-action],[data-profile],[data-format],[data-tab],[data-channel-menu],[data-edit-rule],[data-choice],[data-remove-reference],[data-file-kind],[data-file-reveal],[data-file-remove],[data-file-unstage]');
     if (!el || !root.contains(el) || el.disabled) return;
     const busy = (fn) => run(fn)({ currentTarget: el });
     if (el.dataset.action) {
@@ -1259,12 +1422,16 @@ export async function renderLearning(root, { makeChat, startVideo } = {}) {
       return;
     }
     if (el.dataset.editRule) { ruleDialog(el.dataset.editRule); return; }
+    if (el.dataset.fileKind) { fileKind = el.dataset.fileKind; paintHome(); return; }
+    if (el.dataset.fileReveal) { await busy(() => api(`${E}/formats/${fid}/reveal-file`, { path: el.dataset.fileReveal })); return; }
+    if (el.dataset.fileRemove) { await busy(() => fileChange('remove', el.dataset.fileRemove)); return; }
+    if (el.dataset.fileUnstage) { await busy(() => fileChange('unstage', el.dataset.fileUnstage)); return; }
     if (el.dataset.choice) {
       const d = view.panel?.proposal ? view.panel : view.draft;
       if (!d) return;
       choiceMap(d.session.id, d.proposal.token).set(el.dataset.rule, el.dataset.choice);
       paintDraft();
-      if (tab === 'skill') paintHome();
+      if (tab === 'skill' || tab === 'files') paintHome();
       return;
     }
     if (el.dataset.removeReference) {
@@ -1364,12 +1531,87 @@ export async function projectLearningPanel(root,id,meta,{send}={}){
  $('[data-action=script]',actions).onclick=()=>send?.('Develop or revise script.md using this project’s pinned format skill, direction and target duration. Show the script for review before recording or building. Preserve any existing draft until changes are agreed.');
  $('[data-action=plan]',actions).onclick=async()=>{try{const p=await api(`${E}/projects/${id}/plan-review`,{});dialog('Approve scene plan',`<p>Review the scene plan and timing. Approval applies to this exact plan, cut and guide version.</p><pre>${esc(JSON.stringify(p.plan,null,2))}</pre>`,async()=>{await api(`${E}/projects/${id}/approve-plan`,{token:p.token});toast('Scene plan approved. You can start the build.');});}catch(e){toast(e.message);}};
  $('[data-action=recap]',actions).onclick=()=>dialog('Study this project',field('What worked, what changed and why','note','','textarea'),async b=>{const s=await api(`${E}/projects/${id}/recap`,b);location.hash=`#/learning?session=${s.id}`;});
- $('[data-action=upgrade]',actions).onclick=async()=>{try{const all=await api(E),f=all.formats.find(f=>f.id===meta.learning.formatId);if(f.activeVersion===v.id){toast('This project already uses the active version.');return;}const diff=await api(`${E}/projects/${id}/upgrade-preview`,{versionId:f.activeVersion});dialog('Review format upgrade',`<h3>Current rules</h3><pre>${esc(diff.oldRules.map(r=>r.text).join('\n\n'))}</pre><h3>New rules</h3><pre>${esc(diff.newRules.map(r=>r.text).join('\n\n'))}</pre><p>Existing cuts, graphics and overrides stay as they are. Ask the agent to review changes before rebuilding.</p>`,async()=>{await api(`${E}/projects/${id}/upgrade`,{versionId:diff.to,expected:diff.from});location.reload();});}catch(e){toast(e.message);}};
+ $('[data-action=upgrade]',actions).onclick=async()=>{try{const all=await api(E),f=all.formats.find(f=>f.id===meta.learning.formatId);if(f.activeVersion===v.id){toast('This project already uses the active version.');return;}const diff=await api(`${E}/projects/${id}/upgrade-preview`,{versionId:f.activeVersion});dialog('Review format upgrade',`<h3>Current rules</h3><pre>${esc(diff.oldRules.map(r=>r.text).join('\n\n'))}</pre><h3>New rules</h3><pre>${esc(diff.newRules.map(r=>r.text).join('\n\n'))}</pre>${diff.notices?.length?`<div class="notice">${diff.notices.map(n=>`<p>${esc(n)}</p>`).join('')}</div>`:''}<p>Existing cuts, graphics and overrides stay as they are. Ask the agent to review changes before rebuilding.</p>`,async()=>{await api(`${E}/projects/${id}/upgrade`,{versionId:diff.to,expected:diff.from});location.reload();});}catch(e){toast(e.message);}};
 }
 
-export async function renderDatabaseRecovery(root){
- const backups=await api(`${E}/backups`);
- root.innerHTML=`<div class="home-wrap learn-page"><h1>Local database recovery</h1><p>Skills, approved guides, sound catalog metadata and their relationships are stored in SQLite. A backup includes their saved content. Large media and draft intake remain separate files and need their own backup.</p>${button('Create database backup','backup')}<div id="dbBackups"></div><p class="sub">A full restore preserves the displaced database and refuses backups that would break a current project’s version pin. For ordinary changes, use skill history or format history instead.</p></div>`;
- $('[data-action=backup]',root).onclick=async()=>{try{const b=await api(`${E}/backup`,{});toast(`Saved ${b.path}`);await renderDatabaseRecovery(root);}catch(e){toast(e.message);}};
- for(const b of backups){const row=h(`<section class="learn-version"><b>${esc(b.created)}</b><p>${b.profiles} profiles · ${b.versions} guide versions · ${b.sounds||0} catalog sounds · ${Math.round(b.bytes/1024)} KB</p><button class="btn">Review restore</button></section>`);$('#dbBackups',root).append(row);$('button',row).onclick=async()=>{try{const p=await api(`${E}/backups/${b.id}/preview`,{});if(p.missingPins.length)throw Error('This backup lacks versions used by: '+p.missingPins.join(', '));dialog('Restore database backup',`<p>This replaces the current registry with the reviewed backup. The displaced database is kept for recovery. Media files remain in place.</p><pre>${esc(JSON.stringify(p.counts,null,2))}</pre>`,async()=>{const result=await api(`${E}/backups/${b.id}/restore`,{token:p.token});toast(result.warning||'Database restored.');await renderDatabaseRecovery(root);},'Restore backup');}catch(e){toast(e.message);}};}
+// Storage: database backups and restore, plus the skill file store (size, unused files, backup to another folder).
+export async function renderDatabaseRecovery(root) {
+  const [backups, files] = await Promise.all([
+    api(`${E}/backups`),
+    api(`${E}/files`).catch((e) => ({ error: e.message })),
+  ]);
+  const size = (n) => n >= 1024 ** 3 ? `${Math.round((n / 1024 ** 3) * 10) / 10} GB` : n >= 1024 ** 2 ? `${Math.round((n / 1024 ** 2) * 10) / 10} MB` : `${Math.max(0, Math.round((n || 0) / 1024))} KB`;
+  const unused = files.unused || [];
+  const missing = files.missing || [];
+  root.innerHTML = `<div class="home-wrap learn-page storage-page">
+    <h1>Local database recovery</h1>
+    <p>Skills, approved guides, sound catalog metadata and their relationships are stored in SQLite. A backup includes their saved content. Skill files (assets, knowledge and key frames) are kept in the file store below and need their own backup, as do large media and draft intake.</p>
+    ${button('Create database backup', 'backup')}
+    <div id="dbBackups"></div>
+    <p class="sub">A full restore preserves the displaced database and refuses backups that would break a current project’s version pin. Skill files a restored version needs but the file store lacks are listed, not fatal. For ordinary changes, use skill history or format history instead.</p>
+    <section class="vf-card storage-files" aria-labelledby="storageFilesTitle">
+      <h2 id="storageFilesTitle">Skill files</h2>
+      ${files.error ? `<p class="notice">${esc(files.error)}</p>` : `
+      <p>${files.objects} stored file${files.objects === 1 ? '' : 's'} · ${size(files.bytes)}. Each identical file is stored once in <code>${esc(files.root)}</code>. Skill folders hold copy-on-write clones of these files.</p>
+      ${missing.length ? `<div class="notice"><b>${missing.length} file${missing.length === 1 ? ' is' : 's are'} missing from the file store.</b> Restore them from a skill file backup.<ul>${missing.slice(0, 20).map((m) => `<li>${esc(m.file)} · ${esc(m.uses.map((u) => `${u.format || 'format'} v${u.number}`).join(', '))}</li>`).join('')}</ul></div>` : ''}
+      <h3>Unused files</h3>
+      ${unused.length ? `<p>${unused.length} file${unused.length === 1 ? '' : 's'} no saved version uses · ${size(files.unusedBytes)}. They are never deleted automatically.</p>
+        <ul class="storage-unused">${unused.slice(0, 50).map((u) => `<li><span>${esc(u.name)}</span><small>${size(u.size)}${u.created ? ` · ${esc(u.created.slice(0, 10))}` : ''}</small></li>`).join('')}</ul>
+        ${unused.length > 50 ? `<p class="sub">…and ${unused.length - 50} more.</p>` : ''}
+        ${button(`Delete ${unused.length} unused file${unused.length === 1 ? '' : 's'}`, 'deleteUnused', 'small')}` : '<p class="sub">None: every stored file is used by a saved skill version.</p>'}
+      <h3>Back up skill files</h3>
+      <p class="sub">Copies the file store to a folder, such as an external drive. Later backups to the same folder copy only new files.</p>
+      <div class="learn-toolbar storage-backup">
+        <label class="vf-grow">Backup folder (full path)<input id="fileBackupFolder" placeholder="/Volumes/Backup" autocomplete="off"></label>
+        ${button('Back up skill files', 'backupFiles', 'small')}
+      </div>`}
+    </section>
+  </div>`;
+  $('[data-action=backup]', root).onclick = async () => {
+    try {
+      const b = await api(`${E}/backup`, {});
+      toast(`Saved ${b.path}`);
+      await renderDatabaseRecovery(root);
+    } catch (e) { toast(e.message); }
+  };
+  const del = $('[data-action=deleteUnused]', root);
+  if (del) {
+    del.onclick = async () => {
+      if (!await confirmBox({ title: 'Delete unused skill files?', text: `${unused.length} file${unused.length === 1 ? '' : 's'} (${size(files.unusedBytes)}) that no saved skill version uses will be deleted from the file store. Files a version uses are refused.`, ok: 'Delete unused files' })) return;
+      try {
+        const r = await api(`${E}/files/delete`, { hashes: unused.map((u) => u.sha256) });
+        toast(`Deleted ${r.deleted} unused file${r.deleted === 1 ? '' : 's'} (${size(r.bytes)}).`);
+        await renderDatabaseRecovery(root);
+      } catch (e) { toast(e.message); }
+    };
+  }
+  const backupFiles = $('[data-action=backupFiles]', root);
+  if (backupFiles) {
+    backupFiles.onclick = async () => {
+      backupFiles.disabled = true;
+      try {
+        const r = await api(`${E}/files/backup`, { folder: $('#fileBackupFolder', root).value.trim() });
+        toast(`Skill files backed up to ${r.path}: ${r.copied} copied, ${r.skipped} already there.`);
+      } catch (e) { toast(e.message); } finally { backupFiles.disabled = false; }
+    };
+  }
+  for (const b of backups) {
+    const row = h(`<section class="learn-version"><b>${esc(b.created)}</b><p>${b.profiles} profiles · ${b.versions} guide versions · ${b.sounds || 0} catalog sounds · ${Math.round(b.bytes / 1024)} KB</p><button class="btn">Review restore</button></section>`);
+    $('#dbBackups', root).append(row);
+    $('button', row).onclick = async () => {
+      try {
+        const p = await api(`${E}/backups/${b.id}/preview`, {});
+        if (p.missingPins.length) throw Error('This backup lacks versions used by: ' + p.missingPins.join(', '));
+        const lacking = p.missingFiles || [];
+        const filesNote = lacking.length
+          ? `<div class="notice"><b>${lacking.length} skill file${lacking.length === 1 ? ' is' : 's are'} not in the file store.</b> The restore still works; restore these from a skill file backup afterwards.<ul>${lacking.slice(0, 20).map((m) => `<li>${esc(m.file)}${m.format ? ` · ${esc(m.format)} v${m.version}` : ''}</li>`).join('')}</ul></div>`
+          : '';
+        dialog('Restore database backup', `<p>This replaces the current registry with the reviewed backup. The displaced database is kept for recovery. Media files remain in place.</p>${filesNote}<pre>${esc(JSON.stringify(p.counts, null, 2))}</pre>`, async () => {
+          const result = await api(`${E}/backups/${b.id}/restore`, { token: p.token });
+          toast(result.warning || (result.missingFiles?.length ? result.note : 'Database restored.'));
+          await renderDatabaseRecovery(root);
+        }, 'Restore backup');
+      } catch (e) { toast(e.message); }
+    };
+  }
 }

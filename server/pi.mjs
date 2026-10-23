@@ -11,6 +11,7 @@ import { existsSync } from 'node:fs';
 import { join, delimiter } from 'node:path';
 import { ChatSession, userEvent } from './claude.mjs';
 import { settings, state, setProjectState, shellPath, childPathEnv, expandHome, npmProgram, startError, IS_WIN, APP_DIR } from './util.mjs';
+import { writePromptFile } from './agent-prompt.mjs';
 import { childEnv, settingsBrief, section } from './settings.mjs';
 import { logUse } from './usage.mjs';
 import { activeSkillRoot } from './managed-skills.mjs';
@@ -54,6 +55,9 @@ const short = (s, n = 90) => { s = String(s ?? '').replace(/\s+/g, ' ').trim(); 
 const file2 = (p) => String(p || '').split(/[\\/]/).slice(-2).join('/');
 const textOf = (content) => (Array.isArray(content) ? content.filter((c) => c?.type === 'text').map((c) => c.text).join('') : String(content ?? ''));
 
+// Which model source a pi chat runs on: pi's own providers, or one OpenAI-compatible endpoint (by its address).
+export const piSource = (c = section('claude')) => (c.piSource === 'endpoint' ? `endpoint ${c.piBaseUrl || ''}` : 'pi');
+
 export class PiSession extends ChatSession {
   constructor(id, context) {
     super(id, context);
@@ -81,11 +85,19 @@ export class PiSession extends ChatSession {
     if (endpoint && (!c.piBaseUrl || !c.piModel)) throw new Error('Settings → Agent & model: give the endpoint a URL and a model first.');
     const cwd = this.cwd?.() || s.studio;
     const st = state().projects[this.id] || {};
-    const saved = st.engine === 'pi' && st.sessionId && existsSync(st.sessionId) ? st.sessionId : null;
+    // A session from another source (pi's own providers, or an endpoint) isn't this one's to continue. Older saves have none.
+    this.source = piSource(c);
+    const otherSource = st.engine === 'pi' && st.source && st.source !== this.source;
+    const saved = st.engine === 'pi' && !otherSource && st.sessionId && existsSync(st.sessionId) ? st.sessionId : null;
+    if (otherSource) this.emit({ t: 'note', text: 'pi now uses another model source, so this is a fresh chat.' });
     const skills = skillRoot ? ['--skill', skillRoot] : [];
     const model = endpoint ? ['--provider', 'studio', '--model', c.piModel] : c.piModel ? ['--model', c.piModel] : [];
+    // The appended system prompt (~40 KB for a project) goes as a file: Windows caps the command line at 32,767
+    // characters (agent-prompt.mjs). pi's --append-system-prompt reads a file when it is given an existing path, and
+    // reads it again when it reloads, so the file stays until the process ends.
+    const promptText = [this.currentContext(), settingsBrief(extra,{profileScoped:Boolean(this.profileScoped||this.projectScope?.())})].filter(Boolean).join('\n');
     const args = ['--mode', 'rpc', '-e', EXTENSION, ...skills, ...model,
-      '--append-system-prompt', [this.currentContext(), settingsBrief(extra,{profileScoped:Boolean(this.profileScoped||this.projectScope?.())})].filter(Boolean).join('\n'),
+      '--append-system-prompt', null,
       ...(saved ? ['--session', saved] : [])];
     this.resumed = Boolean(saved);
     const env = await childPathEnv({
@@ -93,14 +105,24 @@ export class PiSession extends ChatSession {
       STUDIO_PI_MODE: this.mode?.() || s.permissionMode || 'auto',
       // The studio is "inside" (file changes there don't ask in Auto); pi runs in `cwd` (a project's folder for a
       // project chat), which is what a relative path in a tool call means.
-      STUDIO_PI_ROOT: s.studio || cwd,
+      // Auto and accept-edits: file changes inside this root don't ask. A chat with a guard (a project's chat: its folder)
+      // gets the same boundary as Claude Code's outside-project check; other chats keep the studio.
+      STUDIO_PI_ROOT: this.guard?.() || s.studio || cwd,
       STUDIO_PI_CWD: cwd,
       ...(endpoint ? { STUDIO_PI_BASE_URL: c.piBaseUrl, STUDIO_PI_MODEL: c.piModel, STUDIO_PI_API_KEY: extra.OPENAI_COMPATIBLE_API_KEY || 'none',
         STUDIO_PI_VISION: c.piVision ? '1' : '0', STUDIO_PI_CONTEXT: String(c.piContext || 128000) } : {}),
     });
     this.stderr = '';
     this.buf = '';
-    const proc = this.proc = spawn(info.exec, [...info.pre, ...args], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+    const prompt = writePromptFile('pi', promptText);
+    args[args.indexOf('--append-system-prompt') + 1] = prompt.path;
+    let proc;
+    try {
+      proc = this.proc = spawn(info.exec, [...info.pre, ...args], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+    } catch (e) { prompt.remove(); throw e; }
+    // Removed however the process ends, including kill() (which detaches this.proc before 'exit' arrives).
+    proc.once('exit', () => prompt.remove());
+    proc.once('error', () => prompt.remove());
     proc.stdout.on('data', (d) => this.onData(d));
     proc.stderr.on('data', (d) => { this.stderr = (this.stderr + d).slice(-4000); });
     // It couldn't start at all (no program at that path): the calls waiting on it fail with that, so the chat says so.
@@ -124,7 +146,7 @@ export class PiSession extends ChatSession {
     });
     const state0 = await this.call('get_state');
     this.started = true;
-    if (state0?.sessionFile) setProjectState(this.id, { sessionId: state0.sessionFile, engine: 'pi', model: state0?.model?.id || c.piModel || null });
+    if (state0?.sessionFile) setProjectState(this.id, { sessionId: state0.sessionFile, engine: 'pi', source: this.source, model: state0?.model?.id || c.piModel || null });
     if (state0?.model?.contextWindow) this.ctx = { ...(this.ctx || {}), window: state0.model.contextWindow };
     this.emit({ t: 'session', id: state0?.sessionId || '', model: state0?.model?.id || c.piModel || 'pi' });
   }
@@ -227,7 +249,8 @@ export class PiSession extends ChatSession {
     this.lastSend = text;
     this.setBusy(true);
     if (!this.proc) {
-      try { await this.start(); } catch (e) { this.emit({ t: 'error', text: e.message }); this.kill(); return; }
+      // A start failure goes back to the caller (the route answers with the error, as for Claude Code).
+      try { await this.start(); } catch (e) { this.kill(); this.setBusy(false); throw e; }
     }
     if (echo) this.emit(userEvent(text, brief));
     this.setBusy(true);

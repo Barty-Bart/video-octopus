@@ -15,6 +15,7 @@ import { logUse } from './usage.mjs';
 import { listProjects, projectsRoot, projectDir, listSkills, listTakes, takeMain } from './studio.mjs';
 import { inboxDir } from './inbox.mjs';
 import { maintenanceActive } from './maintenance.mjs';
+import { pinnedContext } from './profiles.mjs';
 
 const FILE = join(LOCAL_DIR, 'schedules.json');
 const RUNS = join(LOCAL_DIR, 'runs');
@@ -182,7 +183,9 @@ function runContext(sch, projects) {
   const s = settings();
   return [
     `You are running unattended: this is a scheduled run in Video Octopus (the creator's local video editing app), named "${sch.name}". Nobody is watching while it runs. Don't ask questions: decide sensibly, and put anything that needs the creator in your final summary.`,
-    `Your working directory is ${projects?.length === 1 && sch.scope?.startsWith('project:') ? projectDir(projects[0].id) : `the studio folder, ${s.studio}, projects in ${s.projectsDir}/`}.`,
+    projects?.length === 1 && sch.scope?.startsWith('project:')
+      ? `Your working directory is the project's folder, ${projectDir(projects[0].id)}: write its files by their path inside it (work/blocks.json, project.json). The studio folder is ${s.studio}.`
+      : `Your working directory is the studio folder, ${s.studio}; projects are in ${s.projectsDir}/.`,
     sch.mode === 'report' ? 'This run is report only: read and look, change nothing. Video Octopus refuses every edit and command that changes something; what you would change goes in the summary.'
       : sch.mode === 'ask' ? `This run asks before changes: don't edit anything in the studio or its projects. Anything you'd add to the library goes in the Library inbox, ${join(inboxDir(), `${stamp(Date.now()).slice(0, 10)}-${sch.template || slugify(sch.name) || 'run'}`)}/, one folder per piece with a short README.md that starts with a line "kind: <backgrounds|sfx|styles|components|broll|stills>", then what it is, which project it came from and why it's worth keeping. The creator reviews the inbox. Other proposed changes go in the summary. Video Octopus refuses writes anywhere else.`
         : 'This run may make changes in its scope: commands are allowed, and file edits only inside the projects listed (or the studio folder, for a studio-wide run), the tr/ folder of each recording listed, and the Library inbox. Video Octopus refuses edits anywhere else. Never change, move or re-encode a recording or a project\'s source files. Say in the summary exactly what you changed.',
@@ -279,6 +282,12 @@ async function pump() {
   const chat = makeChat(chatId, () => runContext(sch, projects));
   chat.log = `${base}.jsonl`;
   chat.cwd = () => (sch.scope?.startsWith('project:') && projects?.length ? projectDir(projects[0].id) : s.studio);
+  // A run on one project uses that project's pinned setup, as its interactive chat does (index.mjs chatFor): the pinned
+  // instructions, brand and format skill copy (Claude Code's --add-dir, Codex's and pi's skill root), not the studio's.
+  if (sch.scope?.startsWith('project:') && projects?.length === 1) {
+    const pid = projects[0].id;
+    chat.projectScope = () => pinnedContext(pid, projectDir(pid));
+  }
   // Every edit comes back as a permission request (no accept-edits mode), so decide() can keep it to the scope.
   chat.mode = () => 'manual';
   let lastText = '';

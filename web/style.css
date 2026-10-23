@@ -1124,6 +1124,7 @@ select.field { appearance: none; padding-right: 30px; cursor: pointer;
 .found .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .found .dot.ok { background: var(--ok); }
 .found .dot.bad { background: var(--bad); }
+.found .dot.warn { background: var(--warn); }
 .found b { font-weight: 500; }
 .found .sub { flex-basis: 100%; padding-left: 16px; }
 .found .btn { margin-left: auto; }

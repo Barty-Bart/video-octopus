@@ -48,7 +48,7 @@ studio ownership. `server/claude.mjs`, `codex.mjs` and `pi.mjs` are the adapters
 `server/export*.mjs`, `scene-frames.mjs` and `backgrounds.mjs` render media;
 `generated-sandbox.mjs` implements the generated-code boundary.
 
-Use Node 22.13+ (22.x) or 23.4+; verified versions and platform limits are documented.
+Use Node 22.16+ (22.x) or 24+ (Node 23 lacks SQLite FTS5); `server/runtime-check.cjs` holds every Node threshold. Verified versions and platform limits are documented.
 Run `node --test test/*.test.mjs` for isolated unit/adapter tests. Browser suites
 need an existing Playwright installation and Chromium; commands are in the
 verification document. `test/fresh-install.mjs` is restricted to disposable

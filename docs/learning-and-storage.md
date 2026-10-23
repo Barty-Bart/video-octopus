@@ -1,9 +1,10 @@
 # Video formats and local SQLite storage
 
 Introduced in v0.1.0-beta.2. It uses Node's built-in SQLite:
-Node 22.13+ on the 22.x line or 23.4+ (Node 24 recommended). No database server,
-package installer or hosted service is required. See the
-[Node 22.13 release note](https://nodejs.org/en/blog/release/v22.13.0).
+Node 22.16+ on the 22.x line or Node 24+ (Node 24 recommended). Node 23 is unsupported
+because its built-in SQLite has no FTS5 full-text search, which memories use; the launchers
+probe for FTS5 before starting. No database server, package installer or hosted service is
+required.
 
 ## Where things live
 
@@ -21,8 +22,16 @@ Users can choose another location. Existing studios stay in place.
 - Brand research sessions, evidence and reviewed approvals.
 - Learning sessions (format conversations), references, review revisions, approvals and the
   creator's own chat messages in them (the provenance for instruction evidence).
-- Approved rules, learnings, workflow skill content, reusable asset bytes, example key frames and version history.
+- Approved rules, learnings, workflow skill content (`SKILL.md`, `guide.md`) and version history.
+- Records of every skill file (assets, knowledge, key frames): name, note, kind, tags, size, type,
+  sha256, source and the versions that use it. Their bytes live in the file store (below).
 - Project pins for brand, instructions, selected skill snapshots and learned formats, plus scene-plan approval tokens.
+
+Skill file bytes live in a content-addressed file store in the studio:
+`<studio>/.studio/files/<first 2 hex>/<sha256><.ext>`. Identical files are stored once, writes
+are temp + fsync + rename, and the store never follows symbolic links. Skill folders hold
+copy-on-write clones of these files (no extra space on APFS; a normal copy elsewhere), never
+links. See "Skill files: assets and knowledge" below.
 
 Video/audio, intake originals, extracted frames and editor working documents remain
 ordinary files. Existing project/timeline JSON interfaces and technical application
@@ -154,20 +163,23 @@ format's **skill** is its approved guide. Internal IDs, tables and routes keep t
 - **Learnings (shown as Insights).** A draft may include `learnings: [{text, evidence}]`: observations, not
   rules. They accumulate in each version package.
 - **Key frames.** On approval, up to six evenly spaced extraction frames per studied
-  video reference are stored with the version (SQLite bytes, version folder copy). The
+  video reference are stored with the version (in the file store, recorded by hash). The
   original video stays in the conversation's intake folder.
 - **One generated skill per format.** `.claude/skills/format-<8 characters of the format
   id>/` holds the ACTIVE version: `SKILL.md` (when to use it, rules summary, workflow,
   pointers), `rules.md`, `examples/` (`examples.md` with each studied reference's name,
-  link or original path, notes and version, plus key frames), `assets/`, `learnings.md`
-  and `videos.md` (projects pinned to each version). The name never changes on rename; the
+  link or original path, notes and version, plus key frames), `assets/`, `knowledge/`
+  (with an index in `SKILL.md`), `learnings.md` and `videos.md` (projects pinned to each version). The name never changes on rename; the
   description is regenerated from the current channel and format names. It is rebuilt from
   SQLite on approve, activate, rename, archive and every skill sync, including startup.
   It is a distinct generated kind: never written into `skills/custom/`, never imported from
-  edited copies (an edited copy blocks chats until Refresh rebuilds it; the edit stays in
-  that update's backup), and a personal skill using the same name is withheld with a
-  notice while its files are kept. When the rebuild must wait for running work, the save
-  still succeeds and reports a warning; startup or the next trigger retries it.
+  edited copies, and a personal skill using the same name is withheld with a notice while
+  its files are kept. An edited copy no longer blocks chats: the next chat (or startup)
+  moves the edited folder to `.studio/edited-skill-files/<time>-format-…`, puts the saved
+  version back from SQLite and says so once in that chat; other skills are untouched.
+  When the rebuild must wait for running work, the save still succeeds and reports a
+  warning; the rebuild runs as soon as nothing is working (checked twice a second while
+  one is pending), and at startup. The format skill view reports `pending` meanwhile.
 - **New videos.** Projects still pin the version (and the studio-wide format skill is not
   part of their skill snapshot). Each project's generated context gets its own copy of
   the pinned version's format skill at
@@ -183,6 +195,48 @@ format's **skill** is its approved guide. Internal IDs, tables and routes keep t
   hides them from New video and withdraws the format skill; nothing is deleted, existing
   projects and versions are untouched, and they can be restored. Each change checks the
   record's `revision`.
+
+## Skill files: assets and knowledge
+
+A format's skill can hold real files, up to **300 per skill** (assets and knowledge together)
+and **1 GB per file** (`MAX_SKILL_FILES`, `MAX_SKILL_FILE_BYTES` in `server/file-store.mjs`).
+
+- **Assets** are files a video uses directly: backgrounds, icons, logos, PNGs, motion-graphics
+  files, styles, fonts. They are projected to `assets/<name>`.
+- **Knowledge** is reference material the agent reads when a video needs the facts: product
+  sheets, specs, brand facts, price lists (Markdown, text, CSV, JSON, PDF or images). They are
+  projected to `knowledge/<name>`, and `SKILL.md` keeps only an index (title, one line, path) so
+  the agent opens a file when it is relevant.
+- **Adding files.** Format home → **Files** (Assets · Knowledge) → **Add files**, or **Add to
+  skill** in the conversation composer. Uploads stream into the open conversation's draft
+  (`work/assets/` or `work/knowledge/`), exactly like a direct rule edit; **Remove** stages a
+  removal. The Files tab and the draft dock show New / Changed / Removed markers; the review
+  asks for a keep/discard decision per file; saving creates the next version. An agent can do
+  the same from a conversation: `"assets":[{file, note}]`, `"knowledge":[{file, title, note}]`
+  and `"removeFiles":["assets/old.png"]` in `work/proposal.json`. Saved files carry forward;
+  re-listing an unchanged file is not a change. Each row shows name, note, kind, size, the
+  version that added it and **Show in Finder**.
+- **Versions and pins.** A version records each file by hash. Pinned project copies resolve the
+  same hashes, so a project pinned to v1 keeps v1's files exactly. Version folders under
+  `.studio/learning/versions/` now hold only `guide.md`, `SKILL.md` and `package.json`; older
+  versions keep the copies they already have (still verified).
+- **Projections.** The published format skill's file list is `.octopus-files.json`. The skill
+  snapshot in SQLite leaves those files out (so their bytes never enter the database); after
+  every skill sync they are cloned in from the store. A projected file that no longer matches
+  its hash is restored, and the edited copy is kept in `.studio/edited-skill-files/`. Edited
+  files in a project's pinned copy block it until Restore project context files, as before.
+- **Never deleted automatically.** Storage lists **unused files** (no saved version uses them,
+  for example after a failed save) with their total size. **Delete unused files** is explicit
+  and refuses the whole request if any listed file is still used.
+
+**Migration.** Studios saved before this change kept asset and key-frame bytes in SQLite
+(`learning_blobs`). On first open the app backs up the database to
+`.studio/file-store-migration-backups/<id>/studio.sqlite`, writes each blob to the file store
+and verifies its hash, and only after every file is verified removes those blob rows (then
+compacts the database when it can). `SKILL.md` and `guide.md` stay in SQLite. The migration is
+recorded in `file_store_meta`, is safe to run again and resumes after a crash without a second
+backup. A blob whose bytes do not match its hash is left in SQLite and reported. Until a file
+has moved, the app reads it from SQLite and moves it on use.
 
 One active package per profile/format is supported. Named sibling style variants,
 weekly rollups, timed overlays and After Effects export remain later work.
@@ -257,24 +311,66 @@ This does not automatically render or redesign a video. Explicit project choices
 still win. **Video defaults** retains background and framing controls; brand colours
 and font guidance now live in Brand profiles.
 
-Later profile edits apply to new videos, preserving existing project pins. A deliberate
-learned-format upgrade retains the project's brand and instructions while selecting
-the upgraded format and its current skills. Generated context edits stop use until
-restored explicitly; displaced files are retained. Old projects without a context pin
-remain legacy projects; no bulk migration or inferred profile assignment occurs.
+Later profile edits apply to new videos, preserving existing project pins. Settings →
+Instructions says so and counts the videos on an earlier instruction version. A
+deliberate learned-format upgrade retains the project's brand and instructions while
+selecting the upgraded format and its current skills. Upgrades stay within the video's
+channel (another channel's format is refused before anything is written); a video
+without a channel joins the format's channel and takes its current approved brand, and
+its chat's memory binding gains that channel's and format's memories. The review dialog
+lists those changes, and the project's WORKLOG records them. The learning pin, context
+pin and memory binding commit in one transaction, only after the context files were
+rebuilt; on failure the database, `project.json` and the old files stay as they were.
+Generated context edits stop use until restored explicitly; displaced files are
+retained. A project whose saved setup can't be used (for example one an older version
+upgraded across channels) shows **Repair project setup** in its panel: it keeps what is
+still valid, re-pins the rest (the channel's current brand, the current instructions
+if the pinned ones are missing) and rebuilds the files. Old projects without a context
+pin remain legacy projects; no bulk migration or inferred profile assignment occurs.
+
+Archiving a project stops its chat and keeps its chat log, saved session and database
+rows under its id, so restoring it brings it back as it was. A project id is never given
+to a new project while any of those (or an archived folder) still exist: a new video
+with the same name gets the next free id (`my-video-2`) and starts clean.
+
+**What each chat sees.** Project chats with a pinned setup, and scheduled runs on such a
+project, run in the project folder with its pinned instructions, brand and skill copy on
+every agent (Claude Code `--add-dir`, Codex's extra skill root, pi `--skill`); the
+context names the real working directory and the studio folder. Format conversations
+see their channel's format skills and brand research none, through a scoped copy of the
+studio skills in `.studio/scoped-skills/<key>/.claude/skills` (reused while the
+publications are unchanged; unused copies are removed after a day). For Claude Code these
+chats also pass `claudeMdExcludes` (the studio's `CLAUDE.md`, `CLAUDE.local.md`,
+`AGENTS.md`) and `skillOverrides` `"off"` for the other format skills with `--settings`,
+because Claude Code loads `CLAUDE.md` and `.claude/skills` from parent folders. A
+studio format skill with the pinned format's own name can't be hidden by name; the
+project context names the pinned copy as the one to use. With channel profiles, no chat
+gets the install-wide brand colours and fonts, the Setup interview's brand line or the
+studio `BRAND.md`. In Auto, pi's file changes without a card are limited to the
+project's folder (and the temporary folder) for a project chat, like Claude Code's
+outside-project check. Switching Codex's provider or pi's model source starts a new
+session; a Codex or pi start failure is returned as an error, as for Claude Code.
 
 ## Backups and recovery
 
 Storage provides a consistent SQLite backup (`VACUUM INTO`) plus approved package
-projections. The database includes approved skills, guides, brand assets, brand/instruction histories
-and project context pins.
-It does **not** back up large media or draft intake: copy those files separately for
+projections. The database includes approved skills, guides, brand assets, brand/instruction histories,
+skill file records and project context pins. Skill file bytes are not in it, so database
+backups stay small.
+It does **not** back up large media, draft intake or the skill file store: copy those separately for
 machine-loss recovery. A backup is stored under `.studio/learning-backups/<id>/`.
+
+**Back up skill files** (Storage) copies the file store to a folder you choose, such as an
+external drive, into `<folder>/Video Octopus skill files/` with the same hash layout. It clones
+where the disk allows and is incremental: files already there with the right size are skipped.
+To restore, copy those folders back into `<studio>/.studio/files/`.
 
 Full restore verifies integrity and a review token, blocks while work is active,
 keeps the displaced database, and rebuilds agent skill files. It refuses a backup
 that lacks versions or context records pinned by current projects, or predates
-canonical profile/instruction storage after migration. It does not roll back media or editor
+canonical profile/instruction storage after migration. It checks every skill file the backup's
+versions use: files missing from the file store (and not still in an older backup's SQLite) are
+listed in the review and the result, not fatal; restore them from a skill file backup. It does not roll back media or editor
 files. Format history can instead change the active version for future projects;
 skill history can restore a prior skill snapshot. Neither rolls back application code.
 
@@ -294,7 +390,10 @@ agent executables and blocked remote Node networking. Set `OCTOPUS_TEST_FFMPEG` 
 a real creator studio. Set `OCTOPUS_TEST_PORT` if the default fixture port is occupied.
 `node test/format-skill-integration.mjs` runs the format skill flow the same way (study, save
 v1, chat edit with instruction evidence, save v2, a project pinned to v1 still given v1 through
-Claude's `--add-dir`, direct edit, rename/archive/restore) and deletes its fixture afterwards.
+Claude's `--add-dir`, direct edit, rename/archive/restore, v1 with an asset and two knowledge
+files, Add files → a later version, the v1 project keeping v1's files, no file bytes in SQLite)
+and deletes its fixture afterwards. `test/skill-files.test.mjs` covers the file store, projections,
+limits (sparse files), Add files staging, unused files, restore reports and the blob migration.
 
 Sound metadata now shares SQLite; audio stays in its original library location.
 See [storage/update contracts](storage-updates.md) for migration backups, agent

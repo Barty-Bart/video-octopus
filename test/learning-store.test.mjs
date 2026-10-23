@@ -56,7 +56,8 @@ test('copying an approved format preserves provenance and assets with independen
  assert.notEqual(copy.id,f.id);assert.equal(copy.profileId,target.id);assert.deepEqual(copy.skillIds,['synthetic-shared-skill']);
  const v=st.version(copy.activeVersion),original=st.version(source.id);
  assert.equal(v.number,1);assert.equal(v.copiedFrom.profileId,p.id);assert.equal(v.copiedFrom.versionId,source.id);assert.deepEqual(v.rules,original.rules);
- assert.equal(readFileSync(join(v.path,v.assets[0].file),'utf8'),readFileSync(join(original.path,original.assets[0].file),'utf8'));
+ // Assets are shared by hash in the file store (skill-assets spec, 23 October 2026): the copy references the same bytes.
+ assert.equal(v.assets[0].sha256,original.assets[0].sha256);assert.equal(readFileSync(st.files.locate(v.assets[0].sha256),'utf8'),'<svg><rect width="2" height="2"/></svg>');
  assert.match(readFileSync(join(v.path,'SKILL.md'),'utf8'),new RegExp(v.id));assert.doesNotMatch(readFileSync(join(v.path,'SKILL.md'),'utf8'),new RegExp(source.id));
  assert.equal(st.list('sessions').filter(s=>s.formatId===copy.id).length,0);
  const newer=approve(st,draft(st,copy,[{id:'opening',text:'Use a different opening.'}]));

@@ -4,7 +4,9 @@
 //   node test/format-skill-integration.mjs
 // Flow: study → save v1 → chat edit with instruction evidence → save v2 → a project pinned to v1 still gets v1
 // (context and its own format skill copy, through Claude's --add-dir) → the studio format skill follows v2,
-// rename/archive/restore, the direct-edit endpoint and the videos query.
+// rename/archive/restore, the direct-edit endpoint and the videos query. Skill files (23 October 2026): v1 carries an
+// asset and two knowledge files, Add files uploads one more for a later version, the v1 project keeps v1's files, and
+// none of their bytes are in SQLite.
 import assert from 'node:assert/strict';
 import { mkdtempSync, realpathSync, mkdirSync, cpSync, writeFileSync, readFileSync, chmodSync, existsSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -37,7 +39,8 @@ async function fakeAgent() {
   const argv = process.argv.slice(2);
   if (argv.includes('--version')) { console.log('9.9.9 synthetic'); return; }
   if (argv[0] === 'auth') { console.log('{"loggedIn":true,"authMethod":"fixture"}'); return; }
-  const context = argv[argv.indexOf('--append-system-prompt') + 1];
+  // Video Octopus passes the appended system prompt as a file (Windows command-line limit).
+  const context = readFileSync(argv[argv.indexOf('--append-system-prompt-file') + 1], 'utf8');
   const addDir = argv.includes('--add-dir') ? argv[argv.indexOf('--add-dir') + 1] : null;
   const isLearning = context.includes('This is a learning session');
   const out = (x) => console.log(JSON.stringify(x));
@@ -61,7 +64,15 @@ async function fakeAgent() {
         }));
       } else if (referenceId && message.startsWith('Study the supplied references')) {
         const evidence = [{ referenceId, note: '00:02: synthetic observation.' }];
+        mkdirSync(join(process.cwd(), 'work/assets'), { recursive: true });
+        mkdirSync(join(process.cwd(), 'work/knowledge'), { recursive: true });
+        writeFileSync(join(process.cwd(), 'work/assets/brand-logo.svg'), '<svg>synthetic logo</svg>');
+        writeFileSync(join(process.cwd(), 'work/knowledge/product-sheet.md'), '# Synthetic product\nWeight 2 kg.');
+        writeFileSync(join(process.cwd(), 'work/knowledge/prices.csv'), 'sku,price\nA1,10\n');
         writeFileSync(draft, JSON.stringify({
+          assets: [{ file: 'work/assets/brand-logo.svg', note: 'Logo, top left.' }],
+          knowledge: [{ file: 'work/knowledge/product-sheet.md', title: 'Product sheet', note: 'Read for product claims.' },
+            { file: 'work/knowledge/prices.csv', title: 'Price list', note: 'Prices by SKU.' }],
           rules: [
             { id: 'opening', area: 'scripting', text: 'Show the finished result first, in red.', confidence: 'medium', evidence },
             { id: 'outro', area: 'pacing', text: 'Hold the last frame for two seconds.', confidence: 'low', evidence },
@@ -161,7 +172,9 @@ try {
     const skill = readFileSync(join(skillDir, 'SKILL.md'), 'utf8');
     assert.match(skill, /Main YouTube › Instagram reel: approved Short format skill \(v1\)/);
     for (const f of ['rules.md', 'examples/examples.md', 'learnings.md', 'videos.md']) assert.ok(existsSync(join(skillDir, f)), f);
-    assert.ok(existsSync(join(skillDir, 'assets')));
+    assert.equal(readFileSync(join(skillDir, 'assets/brand-logo.svg'), 'utf8'), '<svg>synthetic logo</svg>');
+    assert.equal(readFileSync(join(skillDir, 'knowledge/prices.csv'), 'utf8'), 'sku,price\nA1,10\n');
+    assert.match(skill, /## Knowledge index[\s\S]*\*\*Product sheet\*\* — Read for product claims\. \(knowledge\/product-sheet\.md\)/);
     assert.equal(readdirSync(join(studio, 'skills/custom')).some((n) => n.startsWith('learned-') || n.startsWith('format-')), false, 'nothing written into skills/custom');
     const skills = await call('/skills');
     const entry = skills.items.find((x) => x.kind === 'format');
@@ -256,6 +269,49 @@ try {
     const v3 = await approveAll(session.id);
     assert.equal(v3.number, 3);
     assert.match(readFileSync(join(skillDir, 'rules.md'), 'utf8'), /Use navy blue accents[\s\S]*Edited by you/);
+  });
+
+  await check('Add files uploads a knowledge file into the draft; saving adds it to the skill as a new version', async () => {
+    const before = await call(`/formats/${format.id}/files`);
+    assert.deepEqual(before.files.map((x) => [x.file, x.addedIn.number]).sort(),
+      [['assets/brand-logo.svg', 1], ['knowledge/prices.csv', 1], ['knowledge/product-sheet.md', 1]]);
+    const r = await fetch(`${url}/api/learning/formats/${format.id}/files?kind=knowledge&name=${encodeURIComponent('FAQ.txt')}&note=${encodeURIComponent('Customer questions.')}`,
+      { method: 'POST', headers: { 'X-Studio': '1' }, body: 'Q: Waterproof? A: Yes.' });
+    const staged = await r.json();
+    assert.equal(r.status, 200, JSON.stringify(staged));
+    assert.equal(staged.proposalError, null);
+    assert.deepEqual(staged.proposal.files.added.map((x) => [x.path, x.change, x.via]), [['knowledge/FAQ.txt', 'new', 'upload']]);
+    const v4 = await approveAll(staged.session.id);
+    assert.equal(v4.number, 4);
+    assert.equal(v4.warning, null);
+    assert.equal(readFileSync(join(skillDir, 'knowledge/FAQ.txt'), 'utf8'), 'Q: Waterproof? A: Yes.');
+    const after = await call(`/formats/${format.id}/files`);
+    assert.equal(after.totals.count, 4);
+    assert.equal(after.files.find((x) => x.file === 'knowledge/FAQ.txt').addedIn.number, 4);
+  });
+
+  await check('the v1 project still sees v1 files only, and SQLite holds none of the file bytes', async () => {
+    const context = await request(`/api/project-context/${project.id}`);
+    assert.equal(context.formatSkill.number, 1);
+    assert.equal(readFileSync(join(context.formatSkill.path, 'assets/brand-logo.svg'), 'utf8'), '<svg>synthetic logo</svg>');
+    assert.ok(existsSync(join(context.formatSkill.path, 'knowledge/product-sheet.md')));
+    assert.equal(existsSync(join(context.formatSkill.path, 'knowledge/FAQ.txt')), false);
+    const { DatabaseSync } = await import('node:sqlite');
+    const { createHash } = await import('node:crypto');
+    const sha = (b) => createHash('sha256').update(b).digest('hex');
+    const db = new DatabaseSync(join(studio, '.studio/studio.sqlite'), { readOnly: true });
+    try {
+      const stored = ['<svg>synthetic logo</svg>', '# Synthetic product\nWeight 2 kg.', 'sku,price\nA1,10\n', 'Q: Waterproof? A: Yes.'].map(sha);
+      for (const table of ['learning_blobs', 'skill_blobs']) {
+        const hashes = new Set(db.prepare(`SELECT hash FROM ${table}`).all().map((x) => x.hash));
+        assert.equal(stored.some((h) => hashes.has(h)), false, `${table} holds no skill file bytes`);
+      }
+      assert.equal(db.prepare('SELECT count(*) n FROM skill_files').get().n, 4);
+    } finally { db.close(); }
+    for (const h of ['<svg>synthetic logo</svg>', 'Q: Waterproof? A: Yes.'].map(sha)) assert.ok(readdirSync(join(studio, '.studio/files', h.slice(0, 2))).some((n) => n.startsWith(h)));
+    const report = await call('/files');
+    assert.equal(report.objects, 4);
+    assert.deepEqual(report.unused, []);
   });
 
   await check('rename, archive and restore rebuild the format skill; archived formats refuse new videos', async () => {

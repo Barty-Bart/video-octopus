@@ -2,7 +2,8 @@
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID, createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, lstatSync, readdirSync, copyFileSync, rmSync } from 'node:fs';
-import { resolve, join, dirname, relative, isAbsolute } from 'node:path';
+import { resolve, join, dirname, relative, isAbsolute, basename } from 'node:path';
+import { FileStore, MAX_SKILL_FILES, MAX_SKILL_FILE_BYTES, TEXT_FILES, KNOWLEDGE_TYPES, cleanFileName, extensionOf, mimeOf, hashFile, formatBytes } from './file-store.mjs';
 
 const id = () => randomUUID();
 const now = () => new Date().toISOString();
@@ -39,6 +40,16 @@ export function safeFile(root, rel) {
 const clampTarget = (seconds) => Math.max(0, Math.min(7200, Number(seconds) || 0));
 function atomic(path, data) { mkdirSync(dirname(path), { recursive: true }); const tmp = `${path}.${id()}.tmp`; writeFileSync(tmp, data, { flag: 'wx' }); renameSync(tmp, path); }
 function approvedSkill(keyV, type, workflow) { return `---\nname: learned-${keyV}\ndescription: Apply this approved format only when the project explicitly pins learning version ${keyV}.\n---\n\nRead the pinned guide and project brief first. This skill applies only to version ${keyV}.\nKeep source media untouched, preserve creator overrides, lock cuts before planning/building, and review before export.\n${type === 'faceless' ? 'Use narration and appropriate visuals; do not apply talking-head zooms. Do not choose a TTS provider automatically.\n' : ''}\n${workflow}\n`; }
+// A version's skill files (assets and knowledge) as one list, keyed by their path in the skill folder.
+export function skillFilesOf(version) {
+  if (!version) return [];
+  return [
+    ...(version.assets || []).map((a) => ({ ...a, kind: 'asset', name: a.name || basename(a.file) })),
+    ...(version.knowledge || []).map((k) => ({ ...k, kind: 'knowledge', name: k.name || basename(k.file) })),
+  ];
+}
+const fileKey = (path) => String(path).toLowerCase();
+const stem = (name) => name.replace(/\.[^.]+$/, '');
 export class LearningStore {
   constructor(studio) {
     if (!studio || !existsSync(studio)) fail('Choose an existing studio first.');
@@ -53,12 +64,16 @@ export class LearningStore {
       this.db.exec('CREATE TABLE IF NOT EXISTS learning_blobs(hash TEXT PRIMARY KEY, bytes BLOB NOT NULL); CREATE TABLE IF NOT EXISTS project_learning(project TEXT PRIMARY KEY, data TEXT NOT NULL)');
       // Creator chat messages in a format conversation: the provenance for instruction evidence.
       this.db.exec('CREATE TABLE IF NOT EXISTS learning_messages(id TEXT PRIMARY KEY, session_id TEXT NOT NULL, created TEXT NOT NULL, text TEXT NOT NULL)');
+      // Skill files (assets, knowledge, key frames): one record per stored object; the bytes are in .studio/files.
+      this.db.exec('CREATE TABLE IF NOT EXISTS skill_files(hash TEXT PRIMARY KEY, data TEXT NOT NULL); CREATE TABLE IF NOT EXISTS file_store_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)');
       if (!v) this.tx(() => this.db.exec(`
         CREATE TABLE IF NOT EXISTS profiles(id TEXT PRIMARY KEY, data TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS formats(id TEXT PRIMARY KEY, profile_id TEXT NOT NULL REFERENCES profiles(id), data TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, format_id TEXT NOT NULL REFERENCES formats(id), data TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS versions(id TEXT PRIMARY KEY, format_id TEXT NOT NULL REFERENCES formats(id), data TEXT NOT NULL);
         PRAGMA user_version=1;`));
+      this.files = new FileStore(this.root);
+      this.migrateFileStore();
     } catch (e) { this.db.close(); throw e; }
   }
   close() { this.db.close(); }
@@ -324,20 +339,16 @@ export class LearningStore {
       const evidence = this.checkEvidence(s, r?.evidence, 'Every removal', { ruleId: key, remove: true });
       return { id: key, area: previous.area, text: previous.text, change: 'removed', evidence };
     });
-    if (!rules.length && !removals.length) fail('The draft has no rule changes yet.');
+    const files = this.draftFiles(s, p, base);
+    if (!rules.length && !removals.length && !files.added.length && !files.removed.length) fail('The draft has no rule changes or file changes yet.');
     if (p.learnings !== undefined && (!Array.isArray(p.learnings) || p.learnings.length > 50)) fail('Use at most 50 learnings.');
     const learnings = (p.learnings || []).map((l) => ({ text: text(l?.text, 4000), evidence: this.checkEvidence(s, l?.evidence, 'Every learning') }));
-    const assets = (p.assets || []).map((a) => {
-      const path = safeFile(this.sessionDir(key), text(a.file, 500));
-      if (!a.file.startsWith('work/assets/') || !existsSync(path) || !lstatSync(path).isFile() || lstatSync(path).size > 20 * 1024 * 1024) fail('Assets must be regular files below work/assets, at most 20 MB each.');
-      return { file: a.file, note: text(a.note, 2000), sha256: hash(readFileSync(path)) };
-    });
-    if (assets.length > 30) fail('Use at most 30 reusable assets.');
+    const assets = files.added.filter((x) => x.kind === 'asset');
     // A plain-language edit may leave the workflow out: the base version's workflow carries forward.
     const workflow = p.workflow !== undefined ? text(p.workflow, 40000) : base ? base.workflow : fail('The first version needs a workflow.');
     const formatNow = this.get('formats', s.formatId);
-    return { rules, removals, learnings, assets, workflow, workflowChanged: Boolean(base) && workflow !== base.workflow,
-      token: hash(Buffer.concat([raw, Buffer.from(json(assets))])), revision: s.revision, baseVersion: s.baseVersion,
+    return { rules, removals, learnings, assets, files, workflow, workflowChanged: Boolean(base) && workflow !== base.workflow,
+      token: hash(Buffer.concat([raw, Buffer.from(json(files))])), revision: s.revision, baseVersion: s.baseVersion,
       baseNumber: base?.number || null, activeVersion: formatNow.activeVersion, stale: formatNow.activeVersion !== s.baseVersion };
   }
   // Evidence is a studied reference, a creator chat message (validated against stored messages) or a direct edit.
@@ -367,6 +378,63 @@ export class LearningStore {
       }
       return fail('Evidence must be a reference, a creator instruction or a direct edit.');
     });
+  }
+  // Skill files a draft adds (work/assets → assets/, work/knowledge → knowledge/) or removes, against its base version.
+  // Re-listing a saved file unchanged is not a change. Limits: MAX_SKILL_FILES per skill, MAX_SKILL_FILE_BYTES per file.
+  draftFiles(session, p, base) {
+    const folder = this.sessionDir(session.id);
+    const current = new Map(skillFilesOf(base).map((f) => [fileKey(f.file), f]));
+    const list = (value, label) => {
+      if (value === undefined) return [];
+      if (!Array.isArray(value) || value.length > MAX_SKILL_FILES) fail(`List at most ${MAX_SKILL_FILES} ${label}.`);
+      return value;
+    };
+    const optional = (value, max) => value === undefined || value === null || value === '' ? '' : text(value, max);
+    const tags = (value) => {
+      if (value === undefined) return [];
+      if (!Array.isArray(value) || value.length > 10) fail('Use at most 10 tags per file.');
+      return value.map((t) => text(t, 40));
+    };
+    const seen = new Set();
+    const added = [];
+    const add = (entry, kind) => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) fail('Each skill file needs {"file": …}.');
+      const work = text(entry.file, 500);
+      const path = safeFile(folder, work);
+      const prefix = kind === 'asset' ? 'work/assets/' : 'work/knowledge/';
+      if (!work.startsWith(prefix)) fail(kind === 'asset' ? 'Assets must be files below work/assets.' : 'Knowledge files must be below work/knowledge.');
+      const st = existsSync(path) ? lstatSync(path) : null;
+      if (!st?.isFile()) fail(`${work} is missing or is not a regular file.`);
+      if (st.size > MAX_SKILL_FILE_BYTES) fail(`${basename(work)} is larger than ${formatBytes(MAX_SKILL_FILE_BYTES)}, the limit per file.`);
+      const name = cleanFileName(work);
+      if (kind === 'knowledge' && !KNOWLEDGE_TYPES.test(name)) fail(`${name}: knowledge can be Markdown, text, CSV, JSON, PDF or an image.`);
+      const target = `${kind === 'asset' ? 'assets' : 'knowledge'}/${name}`;
+      if (seen.has(fileKey(target))) fail(`Two files in the draft would both be ${target}. Rename one.`);
+      seen.add(fileKey(target));
+      const item = { kind, file: work, path: target, name, note: optional(entry.note, 2000), tags: tags(entry.tags),
+        size: st.size, mime: mimeOf(name), sha256: hashFile(path), via: entry.via === 'upload' ? 'upload' : 'conversation' };
+      if (kind === 'knowledge') item.title = optional(entry.title, 200) || stem(name);
+      const previous = current.get(fileKey(target)) || null;
+      if (previous && previous.sha256 === item.sha256 && (previous.note || '') === item.note && (previous.title || '') === (item.title || '')) return;
+      item.change = previous ? 'changed' : 'new';
+      item.previous = previous ? { sha256: previous.sha256, size: previous.size ?? null, note: previous.note || '', title: previous.title || null } : null;
+      added.push(item);
+    };
+    for (const a of list(p.assets, 'assets')) add(a, 'asset');
+    for (const k of list(p.knowledge, 'knowledge files')) add(k, 'knowledge');
+    const removed = list(p.removeFiles, 'file removals').map((r) => {
+      const key = text(typeof r === 'string' ? r : r?.file, 500);
+      const previous = current.get(fileKey(key)) || fail(`${key} is not a file of the version this draft is based on.`);
+      if (seen.has(fileKey(key))) fail(`${key} is both added and removed in this draft.`);
+      return { kind: previous.kind, path: previous.file, name: previous.name, title: previous.title || null, note: previous.note || '',
+        size: previous.size ?? this.storedFile(previous.sha256)?.size ?? null, sha256: previous.sha256, change: 'removed' };
+    });
+    const after = new Map(current);
+    for (const r of removed) after.delete(fileKey(r.path));
+    for (const a of added) after.set(fileKey(a.path), a);
+    if (after.size > MAX_SKILL_FILES) fail(`A skill can hold at most ${MAX_SKILL_FILES} files (assets and knowledge together); this draft would have ${after.size}.`);
+    const bytes = [...after.values()].reduce((n, f) => n + (f.size ?? this.storedFile(f.sha256)?.size ?? 0), 0);
+    return { added, removed, count: after.size, bytes, limit: MAX_SKILL_FILES, maxBytes: MAX_SKILL_FILE_BYTES };
   }
   // A direct creator edit (pencil). It lands in a conversation draft; it is still reviewed and saved as a new version.
   draftRule(formatId, { sessionId, revision, ruleId, area, text: ruleText, remove = false } = {}) {
@@ -412,7 +480,12 @@ export class LearningStore {
     const raw = json(v.package); if (hash(raw) !== v.sha256) fail('The approved database package failed integrity verification.');
     const p = v.package;
     for (const a of p.files) {
-      const f = safeFile(folder, a.file), bytes = this.db.prepare('SELECT bytes FROM learning_blobs WHERE hash=?').get(a.sha256)?.bytes;
+      const f = safeFile(folder, a.file);
+      if (!TEXT_FILES.has(a.file)) {
+        this.checkStoredFile(a, f);
+        continue;
+      }
+      const bytes = this.db.prepare('SELECT bytes FROM learning_blobs WHERE hash=?').get(a.sha256)?.bytes;
       if (!bytes || hash(bytes) !== a.sha256) fail('Approved database content failed integrity verification.');
       if (!existsSync(f)) atomic(f, bytes);
       else if (!lstatSync(f).isFile() || hash(readFileSync(f)) !== a.sha256) fail(`Approved file changed: ${a.file}. Use Restore generated files before reuse; edits belong in a new proposal.`);
@@ -420,7 +493,41 @@ export class LearningStore {
     const file = safeFile(folder, 'package.json');
     if (!existsSync(file)) atomic(file, raw);
     else if (hash(readFileSync(file)) !== v.sha256) fail('Generated package was edited. Restore generated files before reuse.');
-    return { ...v, package: undefined, ...p, path: folder };
+    return { ...v, package: undefined, ...p, assets: this.describeFiles(p.assets || [], 'asset'),
+      knowledge: this.describeFiles(p.knowledge || [], 'knowledge'), path: folder };
+  }
+  // Assets, knowledge and key frames live in the file store. Versions saved before it may also keep a copy in their
+  // folder; that copy must still match. The store is checked for presence and size here; projections verify the hash.
+  checkStoredFile(entry, copy) {
+    if (!this.files.has(entry.sha256, entry.size) && !this.restoreFromBlob(entry.sha256, entry.file)) {
+      fail(`Approved file is missing from the file store: ${entry.file}. Restore the skill file backup (Storage).`);
+    }
+    if (existsSync(copy) && (!lstatSync(copy).isFile() || hashFile(copy) !== entry.sha256)) {
+      fail(`Approved file changed: ${entry.file}. Use Restore generated files before reuse; edits belong in a new proposal.`);
+    }
+  }
+  // Older studios kept these bytes in SQLite. If one was not moved yet, move it now (never on hash mismatch).
+  restoreFromBlob(sha256, file) {
+    const bytes = this.db.prepare('SELECT bytes FROM learning_blobs WHERE hash=?').get(sha256)?.bytes;
+    if (!bytes || hash(bytes) !== sha256) return false;
+    this.files.putBuffer(bytes, { ext: extensionOf(file), expect: sha256 });
+    this.recordStoredFile({ sha256, size: bytes.length, name: basename(file), source: { via: 'migration' } });
+    return true;
+  }
+  // Size and type for display; older entries did not record them.
+  describeFiles(list, kind) {
+    return list.map((x) => {
+      const row = this.storedFile(x.sha256);
+      const name = x.name || basename(x.file);
+      return { ...x, kind: x.kind || kind, name, size: x.size ?? row?.size ?? null, mime: x.mime || row?.mime || mimeOf(name) };
+    });
+  }
+  storedFile(sha256) {
+    return parse(this.db.prepare('SELECT data FROM skill_files WHERE hash=?').get(sha256)) || null;
+  }
+  recordStoredFile({ sha256, size, name, source }) {
+    const data = { sha256, size, ext: extensionOf(name), mime: mimeOf(name), created: now(), source: { ...source, name } };
+    this.db.prepare('INSERT OR IGNORE INTO skill_files(hash, data) VALUES(?, ?)').run(sha256, json(data));
   }
   regenerateVersion(key) {
     this.get('versions',key);
@@ -429,7 +536,7 @@ export class LearningStore {
     return this.version(key);
   }
   // Saves the reviewed draft as the format's next immutable version. The conversation stays open afterwards.
-  approve(key, { revision, token, decisions, deletedRules = [] }) {
+  approve(key, { revision, token, decisions, deletedRules = [], fileDecisions = [] }) {
     const s = this.get('sessions', key), p = this.proposal(key), f = this.get('formats', s.formatId);
     if (s.status === 'running') fail('Finish or stop the study before approval.');
     if (s.status === 'approved') fail('This draft was already saved. Send a message to continue the conversation.');
@@ -459,6 +566,18 @@ export class LearningStore {
       rules.set(r.id, { id: r.id, area: r.area, text: d.action === 'edit' ? text(d.text, 8000) : r.text, confidence: r.confidence, evidence: r.evidence, sourceSession: s.id });
     }
     if (!rules.size) fail('Keep at least one rule.');
+    // Skill files: the saved ones carry forward; the draft adds, replaces or removes files (each can be discarded).
+    if (!Array.isArray(fileDecisions)) fail('Review every file change.');
+    const fileChoice = (item) => {
+      const d = fileDecisions.find((x) => x?.path === item.path);
+      if (d && !['keep', 'discard'].includes(d.action)) fail('Review every file change.');
+      return d?.action || 'keep';
+    };
+    const kept = new Map(skillFilesOf(old).map((x) => [fileKey(x.file), x]));
+    for (const r of p.files.removed) if (fileChoice(r) === 'keep') kept.delete(fileKey(r.path));
+    const additions = p.files.added.filter((a) => fileChoice(a) === 'keep');
+    for (const a of additions) kept.set(fileKey(a.path), a);
+    if (kept.size > MAX_SKILL_FILES) fail(`A skill can hold at most ${MAX_SKILL_FILES} files (assets and knowledge together).`);
     const keyV = id(), folder = this.versionDir(keyV), staging = `${folder}.staging`;
     const learnings = [...(old.learnings || []), ...p.learnings.map((l) => ({ ...l, sourceSession: s.id, versionId: keyV }))];
     let archived = null;
@@ -467,29 +586,32 @@ export class LearningStore {
       const guide = `# ${f.name}\n\n${[...rules.values()].map(r=>`## ${r.area} · ${r.id}\n${r.text}\n`).join('\n')}`;
       atomic(join(staging, 'guide.md'), guide);
       atomic(join(staging, 'SKILL.md'), approvedSkill(keyV, f.type, p.workflow));
-      const assets = [];
-      for (const [i, a] of p.assets.entries()) {
-        const file = `assets/${i}-${a.file.split('/').pop()}`, target = safeFile(staging, file);
-        mkdirSync(dirname(target), { recursive: true });
-        copyFileSync(safeFile(this.sessionDir(key), a.file), target);
-        assets.push({ ...a, file });
+      // New files go into the content-addressed store (deduplicated); the version records them by hash.
+      const stored = [];
+      for (const a of additions) {
+        const saved = this.files.putFile(safeFile(this.sessionDir(key), a.file), { ext: extensionOf(a.name), expect: a.sha256 });
+        const entry = { kind: a.kind, file: a.path, name: a.name, ...(a.kind === 'knowledge' ? { title: a.title } : {}), note: a.note,
+          tags: a.tags, sha256: saved.sha256, size: saved.size, mime: a.mime, addedIn: keyV, source: { sessionId: s.id, via: a.via, at: now() } };
+        kept.set(fileKey(a.path), entry);
+        stored.push({ sha256: saved.sha256, size: saved.size, name: a.name, source: { sessionId: s.id, via: a.via } });
       }
-      // Carry prior approved assets forward when the study supplies no replacement collection.
-      if (!p.assets.length && old.path) {
-        for (const a of old.assets) {
-          const target = safeFile(staging, a.file);
-          mkdirSync(dirname(target), { recursive: true });
-          copyFileSync(safeFile(old.path, a.file), target);
-          assets.push(a);
-        }
-      }
-      const examples = this.stageKeyFrames(s, staging);
-      const files = ['guide.md', 'SKILL.md', ...assets.map((a) => a.file), ...examples.flatMap((x) => x.frames.map((fr) => fr.file))]
-        .map((file) => ({ file, sha256: hash(readFileSync(safeFile(staging, file))) }));
+      const skillFiles = [...kept.values()].map(({ kind, ...x }) => ({ kind, ...x }));
+      const assets = skillFiles.filter((x) => x.kind === 'asset');
+      const knowledge = skillFiles.filter((x) => x.kind === 'knowledge');
+      const examples = this.stageKeyFrames(s, stored);
+      const files = [
+        ...['guide.md', 'SKILL.md'].map((file) => ({ file, sha256: hash(readFileSync(safeFile(staging, file))) })),
+        ...skillFiles.map((x) => ({ file: x.file, sha256: x.sha256, size: x.size ?? this.storedFile(x.sha256)?.size ?? null, store: true })),
+        ...examples.flatMap((x) => x.frames.map((fr) => ({ file: fr.file, sha256: fr.sha256, size: fr.size, store: true }))),
+      ];
       const changes = { new: p.rules.filter((r) => r.change === 'new' && rules.has(r.id)).map((r) => r.id),
         changed: p.rules.filter((r) => r.change === 'changed' && rules.has(r.id)).map((r) => r.id),
         removed: old.rules.map((r) => r.id).filter((x) => !rules.has(x)) };
-      const pack = { rules: [...rules.values()], workflow: p.workflow, assets, files, evidence: s.references, sourceSession: s.id, learnings, examples, changes };
+      const fileChanges = { added: additions.filter((a) => a.change === 'new').map((a) => a.path),
+        changed: additions.filter((a) => a.change === 'changed').map((a) => a.path),
+        removed: p.files.removed.filter((r) => fileChoice(r) === 'keep').map((r) => r.path) };
+      if (fileChanges.added.length || fileChanges.changed.length || fileChanges.removed.length) changes.files = fileChanges;
+      const pack = { rules: [...rules.values()], workflow: p.workflow, assets, knowledge, files, evidence: s.references, sourceSession: s.id, learnings, examples, changes };
       const raw = json(pack);
       atomic(join(staging, 'package.json'), raw);
       const v = { id: keyV, formatId: f.id, number: this.list('versions').filter(x => x.formatId === f.id).length + 1, name: s.name, created: now(), sha256: hash(raw), package: pack, baseVersion: f.activeVersion };
@@ -498,7 +620,8 @@ export class LearningStore {
       return this.tx(() => {
         const current = this.get('sessions', key), fmt = this.get('formats', f.id);
         if (current.revision !== revision || fmt.activeVersion !== s.baseVersion) fail('Another approval won. Reload before continuing.');
-        for (const file of files) this.db.prepare('INSERT OR IGNORE INTO learning_blobs(hash,bytes) VALUES(?,?)').run(file.sha256, readFileSync(safeFile(folder, file.file)));
+        for (const file of files.filter((x) => !x.store)) this.db.prepare('INSERT OR IGNORE INTO learning_blobs(hash,bytes) VALUES(?,?)').run(file.sha256, readFileSync(safeFile(folder, file.file)));
+        for (const x of stored) this.recordStoredFile(x);
         this.put('versions', v, f.id);
         this.update('formats', bump({ ...fmt, activeVersion: keyV }));
         // The conversation continues: the next draft builds on the version just saved.
@@ -514,8 +637,9 @@ export class LearningStore {
       throw e;
     }
   }
-  // Up to six evenly spaced extraction frames per studied video reference; the original stays in the intake folder.
-  stageKeyFrames(session, staging) {
+  // Up to six evenly spaced extraction frames per studied video reference, saved in the file store (stored lists them
+  // for SQLite records); the original stays in the intake folder.
+  stageKeyFrames(session, stored) {
     const examples = [];
     for (const ref of session.references) {
       if (ref.kind !== 'file' || !VIDEO_REFERENCE.test(ref.name)) continue;
@@ -531,11 +655,11 @@ export class LearningStore {
       for (const name of picks) {
         const source = safeFile(dir, name);
         if (!lstatSync(source).isFile() || lstatSync(source).size > 2 * 1024 * 1024) continue;
-        const file = `examples/frames/${ref.id}/${name}`, target = safeFile(staging, file);
-        mkdirSync(dirname(target), { recursive: true });
-        copyFileSync(source, target);
+        const file = `examples/frames/${ref.id}/${name}`;
+        const saved = this.files.putFile(source, { ext: '.jpg' });
+        stored.push({ sha256: saved.sha256, size: saved.size, name, source: { sessionId: session.id, via: 'key-frame' } });
         const index = Number(/\d+/.exec(name)[0]);
-        frames.push({ file, seconds: fps ? Math.round(((index - 1) / fps) * 10) / 10 : null });
+        frames.push({ file, seconds: fps ? Math.round(((index - 1) / fps) * 10) / 10 : null, sha256: saved.sha256, size: saved.size });
       }
       if (frames.length) examples.push({ referenceId: ref.id, frames });
     }
@@ -553,20 +677,16 @@ export class LearningStore {
     const format = { id: keyF, profileId: destination.id, name: text(name), type: source.type,
       targetSeconds: source.targetSeconds, skillIds: [...(source.skillIds || [])],
       activeVersion: keyV, revision: 1, created: now(), copiedFrom };
-    const rules = structuredClone(original.rules), assets = structuredClone(original.assets);
-    const carried = original.files.map((x) => x.file).filter((file) => file !== 'guide.md' && file !== 'SKILL.md');
+    const rules = structuredClone(original.rules), assets = structuredClone(original.assets), knowledge = structuredClone(original.knowledge || []);
+    // Assets, knowledge and key frames are shared by hash in the file store: the copy references the same bytes.
+    const carried = structuredClone(original.files.filter((x) => !TEXT_FILES.has(x.file)));
     mkdirSync(staging, { recursive: true });
     try {
       atomic(join(staging, 'guide.md'), `# ${format.name}\n\n${rules.map(r=>`## ${r.area} · ${r.id}\n${r.text}\n`).join('\n')}`);
       atomic(join(staging, 'SKILL.md'), approvedSkill(keyV, format.type, original.workflow));
-      // Assets and key frames are copied byte for byte.
-      for (const file of carried) {
-        const target = safeFile(staging, file); mkdirSync(dirname(target), { recursive: true });
-        copyFileSync(safeFile(original.path, file), target);
-      }
-      const files = ['guide.md', 'SKILL.md', ...carried].map(file=>({file,sha256:hash(readFileSync(safeFile(staging,file)))}));
+      const files = [...['guide.md', 'SKILL.md'].map(file=>({file,sha256:hash(readFileSync(safeFile(staging,file)))})), ...carried];
       // Evidence points back to the retained original study. No draft sessions or profile brand are copied.
-      const pack = { rules, workflow: original.workflow, assets, files,
+      const pack = { rules, workflow: original.workflow, assets, knowledge, files,
         evidence: structuredClone(original.evidence), sourceSession: original.sourceSession, copiedFrom,
         learnings: structuredClone(original.learnings || []), examples: structuredClone(original.examples || []) };
       const raw = json(pack); atomic(join(staging, 'package.json'), raw);
@@ -576,7 +696,7 @@ export class LearningStore {
       return this.tx(() => {
         if (this.get('formats', sourceId).activeVersion !== expected) fail('The source format changed. Review it again.');
         this.get('profiles', profileId);
-        for (const file of files) this.db.prepare('INSERT OR IGNORE INTO learning_blobs(hash,bytes) VALUES(?,?)').run(file.sha256,readFileSync(safeFile(folder,file.file)));
+        for (const file of files.filter((x) => TEXT_FILES.has(x.file))) this.db.prepare('INSERT OR IGNORE INTO learning_blobs(hash,bytes) VALUES(?,?)').run(file.sha256,readFileSync(safeFile(folder,file.file)));
         this.put('formats', format, profileId); this.put('versions', version, keyF);
         return format;
       });
@@ -590,13 +710,229 @@ export class LearningStore {
       return this.update('formats', bump({ ...f, activeVersion: versionId }));
     });
   }
+  // ---- Skill files on the format home and the Storage page ----
+
+  // The active version's files, with the version that first added each one (same path and bytes).
+  formatFiles(formatId) {
+    const format = this.get('formats', formatId);
+    const active = format.activeVersion ? this.version(format.activeVersion) : null;
+    const chain = [];
+    for (let row = active ? this.get('versions', active.id) : null, guard = 0; row && guard < 1000; guard++) {
+      chain.unshift(row);
+      row = row.baseVersion ? parse(this.db.prepare('SELECT data FROM versions WHERE id=?').get(row.baseVersion)) : null;
+    }
+    const numbers = new Map(this.list('versions').map((v) => [v.id, v.number]));
+    const firstSeen = (file) => {
+      if (file.addedIn && numbers.has(file.addedIn)) return file.addedIn;
+      const v = chain.find((x) => skillFilesOf(x.package).some((y) => fileKey(y.file) === fileKey(file.file) && y.sha256 === file.sha256));
+      return v?.id || active?.id || null;
+    };
+    const files = skillFilesOf(active).map((x) => {
+      const row = this.storedFile(x.sha256);
+      const added = firstSeen(x);
+      return { kind: x.kind, file: x.file, name: x.name, title: x.title || null, note: x.note || '', tags: x.tags || [],
+        size: x.size ?? row?.size ?? null, mime: x.mime || row?.mime || mimeOf(x.name), sha256: x.sha256,
+        addedIn: added ? { id: added, number: numbers.get(added) || null } : null, source: x.source || row?.source || null,
+        stored: this.files.has(x.sha256) };
+    });
+    return { formatId: format.id, versionId: active?.id || null, number: active?.number || null, files,
+      totals: { count: files.length, assets: files.filter((x) => x.kind === 'asset').length, knowledge: files.filter((x) => x.kind === 'knowledge').length,
+        bytes: files.reduce((n, x) => n + (x.size || 0), 0), limit: MAX_SKILL_FILES, maxBytes: MAX_SKILL_FILE_BYTES } };
+  }
+  // Every hash a saved version uses (assets, knowledge, key frames), with where it is used.
+  referencedHashes() {
+    const used = new Map();
+    const formats = new Map(this.list('formats').map((f) => [f.id, f.name]));
+    for (const v of this.list('versions')) {
+      for (const f of v.package?.files || []) {
+        if (TEXT_FILES.has(f.file)) continue;
+        if (!used.has(f.sha256)) used.set(f.sha256, []);
+        used.get(f.sha256).push({ file: f.file, versionId: v.id, number: v.number, format: formats.get(v.formatId) || null });
+      }
+    }
+    return used;
+  }
+  // Storage page: what the file store holds, what no saved version uses any more, and anything missing.
+  fileReport() {
+    const used = this.referencedHashes();
+    const objects = this.files.list();
+    const describe = (o) => {
+      const row = this.storedFile(o.sha256);
+      return { sha256: o.sha256, ext: o.ext, size: o.size, name: row?.source?.name || `${o.sha256.slice(0, 12)}${o.ext}`, created: row?.created || null, source: row?.source || null };
+    };
+    const unused = objects.filter((o) => !used.has(o.sha256)).map(describe);
+    const missing = [...used].filter(([sha256]) => !this.files.locate(sha256))
+      .map(([sha256, uses]) => ({ sha256, file: uses[0].file, uses }));
+    return { root: this.files.root, objects: objects.length, bytes: objects.reduce((n, o) => n + o.size, 0),
+      unused, unusedBytes: unused.reduce((n, o) => n + o.size, 0), missing,
+      limits: { files: MAX_SKILL_FILES, bytes: MAX_SKILL_FILE_BYTES }, migration: this.meta('blob-migration') };
+  }
+  // Explicit only. Refuses the whole request if any file is still used by a saved version.
+  deleteUnusedFiles(hashes) {
+    if (!Array.isArray(hashes) || !hashes.length || hashes.length > 10000 || hashes.some((x) => typeof x !== 'string' || !/^[a-f0-9]{64}$/.test(x))) fail('Choose unused files to delete.');
+    const used = this.referencedHashes();
+    const refused = hashes.filter((x) => used.has(x));
+    if (refused.length) fail(`${refused.length === 1 ? 'One file is' : `${refused.length} files are`} still used by a saved skill version, so nothing was deleted.`);
+    let deleted = 0, bytes = 0;
+    for (const sha256 of new Set(hashes)) {
+      const path = this.files.locate(sha256);
+      if (!path) continue;
+      bytes += lstatSync(path).size;
+      this.files.remove(sha256);
+      this.db.prepare('DELETE FROM skill_files WHERE hash=?').run(sha256);
+      deleted++;
+    }
+    return { deleted, bytes };
+  }
+
+  // ---- Add files: staged into a conversation draft like a direct rule edit, saved with the next reviewed version ----
+
+  // Runs fn(draft, session, base) on the draft of the given (or the open) conversation and saves it for review.
+  editDraft(formatId, { sessionId, revision } = {}, fn) {
+    const format = this.get('formats', formatId);
+    let s = sessionId ? this.get('sessions', sessionId) : this.openConversation(format.id);
+    if (s && s.formatId !== format.id) fail('That conversation belongs to another format.');
+    if (s && sessionId && revision !== undefined && revision !== null && s.revision !== Number(revision)) fail('This session changed. Reload before saving.');
+    if (!s) s = this.session(format.id, { name: `Edits to ${format.name}`.slice(0, 200) });
+    if (s.status === 'running') fail('Wait for the agent to finish before editing the draft.');
+    const baseId = s.status === 'approved' ? format.activeVersion : s.baseVersion;
+    const base = baseId ? this.version(baseId) : null;
+    const path = safeFile(this.sessionDir(s.id), 'work/proposal.json');
+    let draft = {};
+    if (existsSync(path) && s.status !== 'approved') {
+      try { draft = JSON.parse(readFileSync(path)); } catch { fail('The current draft is not valid JSON. Ask the agent to repair it first.'); }
+      if (!draft || typeof draft !== 'object' || Array.isArray(draft)) fail('The current draft must be a JSON object.');
+    }
+    fn(draft, s, base);
+    if (Array.isArray(draft.removeFiles) && !draft.removeFiles.length) delete draft.removeFiles;
+    for (const key of ['assets', 'knowledge']) if (Array.isArray(draft[key]) && !draft[key].length) delete draft[key];
+    if (!base && draft.workflow === undefined) draft.workflow = DEFAULT_WORKFLOW;
+    return this.change(s.id, s.revision, (x) => {
+      x.status = 'review';
+      atomic(path, JSON.stringify(draft, null, 2));
+    });
+  }
+  // A creator upload (already streamed to tempPath on the same disk) becomes work/assets/<name> or work/knowledge/<name>.
+  stageDraftFile(formatId, { sessionId, revision, kind, name, note = '', title = '', tempPath }) {
+    if (!['asset', 'knowledge'].includes(kind)) fail('Choose Assets or Knowledge.');
+    const fileName = cleanFileName(text(name, 255));
+    if (!extensionOf(fileName)) fail('The file needs an extension, such as .png or .pdf.');
+    if (kind === 'knowledge' && !KNOWLEDGE_TYPES.test(fileName)) fail(`${fileName}: knowledge can be Markdown, text, CSV, JSON, PDF or an image.`);
+    if (lstatSync(tempPath).size > MAX_SKILL_FILE_BYTES) fail(`Files can be at most ${formatBytes(MAX_SKILL_FILE_BYTES)}.`);
+    const folder = kind === 'asset' ? 'assets' : 'knowledge';
+    const work = `work/${folder}/${fileName}`, target = `${folder}/${fileName}`;
+    return this.editDraft(formatId, { sessionId, revision }, (draft, s, base) => {
+      const entries = (Array.isArray(draft[folder]) ? draft[folder] : []).filter((x) => x?.file !== work);
+      draft.removeFiles = (Array.isArray(draft.removeFiles) ? draft.removeFiles : []).filter((x) => fileKey(typeof x === 'string' ? x : x?.file) !== fileKey(target));
+      const total = new Set(skillFilesOf(base).map((x) => fileKey(x.file)));
+      for (const r of draft.removeFiles) total.delete(fileKey(typeof r === 'string' ? r : r?.file));
+      for (const x of [...(draft.assets || []), ...(draft.knowledge || [])]) if (x?.file) total.add(fileKey(`${x.file.startsWith('work/knowledge/') ? 'knowledge' : 'assets'}/${cleanFileName(x.file)}`));
+      total.add(fileKey(target));
+      if (total.size > MAX_SKILL_FILES) fail(`A skill can hold at most ${MAX_SKILL_FILES} files (assets and knowledge together).`);
+      const dest = safeFile(this.sessionDir(s.id), work);
+      mkdirSync(dirname(dest), { recursive: true });
+      renameSync(tempPath, dest);
+      const entry = { file: work, note: note ? text(note, 2000) : '', via: 'upload' };
+      if (kind === 'knowledge') entry.title = title ? text(title, 200) : stem(fileName);
+      draft[folder] = [...entries, entry];
+    });
+  }
+  // Stage removing a saved file (action "remove"), or take a staged file back out of the draft ("unstage").
+  draftFileChange(formatId, { sessionId, revision, action, path } = {}) {
+    const target = text(path, 500);
+    if (!/^(assets|knowledge)\/[^/]+$/.test(target)) fail('Choose a file in assets/ or knowledge/.');
+    return this.editDraft(formatId, { sessionId, revision }, (draft, s, base) => {
+      const removals = (Array.isArray(draft.removeFiles) ? draft.removeFiles : []).filter((x) => fileKey(typeof x === 'string' ? x : x?.file) !== fileKey(target));
+      const folder = target.split('/')[0];
+      const staged = (Array.isArray(draft[folder]) ? draft[folder] : []);
+      draft[folder] = staged.filter((x) => !x?.file || fileKey(`${folder}/${cleanFileName(x.file)}`) !== fileKey(target));
+      if (action === 'remove') {
+        if (!skillFilesOf(base).some((x) => fileKey(x.file) === fileKey(target))) fail('Only files of the saved skill can be removed.');
+        removals.push(target);
+      } else if (action !== 'unstage') fail('Unknown file change.');
+      else if (draft[folder].length === staged.length && removals.length === (draft.removeFiles || []).length) fail('That file is not in the draft.');
+      draft.removeFiles = removals;
+    });
+  }
+
+  // ---- Older studios kept asset and key-frame bytes in SQLite (learning_blobs). They move to the file store once:
+  // the database is backed up first, every file is written and verified, and only then are the blob rows removed.
+  // Safe to run again and to resume after a crash. SKILL.md and guide.md stay in SQLite. ----
+  meta(key) {
+    return this.db.prepare('SELECT value FROM file_store_meta WHERE key=?').get(key)?.value ?? null;
+  }
+  setMeta(key, value) {
+    this.db.prepare('INSERT INTO file_store_meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, String(value));
+  }
+  migrateFileStore({ fault } = {}) {
+    if (this.meta('blob-migration') === 'done') return { moved: 0, done: true };
+    try {
+      return this.moveBlobsToFileStore(fault);
+    } catch (e) {
+      if (fault) throw e;
+      // The studio still opens: unmoved files are read from SQLite and moved on the next attempt.
+      console.error('Skill file migration will retry:', e.message);
+      return { moved: 0, done: false, error: e.message };
+    }
+  }
+  moveBlobsToFileStore(fault) {
+    const textHashes = new Set(), names = new Map();
+    for (const v of this.list('versions')) {
+      for (const f of v.package?.files || []) {
+        if (TEXT_FILES.has(f.file)) textHashes.add(f.sha256);
+        else if (!names.has(f.sha256)) names.set(f.sha256, f.file);
+      }
+    }
+    const pending = this.db.prepare('SELECT hash FROM learning_blobs').all().map((r) => r.hash).filter((h) => !textHashes.has(h));
+    if (!pending.length) {
+      this.setMeta('blob-migration', 'done');
+      return { moved: 0, done: true };
+    }
+    if (!this.meta('blob-migration-backup')) {
+      const backup = safeFile(this.root, `.studio/file-store-migration-backups/${id()}/studio.sqlite`);
+      mkdirSync(dirname(backup), { recursive: true });
+      this.db.exec(`VACUUM INTO '${backup.replaceAll("'", "''")}'`);
+      this.setMeta('blob-migration-backup', backup);
+      this.setMeta('blob-migration-started', now());
+      this.setMeta('blob-migration', 'running');
+    }
+    fault?.('after-backup');
+    const moved = [], problems = [];
+    for (const [i, sha256] of pending.entries()) {
+      const file = names.get(sha256) || sha256;
+      if (!this.files.existing(sha256)) {
+        const bytes = this.db.prepare('SELECT bytes FROM learning_blobs WHERE hash=?').get(sha256).bytes;
+        if (hash(bytes) !== sha256) { problems.push(sha256); continue; }
+        this.files.putBuffer(bytes, { ext: extensionOf(file), expect: sha256 });
+      }
+      const path = this.files.verify(sha256);
+      this.recordStoredFile({ sha256, size: lstatSync(path).size, name: basename(file), source: { via: 'migration' } });
+      moved.push(sha256);
+      fault?.(`after-file-${i}`);
+    }
+    fault?.('before-drop');
+    this.tx(() => {
+      for (const sha256 of moved) {
+        this.files.verify(sha256);
+        this.db.prepare('DELETE FROM learning_blobs WHERE hash=?').run(sha256);
+      }
+      if (problems.length) this.setMeta('blob-migration-problems', json(problems));
+      this.setMeta('blob-migration-finished', now());
+      this.setMeta('blob-migration', 'done');
+    });
+    // Give the space back. Best effort: another open connection can make SQLite refuse, which is harmless.
+    try { this.db.exec('VACUUM'); } catch {}
+    return { moved: moved.length, problems, done: true };
+  }
+
   // Consistent local recovery bundle. Files are immutable during this synchronous operation.
   backup() {
     const key = id(), dest = safeFile(this.root, `.studio/learning-backups/${key}`); mkdirSync(dest,{recursive:true});
     try {
       for (const v of this.list('versions')) { this.version(v.id); const folder=join(dest,'versions',v.id); mkdirSync(folder,{recursive:true}); const copy=(src,out)=>{ for(const e of readdirSync(src,{withFileTypes:true})) { const p=safeFile(src,e.name),q=join(out,e.name); if(e.isDirectory()){mkdirSync(q,{recursive:true});copy(p,q);} else if(e.isFile())copyFileSync(p,q); else fail('Unsupported backup file.'); } }; copy(this.versionDir(v.id),folder); }
       this.db.exec(`VACUUM INTO '${join(dest,'studio.sqlite').replaceAll("'","''")}'`);
-      atomic(join(dest,'manifest.json'),json({schema:1,created:now(),profiles:this.list('profiles').length,versions:this.list('versions').length,sounds:this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='sound_assets'").get()?this.db.prepare('SELECT count(*) n FROM sound_assets').get().n:0}));
+      const store=this.files.list();
+      atomic(join(dest,'manifest.json'),json({schema:1,created:now(),profiles:this.list('profiles').length,versions:this.list('versions').length,skillFiles:{objects:store.length,bytes:store.reduce((n,x)=>n+x.size,0),included:false},sounds:this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='sound_assets'").get()?this.db.prepare('SELECT count(*) n FROM sound_assets').get().n:0}));
       return { id:key, path:dest };
     } catch(e){rmSync(dest,{recursive:true,force:true});throw e;}
   }

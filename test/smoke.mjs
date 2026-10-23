@@ -226,7 +226,8 @@ try {
 
   await check('Setup: ffmpeg and ffprobe found', async () => {
     const r = (await api('/api/app/setup/check?id=ffmpeg')).json;
-    must(r?.state === 'ok', `${r?.state}: ${r?.detail}`);
+    // An FFmpeg older than 8.1.2 is found but warned about ("Needs a look"); it never counts as missing.
+    must(r?.state === 'ok' || r?.state === 'warn', `${r?.state}: ${r?.detail}`);
     return r.detail;
   });
 
@@ -1045,7 +1046,7 @@ try {
         must((await sc('/api/app/scan/action', { action: 'lms-get', model: 'qwen/qwen3-8b' })).status === 400, 'a download without an OK');
         must((await sc('/api/app/scan/action', { action: 'lms-get', model: 'x; rm -rf /', confirmed: true })).status === 400, 'a bad model name');
         const st = (await sc('/api/app/setup')).json;
-        must(st.checks[0].id === 'ffmpeg' && st.checks[0].card === 'tools' && st.checks[0].title === 'ffmpeg: renders and exports your videos' && st.checks.filter((c) => c.card === 'tools').map((c) => c.id).join() === 'ffmpeg,recorder,folders,python',
+        must(st.checks[0].id === 'ffmpeg' && st.checks[0].card === 'tools' && st.checks[0].title === 'ffmpeg: renders and exports your videos' && st.checks.filter((c) => c.card === 'tools').map((c) => c.id).join() === 'ffmpeg,recorder,folders,python,node',
           `the tools card: ${JSON.stringify(st.checks)}`);
         if (OW) return 'Windows: the stand-ins are shell scripts (ffmpeg row checked)';
         let a = await sc('/api/app/scan/action', { action: 'lms-get', model: 'qwen/qwen3-8b', confirmed: true });
@@ -1845,7 +1846,7 @@ try {
     await check('Claude Code model sources: what a started chat really gets (fake claude), Settings and status', async () => {
       // A stand-in for claude: answers --version and auth status, and writes down its arguments and environment.
       const fake = join(ROOT, 'fake-claude'), out = join(ROOT, 'fake-claude.json');
-      writeFileSync(fake, `#!${process.execPath}\nconst fs = require('fs');\nif (process.argv.includes('--version')) { console.log('9.9.9 (Claude Code)'); process.exit(0); }\nif (process.argv[2] === 'auth') { console.log(JSON.stringify({ loggedIn: true, authMethod: 'claude.ai', subscriptionType: 'max' })); process.exit(0); }\nfs.writeFileSync(process.env.FAKE_CLAUDE_OUT, JSON.stringify({ argv: process.argv.slice(2), env: process.env }));\nsetTimeout(() => process.exit(0), 3000);\n`);
+      writeFileSync(fake, `#!${process.execPath}\nconst fs = require('fs');\nif (process.argv.includes('--version')) { console.log('9.9.9 (Claude Code)'); process.exit(0); }\nif (process.argv[2] === 'auth') { console.log(JSON.stringify({ loggedIn: true, authMethod: 'claude.ai', subscriptionType: 'max' })); process.exit(0); }\nconst promptFile = process.argv[process.argv.indexOf('--append-system-prompt-file') + 1];\nfs.writeFileSync(process.env.FAKE_CLAUDE_OUT, JSON.stringify({ argv: process.argv.slice(2), env: process.env, prompt: fs.readFileSync(promptFile, 'utf8') }));\nsetTimeout(() => process.exit(0), 3000);\n`);
       execFileSync('chmod', ['755', fake]);
       const local = unitLocal('ccstart', { claudePath: fake });
       const r = nodeIn(local, `const fs = await import('node:fs');
@@ -1859,7 +1860,7 @@ try {
           c.handle({ type: 'system', subtype: 'init', session_id: 'sess-' + id, model: 'm' });
           c.handle({ type: 'rate_limit_event', rate_limit_info: { unifiedWindows: { five_hour: { utilization: 0.5 } } } });
           c.kill(); const j = JSON.parse(fs.readFileSync(out, 'utf8'));
-          return { argv: j.argv, env: Object.fromEntries(Object.entries(j.env).filter(([k]) => /^(ANTHROPIC|CLAUDE_CODE|MY_OTHER|ENABLE_CLAUDEAI)/.test(k))), source: state().projects[id]?.source };
+          return { argv: j.argv, prompt: j.prompt, env: Object.fromEntries(Object.entries(j.env).filter(([k]) => /^(ANTHROPIC|CLAUDE_CODE|MY_OTHER|ENABLE_CLAUDEAI)/.test(k))), source: state().projects[id]?.source };
         };
         const res = {};
         saveSection('claude', { ccSource: 'ollama', ccModel: 'qwen3-coder:30b' }); res.ollama = await startOnce('src-ollama');
@@ -1876,7 +1877,7 @@ try {
       const leak = (o) => JSON.stringify(o).includes('sk-ant-');
       must(!r.ollama.error && !leak(r.ollama) && r.ollama.env.ANTHROPIC_BASE_URL === 'http://127.0.0.1:11434' && r.ollama.env.ANTHROPIC_AUTH_TOKEN === 'ollama', `ollama: ${JSON.stringify(r.ollama).slice(0, 400)}`);
       const a = r.ollama.argv, i = a.indexOf('--model');
-      must(i > 0 && a[i + 1] === 'qwen3-coder:30b' && a.includes('--settings') && /running on qwen3-coder:30b through Ollama/.test(a[a.indexOf('--append-system-prompt') + 1]) && r.ollama.source === 'ollama', `ollama args: ${JSON.stringify(a).slice(0, 400)}`);
+      must(i > 0 && a[i + 1] === 'qwen3-coder:30b' && a.includes('--settings') && /running on qwen3-coder:30b through Ollama/.test(r.ollama.prompt) && r.ollama.source === 'ollama', `ollama args: ${JSON.stringify(a).slice(0, 400)}`);
       must(!r.provider.error && !leak(r.provider) && r.provider.env.ANTHROPIC_BASE_URL === 'https://openrouter.ai/api' && r.provider.env.ANTHROPIC_AUTH_TOKEN === 'no-key', `provider: ${JSON.stringify(r.provider).slice(0, 400)}`);
       must(/ANTHROPIC_API_KEY in .*settings\.json/.test(r.conflict.error || ''), `a settings file's key would have gone to the provider: ${JSON.stringify(r.conflict).slice(0, 300)}`);
       // The plan: Video Octopus's environment goes through as before (whatever ANTHROPIC_BASE_URL it had, Video Octopus adds none).

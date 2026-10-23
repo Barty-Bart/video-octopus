@@ -155,9 +155,11 @@ try {
     }
   }
   const finalFfmpeg = await api('/api/app/setup/check?id=ffmpeg');
-  record('FFmpeg readiness after offered install', finalFfmpeg.state === 'ok' ? 'pass' : 'blocked', finalFfmpeg);
+  // "warn" is an FFmpeg older than 8.1.2: present and usable, with an update recommended.
+  const ffmpegPresent = ['ok', 'warn'].includes(finalFfmpeg.state);
+  record('FFmpeg readiness after offered install', ffmpegPresent ? 'pass' : 'blocked', finalFfmpeg);
   await safe('Provider metadata fixtures', () => checkProviders({ repo, baseUrl, evidenceDir, record }));
-  if (finalFfmpeg.state === 'ok') {
+  if (ffmpegPresent) {
     await safe('Synthetic media and exports', async () => {
       // Use the same discovery paths as the app, including a newly created
       // WinGet Links directory; do not substitute a private test-only binary.

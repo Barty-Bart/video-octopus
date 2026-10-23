@@ -4,7 +4,7 @@
 // copied key-store dependency is replaced: its sole value is a synthetic fixture.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync, chmodSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -39,9 +39,17 @@ async function fakeCLI() {
   const snapshot = () => Object.fromEntries(readdirSync(skillRoot).filter((name) => existsSync(join(skillRoot, name, 'SKILL.md')))
     .sort().map((name) => [name, createHash('sha256').update(readFileSync(join(skillRoot, name, 'SKILL.md'))).digest('hex')]));
   const resume = engine === 'claude' && argv.includes('--resume') ? arg('--resume') : engine === 'pi' && argv.includes('--session') ? arg('--session') : null;
+  // The appended system prompt arrives as a file (Claude: --append-system-prompt-file; pi: --append-system-prompt with
+  // a path). Read it as the real CLIs do, at startup; the app removes the file once the process ends.
+  const promptFile = engine === 'claude' ? arg('--append-system-prompt-file') : engine === 'pi' ? arg('--append-system-prompt') : null;
+  const appendPrompt = promptFile && existsSync(promptFile) ? readFileSync(promptFile, 'utf8') : null;
   const sessionFile = join(process.env.OCTOPUS_TEST_STUDIO, '.fixture-pi-session.jsonl');
   if (engine === 'pi') { mkdirSync(dirname(sessionFile), { recursive: true }); if (!existsSync(sessionFile)) writeFileSync(sessionFile, ''); }
-  log({ kind: 'launch', argv, resume, cwd: process.cwd(), skillRoot, skills: snapshot(),
+  // The whole command line as Windows' CreateProcess would get it (each argument quoted when it holds a space or a
+  // quote), which Windows caps at 32,767 characters.
+  const quoteArg = (a) => /[\s"]/.test(a) ? `"${a.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1')}"` : a;
+  const commandLine = [process.execPath, ...process.argv.slice(1)].map(quoteArg).join(' ');
+  log({ kind: 'launch', argv, resume, cwd: process.cwd(), skillRoot, skills: snapshot(), promptFile, appendPrompt, commandLength: commandLine.length,
     home: process.env.HOME, local: process.env.STUDIO_LOCAL_DIR, config: process.env.CODEX_HOME,
     inheritedRealCredential: Boolean(process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN),
     transcription: process.env.STUDIO_TRANSCRIBE, language: process.env.STUDIO_TRANSCRIBE_LANGUAGE });
@@ -120,6 +128,25 @@ syncBuiltinESMExports();\n`);
   return { root, app, studio, home, local, shell, bin, env };
 }
 
+// About 60 KB of project context shaped like a real pinned project's: studio instructions, the approved brand, the
+// pinned format's rules and examples, memories and the scene kit, with paths, quotes and non-ASCII text.
+function largeProjectContext() {
+  const parts = ['Project folder: projects/synthetic (type: explainer); source files: source/take-01.mov, source/take-02.mov.'];
+  for (let i = 1; i <= 80; i++) {
+    parts.push(`Studio instruction ${i}: Keep "lower thirds" readable — 48 px minimum, 6 s on screen; cut on breaths, never mid-word; `
+      + `retime graphics after every recut and keep scene element IDs (scene-${i}-title, scene-${i}-card) stable.`);
+  }
+  parts.push(`Approved brand (Alpha v3): ${JSON.stringify({ colours: ['#0a2540', '#ff5a1f', '#f6f9fc'], fonts: { heading: 'Söhne Breit', body: 'Inter' }, voice: 'direct, warm, no hype' })}`);
+  for (let i = 1; i <= 120; i++) {
+    parts.push(`Format rule ${i} (pinned v1, cites example ex-${i % 7}): open with the result in the first ${2 + (i % 4)} s; `
+      + `B-roll every ${8 + (i % 5)} s; captions sentence case; zoom 110 % on emphasis; end card at C:\\Users\\Creator\\Video Octopus\\library\\brand\\end-${i}.png.`);
+  }
+  for (let i = 1; i <= 160; i++) parts.push(`Memory mem-${i} (project): the creator prefers ${['short hooks', 'calm pacing', 'blue cards', 'no music under speech'][i % 4]}; evidence msg-${1000 + i}.`);
+  parts.push(`Scene kit: ${JSON.stringify(Array.from({ length: 120 }, (_, i) => ({ id: `kit-${i}`, kind: ['title', 'card', 'chart', 'quote'][i % 4], file: `kit/${i}.html` })))}`);
+  parts.push('LARGE-CONTEXT-MARKER: end of the synthetic project context.');
+  return parts.join('\n');
+}
+
 async function worker(engine, root) {
   const app = join(root, 'app'), studio = join(root, 'studio'), local = join(root, 'local');
   const failures = [], passed = [], children = new Set(), sessions = new Set();
@@ -156,7 +183,7 @@ async function worker(engine, root) {
   const textOf = (row = turn()) => engine === 'claude' ? row.message.message.content : engine === 'codex' ? row.message.params.input[0].text : row.message.message;
   const initialPrompt = () => {
     if (engine === 'codex') return wire().filter((x) => /^thread\/(start|resume)$/.test(x.message?.method)).at(-1).message.params.developerInstructions;
-    const argv = launch().argv; return argv[argv.indexOf('--append-system-prompt') + 1];
+    return launch().appendPrompt;
   };
   const inventory = (text) => JSON.parse(/Active skills: (\[.*?\])\. Disabled skills:/.exec(text)?.[1] || '[]');
   const create = () => { const s = new Klass(id, () => 'Synthetic project instructions.'); s.cwd = () => project; sessions.add(s); return s; };
@@ -306,12 +333,38 @@ async function worker(engine, root) {
       if (engine === 'pi') assert.equal(launch().argv[launch().argv.indexOf('--skill') + 1], pinnedRoot);
     });
     await stop(pinned);
+    // A large, realistic project context (about 60 KB: instructions, brand, format rules, memories, the scene kit),
+    // more than the ~43 KB a real pinned project sends. Windows caps the command line at 32,767 characters, so the
+    // context must not travel on it: each engine's spawned command line stays under 30,000 characters.
+    const large = largeProjectContext();
+    const big = new Klass(`${id}-large`, () => large);
+    big.cwd = () => project; sessions.add(big);
+    big.projectScope = () => ({ skillRoot: pinnedRoot, instructionRoot: studio, text: 'PINNED-PROJECT-CONTEXT: large fixture.' });
+    await send(big, 'LARGE-CONTEXT');
+    const bigLaunch = launch();
+    check('a large project context keeps the spawned command line under 30,000 characters', () => {
+      assert.ok(large.length > 55000, `fixture context is only ${large.length} characters`);
+      assert.ok(bigLaunch.commandLength < 30000, `${engine} command line is ${bigLaunch.commandLength} characters`);
+      assert.ok(initialPrompt().includes(large.slice(-2000)), 'the whole context still reaches the agent');
+      if (engine !== 'codex') {
+        assert.ok(bigLaunch.argv.every((a) => !a.includes('LARGE-CONTEXT-MARKER')), 'no context on the command line');
+        assert.equal(dirname(bigLaunch.promptFile), join(local, 'agent-prompts'), 'the prompt file is in the app\'s own local folder');
+        assert.ok(existsSync(bigLaunch.promptFile), 'the prompt file stays while its agent runs');
+        if (process.platform !== 'win32') assert.equal(statSync(bigLaunch.promptFile).mode & 0o777, 0o600);
+      }
+    });
+    await stop(big);
+    if (engine !== 'codex') check('the prompt file is removed when its agent process ends', () => {
+      assert.equal(existsSync(bigLaunch.promptFile), false);
+      const running = [...sessions].filter((x) => x.proc).length;
+      assert.ok(readdirSync(join(local, 'agent-prompts')).length <= running, 'only running agents keep a prompt file');
+    });
     // Direct active-copy tampering is rejected before the agent sees another turn.
     write(join(studio, '.claude/skills/transcribe/SKILL.md'), 'unexpected tampering');
     await assert.rejects(() => s.send('MUST-NOT-USE-TAMPERED'), /Skill files changed/);
     passed.push('tampered publication refuses a turn before agent execution');
     check('persistent adapter state remains in disposable local folder', () => assert.ok(util.state().projects[id].sessionId));
-    return { engine, passed: passed.length, checks: passed, failures, launches: wire().filter((x) => x.kind === 'launch').length,
+    return { engine, passed: passed.length, checks: passed, failures, largeContext: large.length, largeCommandLine: bigLaunch.commandLength, launches: wire().filter((x) => x.kind === 'launch').length,
       turns: wire().filter((x) => x.kind === 'request' && (x.message.type === 'user' || x.message.method === 'turn/start' || x.message.type === 'prompt')).length,
       sourceHashes: Object.fromEntries(['claude', 'codex', 'pi', 'managed-skills', 'skill-preferences'].map((name) => [name, hash(readFileSync(join(app, 'server', `${name}.mjs`)))])) };
   } finally {
@@ -333,7 +386,7 @@ if (process.argv[2] === '--harness-worker') {
       const result = JSON.parse(stdout.trim());
       t.diagnostic(JSON.stringify(result));
       assert.deepEqual(result.failures, [], `${engine} failed ${result.failures.length} integration checks`);
-      assert.ok(result.passed >= 24);
+      assert.ok(result.passed >= 26);
     } finally { rmSync(f.root, { recursive: true, force: true }); }
   });
 }

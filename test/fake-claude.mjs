@@ -12,7 +12,8 @@ const argv = process.argv.slice(2);
 if (argv.includes('--version')) { console.log('9.9.9 (Claude Code)'); process.exit(0); }
 if (argv[0] === 'auth') { console.log(JSON.stringify({ loggedIn: true, authMethod: 'claude.ai', subscriptionType: 'max' })); process.exit(0); }
 const arg = (k) => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : null; };
-const sys = arg('--append-system-prompt') || '';
+// Video Octopus passes the appended system prompt as a file (Windows command-line limit); read it as Claude Code does.
+const sys = arg('--append-system-prompt-file') ? readFileSync(arg('--append-system-prompt-file'), 'utf8') : arg('--append-system-prompt') || '';
 const mode = arg('--permission-mode') || 'manual';
 const settings = (() => { try { return JSON.parse(arg('--settings') || '{}'); } catch { return {}; } })();
 const cwd = process.cwd();

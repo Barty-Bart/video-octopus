@@ -219,6 +219,12 @@ export async function childEnv() {
   return env;
 }
 
+// A path in the agent's brief, quoted but exactly as it is on disk: JSON quoting would double every Windows backslash
+// (C:\\Users\\…), which is not the path an agent should type. JSON only for a path that itself contains a quote.
+export function quotedPath(path) {
+  return /["\r\n]/.test(path) ? JSON.stringify(path) : `"${path}"`;
+}
+
 // A few lines for every chat's system prompt: the engines picked here and which keys are in the environment
 // (names only). `env` is childEnv()'s result.
 export function settingsBrief(env = {}, { profileScoped = false } = {}) {
@@ -233,20 +239,26 @@ export function settingsBrief(env = {}, { profileScoped = false } = {}) {
       : `- Transcription: on this computer with the transcribe skill (STUDIO_TRANSCRIBE=local, ${t.model !== 'auto' ? `model ${t.model}` : '--model auto: the best verbatim model already downloaded'}). Never run two transcriptions side by side; the rough cut's filler pass goes in the same run (--fill-out).`);
   if (t.language !== 'auto' || t.vocab.length) lines.push(`- Transcription language: ${LANGS[t.language]}${t.vocab.length ? `. Always spell these right (pass them as the prompt): ${t.vocab.join(', ')}` : ''}.`);
   lines.push(`- Rendering: on this computer${r.jobs ? `, up to ${r.jobs} jobs in parallel` : ''}; default output ${r.size === '4k' ? '4K' : '1080p'} ${{ h264: 'H.264', hevc: 'HEVC', prores: 'ProRes' }[r.codec]}.`);
-  if (s.python) lines.push(`- Selected Python: ${JSON.stringify(expandHome(s.python))}. Use this executable (also STUDIO_PYTHON) for all Python tools. Its directory is on PATH. Do not substitute another project environment or install into this shared environment without permission.`);
+  if (s.python) lines.push(`- Selected Python: ${quotedPath(expandHome(s.python))}. Use this executable (also STUDIO_PYTHON) for all Python tools. Its directory is on PATH. Do not substitute another project environment or install into this shared environment without permission.`);
   lines.push('- Python: transcription on this computer, the rough cut, join check, tools/cut/apply_edit.py and object separation run Python (the explicitly selected Python first, otherwise the studio\'s .venv). When a step needs it and it isn\'t there (Setup may have said "Not needed"), say so in one line, offer to set it up (Python 3.10+, a .venv in the studio with its requirements.txt) and ask before installing anything.');
   const o = section('objsep', s), sam = sam2Have();
   lines.push(`- Object separation: the object-separation skill with SAM 2.1 ${o.model === 'auto' ? 'as recommended for this computer (--model left out: its own pick)' : `${o.model} (STUDIO_OBJSEP_MODEL=${o.model})`}; downloaded: ${sam.length ? sam.join(', ') : 'none yet'}. The skill never downloads a model: when it isn't there, the creator presses Download in Video Octopus's Setup (Object separation row) or picks another one in Settings → Rendering.`);
   lines.push(`- Sound sources: ${[so.claude && 'made by Claude', so.epidemic && 'Epidemic Sound (through its connector)', so.library && `the library folder ${so.library}`].filter(Boolean).join(', ') || 'none picked'}; effects sit about ${Math.abs(so.fxDb)} dB under the voice (an effect's loudest 0.2 s against the voice's level while it talks: Video Octopus's export and canvas mix sound cues this way, so mix your renders the same).`);
-  lines.push(`- Look defaults: background ${{ 'night-desk': 'Night Desk', stars: 'Stars', led: 'LED wave' }[lk.background]}, picture-in-picture frame ${lk.pip}${!profileScoped && lk.colors.length ? `, brand colours ${lk.colors.join(' ')}` : ''}${!profileScoped && lk.fonts ? `, fonts ${lk.fonts}` : ''}.`);
+  // With channel profiles, brand identity comes only from a channel's approved brand (pinned per project): the
+  // install-wide colours and fonts, the Setup interview's brand line and the studio's BRAND.md would contradict it.
+  const profiles = Boolean(s.studio && existsSync(join(s.studio, '.studio', 'profile-storage.json')));
+  const legacyBrand = !profileScoped && !profiles;
+  lines.push(`- Look defaults: background ${{ 'night-desk': 'Night Desk', stars: 'Stars', led: 'LED wave' }[lk.background]}, picture-in-picture frame ${lk.pip}${legacyBrand && lk.colors.length ? `, brand colours ${lk.colors.join(' ')}` : ''}${legacyBrand && lk.fonts ? `, fonts ${lk.fonts}` : ''}.`);
   const keys = Object.keys(KEYS).filter((n) => env[n]);
   lines.push(`- API keys from ${KEY_STORE} are in your environment${keys.length ? `: ${keys.join(', ')}` : ' (none saved yet)'}. Never print, log or write a key anywhere; check one only by whether it is set or by its length. Never ask the creator to paste a key into a chat: keys go in Video Octopus's Settings, which keeps them in ${KEY_STORE}.`);
   const pr = profileScoped ? null : profile();
   if (pr && (pr.who || pr.make || pr.brand || pr.creators || pr.tone || pr.formats?.length)) {
-    lines.push(`- About the creator (Setup interview): ${[pr.who && `who: ${pr.who}`, pr.make && `makes ${pr.make}`, pr.formats?.length && `formats: ${pr.formats.join(', ')}`, pr.tone && `tone: ${pr.tone}`, pr.brand && `brand: ${pr.brand}`, pr.creators && `likes the editing of ${pr.creators}`].filter(Boolean).join('; ')}.`);
+    const about = [pr.who && `who: ${pr.who}`, pr.make && `makes ${pr.make}`, pr.formats?.length && `formats: ${pr.formats.join(', ')}`, pr.tone && `tone: ${pr.tone}`, legacyBrand && pr.brand && `brand: ${pr.brand}`, pr.creators && `likes the editing of ${pr.creators}`].filter(Boolean);
+    if (about.length) lines.push(`- About the creator (Setup interview): ${about.join('; ')}.`);
   }
+  if (profiles && !profileScoped) lines.push('- Brand: each channel has its own approved brand (Video formats → the channel); a project uses the one it was made with. There is no studio-wide brand to apply.');
   // The studio's own brand and style notes (Setup writes BRAND.md; STYLE.md is the fuller guide the assistant drafts).
-  const own = !profileScoped && s.studio ? ['BRAND.md', 'STYLE.md'].filter((f) => existsSync(join(s.studio, f))) : [];
+  const own = legacyBrand && s.studio ? ['BRAND.md', 'STYLE.md'].filter((f) => existsSync(join(s.studio, f))) : [];
   if (own.length) lines.push(`- The creator's brand and style: ${own.join(' and ')} in the studio folder. Read ${own.length > 1 ? 'them' : 'it'} before planning or building graphics; brand files are in the library's brand/ folder.`);
   return lines.join('\n');
 }

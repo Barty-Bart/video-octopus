@@ -66,6 +66,9 @@ const file2 = (p) => String(p || '').split(/[\\/]/).slice(-2).join('/');
 // "Always for …" key use the command inside.
 const unwrap = (cmd) => { const m = /^(?:\/(?:usr\/)?bin\/)?(?:ba|z)?sh\s+-l?c\s+(['"])([\s\S]*)\1\s*$/.exec(String(cmd || '').trim()); return m ? m[2] : String(cmd || ''); };
 
+// Which provider a Codex chat runs on: a thread or a running chat from another one is not continued (engines.mjs).
+export const codexSource = (c = section('claude')) => c.codexProvider || 'chatgpt';
+
 export class CodexSession extends ChatSession {
   constructor(id, context) {
     super(id, context);
@@ -129,13 +132,17 @@ export class CodexSession extends ChatSession {
     }
     const params = await this.threadParams(cwd, extra);
     const st = state().projects[this.id] || {};
-    const saved = st.engine === 'codex' ? st.sessionId : null;
+    // A thread from another provider (ChatGPT, LM Studio, Ollama) isn't this one's to continue. Older saves have no source.
+    this.source = codexSource(c);
+    const otherSource = st.engine === 'codex' && st.source && st.source !== this.source;
+    const saved = st.engine === 'codex' && !otherSource ? st.sessionId : null;
+    if (otherSource) this.emit({ t: 'note', text: 'Codex now uses another provider, so this is a fresh chat.' });
     let r = saved ? await this.call('thread/resume', { threadId: saved, ...params }).catch(() => null) : null;
     if (saved && !r) this.emit({ t: 'note', text: 'The old Codex chat could not be reopened, so this is a fresh one.' });
     this.resumed = Boolean(r);
     if (!r) r = await this.call('thread/start', params);
     this.threadId = r.thread.id;
-    setProjectState(this.id, { sessionId: this.threadId, engine: 'codex', model: r.model || c.codexModel || null });
+    setProjectState(this.id, { sessionId: this.threadId, engine: 'codex', source: this.source, model: r.model || c.codexModel || null });
     this.emit({ t: 'session', id: this.threadId, model: r.model || c.codexModel || 'codex' });
   }
 
@@ -308,7 +315,8 @@ export class CodexSession extends ChatSession {
     this.lastSend = text;
     this.setBusy(true);
     if (!this.proc) {
-      try { await this.start(); } catch (e) { this.emit({ t: 'error', text: e.message }); this.kill(); return; }
+      // A start failure goes back to the caller (the route answers with the error, as for Claude Code).
+      try { await this.start(); } catch (e) { this.kill(); this.setBusy(false); throw e; }
     }
     if (echo) this.emit(userEvent(text, brief));
     this.setBusy(true);

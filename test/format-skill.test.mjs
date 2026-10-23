@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { LearningStore, formatSkillName, formatSkillId } from '../server/learning-store.mjs';
 import { ProfileStore } from '../server/profile-store.mjs';
-import { syncSkills, skillsView, activeSkillRoot, registerGeneratedSkills, skillSelectionBrief } from '../server/managed-skills.mjs';
+import { syncSkills, skillsView, activeSkillRoot, registerGeneratedSkills, skillSelectionBrief, takeSkillNotices } from '../server/managed-skills.mjs';
 import { generateFormatSkills, pinnedFormatSkill } from '../server/format-skills.mjs';
 import { pinnedSkillDir } from '../server/claude.mjs';
 
@@ -282,8 +282,10 @@ test('approval keeps up to six key frames per studied video; copies carry them',
   assert.equal(pack.examples[0].frames[0].seconds, 0);
   assert.equal(pack.examples[0].frames.at(-1).seconds, 4.5);
   assert.ok(pack.files.some((x) => x.file.startsWith('examples/frames/')));
-  rmSync(join(pack.path, pack.examples[0].frames[0].file));
-  assert.equal(readFileSync(join(store.version(v1.id).path, pack.examples[0].frames[0].file), 'utf8'), 'jpeg 1', 'frames are rebuilt from SQLite');
+  // Key frames live in the content-addressed file store (skill-assets spec, 23 October 2026), not in SQLite or the version folder.
+  const frame = pack.files.find((x) => x.file === pack.examples[0].frames[0].file);
+  assert.equal(readFileSync(store.files.locate(frame.sha256), 'utf8'), 'jpeg 1', 'frames are kept in the file store');
+  assert.equal(existsSync(join(pack.path, frame.file)), false, 'not copied into the version folder');
   const copy = store.copyFormat(format.id, { profileId: profile.id, name: 'Copy', expected: v1.id, reviewed: true });
   assert.equal(store.version(copy.activeVersion).examples[0].frames.length, 6);
 });
@@ -369,9 +371,18 @@ test('format skill: protected from collisions, edits are not imported, skill act
   // Skill-manager actions cannot edit or disable a generated skill.
   assert.throws(() => syncSkills({ studio: root, action: { action: 'edit', id: formatSkillId(format.id), revision: view.revision, text: 'x' } }), /generated from Video formats/);
   assert.throws(() => syncSkills({ studio: root, action: { action: 'disable', id: formatSkillId(format.id), revision: view.revision } }), /generated from Video formats/);
-  // An edited active copy blocks chats like any other skill edit; refresh rebuilds it from SQLite instead of importing.
+  // An edited active copy no longer blocks chats (phase 2, audit S5): the next chat puts the database version back,
+  // keeps the edited copy aside and says so once. Nothing is imported.
   writeFileSync(join(dir, 'SKILL.md'), generatedBytes + '\nEDITED BY HAND\n');
-  assert.throws(() => activeSkillRoot({ studio: root }), /Skill files changed/);
+  takeSkillNotices();
+  assert.equal(activeSkillRoot({ studio: root }), join(root, '.claude/skills'));
+  assert.equal(readFileSync(join(dir, 'SKILL.md'), 'utf8'), generatedBytes);
+  const notices = takeSkillNotices();
+  assert.equal(notices.length, 1);
+  const aside = /kept in (.+)\.$/.exec(notices[0])[1];
+  assert.match(readFileSync(join(aside, 'SKILL.md'), 'utf8'), /EDITED BY HAND/);
+  // Refresh rebuilds it from SQLite instead of importing, as before.
+  writeFileSync(join(dir, 'SKILL.md'), generatedBytes + '\nEDITED AGAIN\n');
   syncSkills({ studio: root, action: { action: 'refresh' } });
   assert.equal(readFileSync(join(dir, 'SKILL.md'), 'utf8'), generatedBytes);
   assert.equal(existsSync(join(root, 'skills/custom', name)), false);

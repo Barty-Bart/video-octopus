@@ -72,6 +72,20 @@ test('selected Python reaches child tools and agent instructions without changin
   assert(value.path.startsWith(join(home, 'video-env/bin'))); assert(value.brief.includes(executable));
 });
 
+test('a Windows interpreter path reaches the agent brief exactly as it is on disk, on every system', async t => {
+  const { home } = fixture(t), executable = 'C:\\Users\\Creator Name\\.venvs\\video\\Scripts\\python.exe';
+  const { execFileSync } = await import('node:child_process');
+  const util = new URL('../server/util.mjs', import.meta.url).href;
+  const settings = new URL('../server/settings.mjs', import.meta.url).href;
+  const script = `import {saveSettings} from ${JSON.stringify(util)};
+    import {settingsBrief} from ${JSON.stringify(settings)};
+    saveSettings({python:${JSON.stringify(executable)},studio:${JSON.stringify(home)}});
+    console.log(JSON.stringify(settingsBrief()));`;
+  const brief = JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', script], { env: { ...process.env, HOME: home, STUDIO_LOCAL_DIR: join(home, 'local') }, encoding: 'utf8' }));
+  assert(brief.includes(`Selected Python: "${executable}".`), brief);
+  assert(!brief.includes('\\\\'), 'no doubled backslashes');
+});
+
 test('same base interpreter aliases deduplicate by environment prefix after discovery', async t => {
   const { home, py, options } = fixture(t);
   py('.local/bin/python3'); py('.local/share/uv/python/cpython/bin/python');
