@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative } from 'node:path';
+import { dirname, join, relative, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import childProcess from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
@@ -12,12 +12,13 @@ import { createHash } from 'node:crypto';
 
 const write = (path, text) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, text); };
 const json = (path, value) => write(path, JSON.stringify(value, null, 2));
+// Keys are POSIX-style relative paths on every system, like the API's own (`renders/x_v1.txt`), so the two compare.
 const snapshot = (root) => {
   const files = {};
   const walk = (dir) => { for (const name of readdirSync(dir).sort()) {
     const path = join(dir, name);
     if (statSync(path).isDirectory()) walk(path);
-    else files[relative(root, path)] = createHash('sha256').update(readFileSync(path)).digest('hex');
+    else files[relative(root, path).split(sep).join('/')] = createHash('sha256').update(readFileSync(path)).digest('hex');
   } };
   walk(root); return files;
 };

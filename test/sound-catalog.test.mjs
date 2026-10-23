@@ -6,7 +6,18 @@ import { tmpdir } from 'node:os';
 import { SoundCatalog } from '../server/sound-catalog.mjs';
 import { LearningStore } from '../server/learning-store.mjs';
 import { previewDatabaseRestore, restoreDatabase } from '../server/database-recovery.mjs';
-function fixture(t){const root=realpathSync(mkdtempSync(join(tmpdir(),'sound-catalog-'))),lib=join(root,'library');mkdirSync(join(lib,'sfx/_new'),{recursive:true});t.after(()=>rmSync(root,{recursive:true,force:true}));const open=()=>new SoundCatalog(root,lib);return {root,lib,open};}
+// Windows can't delete a folder while its SQLite file is open, so teardown closes every catalog a test opened (and
+// left open) before removing the disposable studio. after hooks run in the order they were added.
+function fixture(t){
+ const root=realpathSync(mkdtempSync(join(tmpdir(),'sound-catalog-'))),lib=join(root,'library');mkdirSync(join(lib,'sfx/_new'),{recursive:true});
+ const opened=[];
+ t.after(()=>{
+  for(const catalog of opened){try{catalog.close();}catch{}} // already closed by the test: nothing to do
+  rmSync(root,{recursive:true,force:true,maxRetries:5,retryDelay:100});
+ });
+ const open=()=>{const catalog=new SoundCatalog(root,lib);opened.push(catalog);return catalog;};
+ return {root,lib,open};
+}
 const put=(p,text)=>{mkdirSync(join(p,'..'),{recursive:true});writeFileSync(p,text);};
 test('migration imports metadata and backs up without moving media or rewriting original catalogs',t=>{
  const {root,lib,open}=fixture(t);const index='# Sounds\n- `whoosh.wav` — soft page turn · licence: CC0\n',meta=JSON.stringify([{file:'click.wav',note:'gentle click',source:'made in code',licence:'original',tags:['ui']}]);
@@ -17,15 +28,15 @@ test('migration imports metadata and backs up without moving media or rewriting 
  const backups=readdirSync(join(root,'.studio/sound-migration-backups'));assert.equal(backups.length,2);for(const b of backups){assert(existsSync(join(root,'.studio/sound-migration-backups',b,'studio.sqlite')));assert.equal(readFileSync(join(root,'.studio/sound-migration-backups',b,'INDEX.md'),'utf8'),index);}
 });
 test('SQLite metadata wins over legacy edits; new sounds await approval; discarded files stay retained',t=>{
- const {lib,open}=fixture(t);put(join(lib,'sfx/existing.wav'),'sound');const c=open();t.after(()=>c.close());let row=c.scan()[0];row=c.change(row.file,row.revision,{note:'creator note',tags:['approved']});put(join(lib,'sfx/INDEX.md'),'- `existing.wav` — overwrite attempt');
+ const {lib,open}=fixture(t);put(join(lib,'sfx/existing.wav'),'sound');const c=open();let row=c.scan()[0];row=c.change(row.file,row.revision,{note:'creator note',tags:['approved']});put(join(lib,'sfx/INDEX.md'),'- `existing.wav` — overwrite attempt');
  put(join(lib,'sfx/_new/next.wav'),'next');put(join(lib,'sfx/_new/candidates.json'),JSON.stringify([{file:'next.wav',note:'candidate'}]));let items=c.scan();assert.equal(items.find(x=>x.id===row.id).note,'creator note');let next=items.find(x=>x.name==='next.wav');assert.equal(next.status,'pending');
  c.change(next.file,next.revision,{},'discarded');assert.equal(c.scan().find(x=>x.id===next.id).status,'discarded');assert(existsSync(join(lib,next.file)));assert.equal(c.db.prepare('SELECT count(*) n FROM sound_history WHERE asset=?').get(next.id).n,2);
 });
 test('metadata edits are revision checked and approval cannot resurrect discarded candidates',t=>{
- const {lib,open}=fixture(t);const c=open();t.after(()=>c.close());put(join(lib,'sfx/_new/x.wav'),'x');const row=c.scan()[0];const edited=c.change(row.file,row.revision,{note:'new',source:'local',licence:'check source',tags:['click']});assert.throws(()=>c.change(row.file,row.revision,{note:'stale'}),/changed/);assert.throws(()=>c.change(row.file,edited.revision,{tags:['x'.repeat(61)]}),/tags/);const discarded=c.change(row.file,edited.revision,{},'discarded');assert.throws(()=>c.change(row.file,discarded.revision,{},'approved'),/no longer/);
+ const {lib,open}=fixture(t);const c=open();put(join(lib,'sfx/_new/x.wav'),'x');const row=c.scan()[0];const edited=c.change(row.file,row.revision,{note:'new',source:'local',licence:'check source',tags:['click']});assert.throws(()=>c.change(row.file,row.revision,{note:'stale'}),/changed/);assert.throws(()=>c.change(row.file,edited.revision,{tags:['x'.repeat(61)]}),/tags/);const discarded=c.change(row.file,edited.revision,{},'discarded');assert.throws(()=>c.change(row.file,discarded.revision,{},'approved'),/no longer/);
 });
 test('missing audio is visible without deleting metadata, snapshot gives exact paths',t=>{
- const {lib,open}=fixture(t);put(join(lib,'sfx/a.wav'),'a');const c=open();t.after(()=>c.close());const row=c.scan()[0];rmSync(join(lib,row.file));const view=c.snapshot();assert.equal(view.items[0].missing,true);assert.equal(view.items[0].path,join(lib,row.file));assert.equal(JSON.parse(readFileSync(view.snapshot)).items[0].id,row.id);
+ const {lib,open}=fixture(t);put(join(lib,'sfx/a.wav'),'a');const c=open();const row=c.scan()[0];rmSync(join(lib,row.file));const view=c.snapshot();assert.equal(view.items[0].missing,true);assert.equal(view.items[0].path,join(lib,row.file));assert.equal(JSON.parse(readFileSync(view.snapshot)).items[0].id,row.id);
 });
 test('full database backup restores metadata while audio and old paths remain intact; pre-catalog restore is rejected',t=>{
  const {root,lib,open}=fixture(t);const st=new LearningStore(root);const before=st.backup();st.close();put(join(lib,'sfx/a.wav'),'a');let c=open(),row=c.scan()[0];c.close();assert.throws(()=>previewDatabaseRestore(root,before.id),/predates the sound catalog/);
@@ -38,7 +49,7 @@ test('symlinked audio is rejected without moving or editing its target',t=>{
  if(process.platform==='win32'){t.skip('symlink privileges differ');return;}const {root,lib,open}=fixture(t);put(join(root,'outside.wav'),'keep');symlinkSync(join(root,'outside.wav'),join(lib,'sfx/link.wav'));assert.throws(open,/symbolic/);assert.equal(readFileSync(join(root,'outside.wav'),'utf8'),'keep');
 });
 test('late candidate metadata follows only unreviewed intake, malformed JSON preserves the catalog',t=>{
- const {lib,open}=fixture(t);const c=open();t.after(()=>c.close());put(join(lib,'sfx/_new/late.wav'),'late');let row=c.scan()[0];assert.equal(row.note,'');
+ const {lib,open}=fixture(t);const c=open();put(join(lib,'sfx/_new/late.wav'),'late');let row=c.scan()[0];assert.equal(row.note,'');
  put(join(lib,'sfx/_new/candidates.json'),JSON.stringify([{file:'late.wav',note:'Arrived later',source:'local'}]));row=c.scan()[0];assert.equal(row.note,'Arrived later');
  row=c.change(row.file,row.revision,{note:'Creator edit'});put(join(lib,'sfx/_new/candidates.json'),JSON.stringify([{file:'late.wav',note:'Must not override'}]));assert.equal(c.scan()[0].note,'Creator edit');
  put(join(lib,'sfx/_new/new.wav'),'new');put(join(lib,'sfx/_new/candidates.json'),'{partial');assert.equal(c.scan().length,1);assert(c.warnings.length);assert.equal(c.byFile(row.file).note,'Creator edit');
