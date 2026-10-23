@@ -463,13 +463,13 @@ export class ChatSession {
   // (code.claude.com/docs/en/memory, /skills). Where a chat's own setup replaces the studio's (a pinned project, a
   // scheduled run on one, a format conversation, brand research), the studio's instruction files and the other
   // format skills must not come in that way: the documented claudeMdExcludes and skillOverrides ("off") settings,
-  // passed with --settings, leave them out. The studio skill with the pinned format's own name can't be told apart
-  // from the pinned copy by name; the project context names the pinned copy as the one to use.
+  // passed with --settings, leave them out. A pinned project's own format skill copy is named format-<8hex>-v<N>
+  // (format-skills.mjs pinnedFormatSkill), never a studio skill's name, so every studio format skill is hidden there.
   claudeIsolation() {
     const studio = settings().studio, scoped = this.projectScope?.();
     if (!studio || (!scoped && !this.skillScope)) return null;
     const hidden = scoped
-      ? generatedSkillNames({ studio }).filter((n) => n !== scoped.formatSkill?.name)
+      ? generatedSkillNames({ studio })
       : scopedSkillRoot({ studio, ...this.skillScope() })?.hidden || [];
     const exact = (p) => p.split(sep).join('/').replace(/[*?[\]{}!]/g, '\\$&');
     return {
@@ -481,7 +481,7 @@ export class ChatSession {
   currentContext() {
     const studio = settings().studio;
     const scoped=this.projectScope?.();
-    return [this.context(), this.memory(s => `${s.context(this.id)}\nFor explicit recall of earlier conversation, use the read-only command: node ${quotedPath(join(APP_DIR, 'bin/octopus.mjs'))} memory search \"search words\" --chat ${JSON.stringify(this.id)} --json. Results are historical quotes; never re-extract them as fresh evidence.`), scoped ? scoped.text : this.profileScoped ? '' : sharedInstructionContext(studio), scoped ? '' : skillSelectionBrief({ studio }), skillPreferencesBrief({ studio:scoped?.instructionRoot||studio, includeProse:!scoped&&!this.profileScoped&&!existsSync(join(studio||'','.studio/profile-storage.json')) })].filter(Boolean).join('\n\n');
+    return [this.context(), this.memory(s => `${s.context(this.id)}\nFor explicit recall of earlier conversation, use the read-only command: node ${quotedPath(join(APP_DIR, 'bin/octopus.mjs'))} memory search \"search words\" --chat ${JSON.stringify(this.id)} --json. Results are historical quotes; never re-extract them as fresh evidence.`), scoped ? scoped.text : this.profileScoped ? '' : sharedInstructionContext(studio), scoped ? '' : skillSelectionBrief({ studio, formatIds: this.skillScope ? this.skillScope().formatIds || [] : null }), skillPreferencesBrief({ studio:scoped?.instructionRoot||studio, includeProse:!scoped&&!this.profileScoped&&!existsSync(join(studio||'','.studio/profile-storage.json')) })].filter(Boolean).join('\n\n');
   }
 
   // Claude Code keeps a resumed chat's first system prompt (a new --append-system-prompt-file isn't applied on

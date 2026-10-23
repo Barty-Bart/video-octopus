@@ -350,8 +350,15 @@ publications are unchanged; unused copies are removed after a day). For Claude C
 chats also pass `claudeMdExcludes` (the studio's `CLAUDE.md`, `CLAUDE.local.md`,
 `AGENTS.md`) and `skillOverrides` `"off"` for the other format skills with `--settings`,
 because Claude Code loads `CLAUDE.md` and `.claude/skills` from parent folders. A
-studio format skill with the pinned format's own name can't be hidden by name; the
-project context names the pinned copy as the one to use. With channel profiles, no chat
+project's pinned copy is named `format-<8 characters>-v<N>` (its pinned version), never the
+studio skill's name, so pinned project chats and runs switch off every studio format skill
+with `skillOverrides` and load only their own copy (checked with a real Claude Code run,
+23 October 2026). A project pinned before this naming gets its copy regenerated under the
+new name on its next chat or context load; the old folder, edits included, is moved to
+`<project>/.octopus/replaced-format-skills/<time>-format-…`. The skill inventory brief of a
+format conversation or brand research names only the format skills that chat can load.
+When a draft changes or removes rules but keeps the saved workflow, review warns if the
+workflow still uses the old rules' key words (approval is not blocked). With channel profiles, no chat
 gets the install-wide brand colours and fonts, the Setup interview's brand line or the
 studio `BRAND.md`. In Auto, pi's file changes without a card are limited to the
 project's folder (and the temporary folder) for a project chat, like Claude Code's

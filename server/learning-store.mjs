@@ -25,7 +25,44 @@ const bump = (item) => ({ ...item, revision: revisionOf(item) + 1, updated: now(
 const normalized = (s) => String(s).toLowerCase().replace(/\s+/g, ' ').trim();
 // One generated skill per format. Named from the immutable format id so a rename never breaks it.
 export const formatSkillName = (formatId) => `format-${learningId(formatId).replace(/-/g, '').slice(0, 8)}`;
+// A project's pinned copy has its own name (format-<8hex>-v<N>), so it never shares a name with the studio's skill
+// for the format's active version: an agent can then be given one and denied the other.
+export const pinnedFormatSkillName = (formatId, number) => {
+  if (!Number.isInteger(number) || number < 1) fail('Invalid format version number.');
+  return `${formatSkillName(formatId)}-v${number}`;
+};
 export const formatSkillId = (formatId) => `format.${learningId(formatId)}`;
+// A carried-over workflow that still describes a changed or removed rule's old behaviour (P2, 23 Oct 2026): the
+// creator is warned in review. Deterministic and deliberately simple: a rule's key words are its words of three or
+// more letters minus common filler; a changed rule's old key words that its new text no longer uses (or now rules
+// out: "blue (not red)", "instead of red") and a removed rule's key words that no remaining rule uses are looked up
+// as whole words in the workflow.
+const FILLER_WORDS = new Set(('the and for with that this from into onto each every when then than only also more less very just ' +
+  'over under about your their them they its use uses using used keep make makes made add adds show shows per not instead ' +
+  'rather avoid without never always should must can will are was were has have but any all one').split(' '));
+const RULED_OUT = /\b(?:not|no|never|without|avoid|instead\s+of|rather\s+than|replac(?:e|es|ed|ing))\s+(?:(?:a|an|the|any)\s+)?([a-z0-9][a-z0-9-]*)/g;
+const keyWords = (text) => new Set((String(text || '').toLowerCase().match(/[a-z0-9][a-z0-9-]*/g) || [])
+  .filter((w) => w.length >= 3 && !FILLER_WORDS.has(w)));
+const ruledOut = (text) => new Set([...String(text || '').toLowerCase().matchAll(RULED_OUT)].map((m) => m[1]));
+const wholeWord = (w) => new RegExp(`(^|[^a-z0-9-])${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^a-z0-9-])`, 'i');
+// changed: [{ id, text, previous: { text } }], removed: [{ id, text }], kept: rule texts that stay in the new version.
+export function workflowConflicts(workflow, { changed = [], removed = [], kept = [] } = {}) {
+  const lines = String(workflow || '').split('\n').map((l) => l.trim()).filter(Boolean);
+  const still = new Set(kept.flatMap((t) => [...keyWords(t)]));
+  const out = [];
+  const check = (rule, change, terms) => {
+    const found = [...terms].filter((w) => wholeWord(w).test(workflow || '')).sort();
+    if (!found.length) return;
+    out.push({ id: rule.id, change, terms: found, lines: lines.filter((l) => found.some((w) => wholeWord(w).test(l))).slice(0, 8) });
+  };
+  for (const r of changed) {
+    if (!r.previous) continue;
+    const now = keyWords(r.text), excluded = ruledOut(r.text);
+    check(r, 'changed', [...keyWords(r.previous.text)].filter((w) => !now.has(w) || excluded.has(w)));
+  }
+  for (const r of removed) check(r, 'removed', [...keyWords(r.text)].filter((w) => !still.has(w)));
+  return out;
+}
 export const learningId = (s) => typeof s === 'string' && /^[a-f0-9-]{36}$/.test(s) ? s : fail('Invalid learning ID.');
 export function safeFile(root, rel) {
   const path = resolve(root, rel), r = relative(resolve(root), path);
@@ -347,7 +384,14 @@ export class LearningStore {
     // A plain-language edit may leave the workflow out: the base version's workflow carries forward.
     const workflow = p.workflow !== undefined ? text(p.workflow, 40000) : base ? base.workflow : fail('The first version needs a workflow.');
     const formatNow = this.get('formats', s.formatId);
-    return { rules, removals, learnings, assets, files, workflow, workflowChanged: Boolean(base) && workflow !== base.workflow,
+    const workflowChanged = Boolean(base) && workflow !== base.workflow;
+    // The workflow carried over unchanged while rules changed: does it still use their old wording?
+    const replaced = new Set([...rules.map((r) => r.id), ...removals.map((r) => r.id)]);
+    const workflowWarnings = base && !workflowChanged ? workflowConflicts(workflow, {
+      changed: rules.filter((r) => r.change === 'changed'), removed: removals,
+      kept: [...rules.map((r) => r.text), ...base.rules.filter((r) => !replaced.has(r.id)).map((r) => r.text)],
+    }) : [];
+    return { rules, removals, learnings, assets, files, workflow, workflowChanged, workflowWarnings,
       token: hash(Buffer.concat([raw, Buffer.from(json(files))])), revision: s.revision, baseVersion: s.baseVersion,
       baseNumber: base?.number || null, activeVersion: formatNow.activeVersion, stale: formatNow.activeVersion !== s.baseVersion };
   }

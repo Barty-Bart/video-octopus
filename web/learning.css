@@ -190,6 +190,10 @@
 .vf-review-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .vf-review .learn-rule .badge { margin-left: 0; }
 .vf-review .notice { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* A carried-over workflow that may contradict the draft's rule changes: a block with the matching lines. */
+.vf-review .notice.vf-workflow-warning { display: block; }
+.vf-workflow-warning p { margin: 0 0 6px; }
+.vf-workflow-warning ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; overflow-wrap: anywhere; }
 
 /* Keep the studio's floating "Ask Claude" button clear of the conversation composer, as beside other side panels. */
 @media (min-width: 981px) {

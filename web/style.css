@@ -1198,6 +1198,10 @@ select.field { appearance: none; padding-right: 30px; cursor: pointer;
 .ask-claude svg { fill: none; stroke: var(--accent); stroke-width: 1.8; stroke-linecap: round; }
 .ask-claude .ac-scope { font-weight: 400; opacity: 0.65; }
 .ask-claude[hidden], body.as-open .ask-claude { display: none; }
+/* It never covers a dialog (.modal is z-index 20): hidden while one is open. On a narrow screen a page with its own
+   chat (brand research, a format conversation) keeps its composer and send button clear: the pill steps aside. */
+body:has(.modal:not([hidden])) .ask-claude { display: none; }
+@media (max-width: 760px) { body:has(.composer) .ask-claude { display: none; } }
 
 /* Setup */
 .su-top { display: flex; align-items: center; gap: 8px; margin-bottom: -4px; }

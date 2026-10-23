@@ -6,7 +6,9 @@ const values=(form,sources)=>{const v=Object.fromEntries(new FormData(form));ret
 const when = (iso) => { const d = new Date(iso); return Number.isNaN(+d) ? String(iso || '') : d.toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }); };
 // A channel's Brand tab (the channel hub, #/channel/<id>/brand): the approved brand, its assets, research and
 // version history for one channel, as cards. New videos keep the version they were made with.
-export function profileSettings({ makeChat, profileId } = {}) {
+// onBrandChange(profile) runs after a brand version is approved, saved or restored, so the hub's tab status, avatar
+// and sidebar can follow.
+export function profileSettings({ makeChat, profileId, onBrandChange } = {}) {
  const root = h('<div class="brand-tab"><p class="sub">Loading the brand…</p></div>');
  let session = null, live = true, chat = null, events = null;
  const cleanup = () => { events?.close(); chat?.destroy?.(); events = null; chat = null; };
@@ -55,7 +57,7 @@ export function profileSettings({ makeChat, profileId } = {}) {
    e.preventDefault();
    await api(`/api/profiles/${profileId}/brand`, { brand: values(e.target, brand.sources), expected: p.brand?.id || null });
    toast('Brand saved. Existing projects keep their version.');
-   await paint();
+   await brandChanged();
   });
   $('#brandUpload', root).onchange = run(async (e) => {
    const draft = values($('#brandForm', root), brand.sources), added = [];
@@ -85,21 +87,41 @@ export function profileSettings({ makeChat, profileId } = {}) {
    const v = p.history.find((x) => x.id === b.dataset.brandVersion);
    if (await confirmBox({ title: 'Use this brand version for new videos?', text: JSON.stringify(v.brand, null, 2), ok: 'Use this version' })) {
     await api(`/api/profiles/${profileId}/brand`, { brand: v.brand, expected: p.brand?.id || null });
-    await paint();
+    await brandChanged();
    }
   }));
   if (session && p.research.some((r) => r.id === session)) await research(p, session);
+  return p;
+ }
+
+ // A new approved brand version: repaint the tab, then tell the hub.
+ async function brandChanged() {
+  const p = await paint();
+  if (p && live) await onBrandChange?.(p);
  }
 
  async function research(p, id) {
   const r = await api(`/api/profile-research/${id}`);
   if (!live) return;
   const host = $('#researchDetail', root);
-  host.innerHTML = `<h3>Research session</h3><p>${esc(r.url)} · ${esc(r.status)}</p>${r.error ? `<p class="learn-error">${esc(r.error)}</p>` : ''}${r.status === 'approved' ? '<p>Approved and retained as evidence.</p>' : '<div class="learn-actions"><button class="btn primary" id="brandRun">Run / resume research</button><button class="btn" id="brandReview">Review proposal</button><button class="btn" id="brandStop">Stop research</button></div><div id="brandReviewBody"></div><div id="brandChat"></div>'}`;
+  host.innerHTML = `<h3>Research session</h3><p id="researchStatus">${esc(r.url)} · ${esc(r.status)}</p><p class="learn-error" id="researchError"${r.error ? '' : ' hidden'}>${esc(r.error || '')}</p>${r.status === 'approved' ? '<p>Approved and retained as evidence.</p>' : '<div class="learn-actions"><button class="btn primary" id="brandRun">Run / resume research</button><button class="btn" id="brandReview">Review proposal</button><button class="btn" id="brandStop">Stop research</button></div><div id="brandReviewBody"></div><div id="brandChat"></div>'}`;
   if (r.status === 'approved') return;
+  // The session's status (draft → running → review or failed) in the panel line and its chip, without redrawing the
+  // chat. Read from the server, which changes it when a run starts and when the agent stops.
+  const refreshStatus = async () => {
+   const now = await api(`/api/profile-research/${id}`).catch(() => null);
+   if (!now || !live || !host.isConnected) return;
+   $('#researchStatus', host).textContent = `${now.url} · ${now.status}`;
+   const error = $('#researchError', host);
+   error.textContent = now.error || '';
+   error.hidden = !now.error;
+   const chip = root.querySelector(`[data-research="${id}"]`);
+   if (chip) chip.textContent = `${now.url} · ${now.status}`;
+  };
   $('#brandRun', host).onclick = run(async () => {
    const latest = await api(`/api/profile-research/${id}`);
    await api(`/api/profile-research/${id}/run`, { revision: latest.revision });
+   await refreshStatus();
    toast('Research started. Follow the assistant and permission requests below.');
   });
   $('#brandStop', host).onclick = run(async () => { await api(`/api/profile-research/${id}/stop`, {}); await paint(); });
@@ -110,7 +132,7 @@ export function profileSettings({ makeChat, profileId } = {}) {
     e.preventDefault();
     await api(`/api/profile-research/${id}/approve`, { revision: proposal.revision, token: proposal.token, brand: values(e.target, proposal.brand.sources) });
     toast('Approved for this channel.');
-    await paint();
+    await brandChanged();
    });
   });
   const el = h('<section class="col chat learn-chat"><div class="chat-head"><b>Brand research assistant</b><span id="sessionInfo"></span></div><div class="msgs" id="msgs"><div class="empty-chat" id="emptyChat">Run research or discuss the brand here. Nothing is approved until you review it.</div></div><div class="working" id="working" hidden><span class="spin"></span><span id="workText">Working…</span></div><div class="composer"><textarea id="input" rows="2" aria-label="Message the brand assistant"></textarea><button class="send" id="sendBtn" aria-label="Send"><span class="l-send">↑</span><i class="stop-sq l-stop"></i></button></div></section>');
@@ -120,7 +142,10 @@ export function profileSettings({ makeChat, profileId } = {}) {
   events.onmessage = (e) => {
    const ev = JSON.parse(e.data);
    chat?.handle(ev);
-   if (ev.t === 'busy' && !ev.busy && !ev.replay) toast('Research paused or finished. Review its proposal when ready.');
+   if (ev.t === 'busy' && !ev.replay) {
+    refreshStatus();
+    if (!ev.busy) toast('Research paused or finished. Review its proposal when ready.');
+   }
   };
  }
 

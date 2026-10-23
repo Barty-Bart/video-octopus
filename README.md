@@ -20,7 +20,7 @@ Save useful preferences with **Remember this**, review proposed lessons, and reu
 | Exports | MP4; WAV, M4A/AAC and MP3; transcript text/Markdown; SRT/VTT and burned captions; layer exports and timeline XML. Tested platform coverage and limitations are listed below. |
 | Project formats | YouTube tutorial, faceless explainer, Short and product explainer. |
 
-> **v0.1.0-beta.11 — source update.** A new layout: a grouped sidebar with your channels, a channel hub (Formats · Brand · Memories), All channels, Skills as a list with details, and Settings with Usage and Storage. Memories have two levels: This channel and Everything. Reviewed scoped memories, searchable chat history, format research and example studies, a SQLite sound catalog, skills and instructions, brand profiles, and automatic New video context are included. Read the [release notes](docs/release-notes.md) and [verification limits](docs/managed-skills-verification.md) before relying on an untested workflow.
+> **v0.1.0-beta.12 — source update.** Videos always use the format skill version they were pinned to (checked with a real Claude Code run); the new layout from beta.11 with channel hubs and two memory levels. Reviewed scoped memories, searchable chat history, format research and example studies, a SQLite sound catalog, skills and instructions, brand profiles, and automatic New video context are included. Read the [release notes](docs/release-notes.md) and [verification limits](docs/managed-skills-verification.md) before relying on an untested workflow.
 
 ### Six bundled starter skills
 

@@ -1110,6 +1110,14 @@ export async function renderLearning(root, { makeChat, startVideo, channelId, ba
     return `${esc(e.note)} · ${esc(referenceName(e.referenceId))}`;
   }).join('<br>');
 
+  // The workflow carried over unchanged but still uses wording from rules this draft changes or removes
+  // (proposal.workflowWarnings). A warning only: saving stays possible.
+  const workflowWarning = (warnings) => {
+    if (!warnings?.length) return '';
+    const items = warnings.map((w) => `<li><b>${esc(w.id)}</b> (${w.change === 'removed' ? 'removed' : 'changed'}): the workflow still mentions ${w.terms.map((t) => `“${esc(t)}”`).join(', ')}${w.lines.length ? `<br><span class="sub">${w.lines.map(esc).join('<br>')}</span>` : ''}</li>`).join('');
+    return `<div class="notice vf-workflow-warning" role="note"><p><b>The workflow may contradict this draft.</b> It is carried over unchanged, but it still uses wording from rules this draft changes or removes. Check the workflow below; to fix it, cancel and ask the format to update the workflow. You can still save.</p><ul>${items}</ul></div>`;
+  };
+
   async function reviewDialog(id) {
     let p = await api(`${E}/sessions/${id}/proposal`);
     const modal = $('#modal');
@@ -1171,7 +1179,8 @@ export async function renderLearning(root, { makeChat, startVideo, channelId, ba
         ${p.removals.map(removalCard).join('')}
         ${[...p.files.added, ...p.files.removed].map(fileCard).join('')}
         ${p.learnings.length ? `<details open><summary>Insights saved with it (${p.learnings.length})</summary><ul>${p.learnings.map((l) => `<li>${esc(l.text)}</li>`).join('')}</ul></details>` : ''}
-        <details${p.workflowChanged || !p.baseVersion ? ' open' : ''}><summary>Workflow${p.baseVersion && !p.workflowChanged ? ' (unchanged)' : ''}</summary><pre>${esc(p.workflow)}</pre></details>
+        ${workflowWarning(p.workflowWarnings)}
+        <details${p.workflowChanged || !p.baseVersion || p.workflowWarnings?.length ? ' open' : ''}><summary>Workflow${p.baseVersion && !p.workflowChanged ? ' (unchanged)' : ''}</summary><pre>${esc(p.workflow)}</pre></details>
         <p class="sub">After saving, the skill holds ${p.files.count} of ${MAX_FILES} files (${esc(fileSize(p.files.bytes) || '0 bytes')}).</p>
         <label class="learn-check"><input type="checkbox" id="learnReviewed">I reviewed every change, the workflow and the files.</label>
         <p class="learn-error" role="alert"></p>

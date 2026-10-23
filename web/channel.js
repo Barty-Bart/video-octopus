@@ -100,7 +100,7 @@ export async function renderChannel(main, ctx) {
       </div>
       ${p.archived ? `<div class="notice hub-archived"><span>This channel is archived. It is hidden from New video. Nothing was deleted.</span><button type="button" class="btn small" data-hub="restore">Restore</button></div>` : ''}
       <nav class="hub-tabs scroll-row" aria-label="${esc(p.name)} sections">
-        ${tabs.map(([key, label, extra]) => `<a class="hub-tab${key === tab ? ' on' : ''}" href="${channelHref(p.id, key)}"${key === tab ? ' aria-current="page"' : ''}>${label}${extra}</a>`).join('')}
+        ${tabs.map(([key, label, extra]) => `<a class="hub-tab${key === tab ? ' on' : ''}" data-tab="${key}" href="${channelHref(p.id, key)}"${key === tab ? ' aria-current="page"' : ''}>${label}${extra}</a>`).join('')}
       </nav>
     </div>
     <div class="hub-body" id="hubBody"></div>
@@ -127,7 +127,18 @@ export async function renderChannel(main, ctx) {
       onChannelChange: onChannelsChange,
     });
   } else if (tab === 'brand') {
-    const node = profileSettings({ makeChat, profileId: p.id });
+    // A brand approved, saved or restored here: the tab's status, the hub avatar and the sidebar follow at once,
+    // without redrawing the tab (its research session and chat stay open).
+    const onBrandChange = async (fresh) => {
+      if (!main.isConnected) return;
+      const status = main.querySelector('.hub-tab[data-tab="brand"] .tab-status');
+      if (status) status.textContent = fresh.brand ? 'Approved' : 'Not set';
+      const counts = await onFormatsChange?.();
+      if (!main.isConnected) return;
+      const color = counts?.channels?.find((c) => c.id === p.id)?.color ?? (fresh.brand?.brand?.colors?.[0] || null);
+      main.querySelector('.hub-top .page-head > .ch-av')?.replaceWith(h(channelAvatar({ name: p.name, color }, 'big')));
+    };
+    const node = profileSettings({ makeChat, profileId: p.id, onBrandChange });
     body.append(h('<div class="hub-pad"></div>'));
     body.firstElementChild.append(node);
     part = node;

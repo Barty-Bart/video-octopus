@@ -273,8 +273,9 @@ for (const engine of ['claude', 'codex', 'pi']) {
     for (const leak of ['#ff00aa', 'INSTALL-WIDE-FONT', 'SETUP-INTERVIEW-BRAND', 'Read it before planning']) assert.ok(!prompt.includes(leak), `run prompt has ${leak}`);
     if (engine === 'claude') {
       assert.equal(run.launch.addDir, join(projectDir, '.octopus', 'context'));
-      assert.ok(run.launch.addDirSkills.includes(c.skillA));
+      assert.ok(run.launch.addDirSkills.includes(`${c.skillA}-v1`), 'the pinned copy, under its own name');
       assert.ok(run.launch.settings.skillOverrides[c.skillB] === 'off', 'the other channel\'s format skill is hidden');
+      assert.ok(run.launch.settings.skillOverrides[c.skillA] === 'off', 'the studio copy of its own format is hidden too');
     }
     if (engine === 'codex') assert.deepEqual(run.roots.roots, [skills]);
     if (engine === 'pi') assert.equal(run.launch.piSkill, skills);
@@ -301,6 +302,13 @@ for (const engine of ['claude', 'codex', 'pi']) {
     const brand = await s.turn(`/api/profile-research/${research.id}/chat`, { text: 'PROBE research', revision: research.revision });
     assert.equal(brand.status, 200);
     const seen = (r) => engine === 'codex' ? r.roots.names[0] : engine === 'pi' ? r.launch.piSkills : r.launch.addDirSkills;
+    // P3: the prompt's skill inventory names only what the chat can load (no other channel's skill, nothing in research).
+    const prompt = (r) => engine === 'codex' ? r.thread.prompt : r.launch.prompt;
+    assert.ok(prompt(learn).includes(c.skillA), 'its own channel\'s format skill is listed');
+    assert.ok(!prompt(learn).includes(c.skillB), 'the other channel\'s format skill is not named');
+    assert.ok(!prompt(learn).includes(c.FB.id), 'nor its format id');
+    assert.doesNotMatch(prompt(learn), /active \.claude\/skills publication/);
+    assert.ok(!prompt(brand).includes(c.skillA) && !prompt(brand).includes(c.skillB), 'brand research is told about no format skill');
     assert.ok(seen(learn).includes(c.skillA));
     assert.ok(!seen(learn).includes(c.skillB), 'the other channel\'s format skill is not in the conversation\'s skill root');
     assert.ok(seen(learn).includes('transcribe'), 'core skills stay');
@@ -314,6 +322,59 @@ for (const engine of ['claude', 'codex', 'pi']) {
     }
   });
 }
+
+for (const engine of ['claude', 'codex', 'pi']) {
+  test(`P1 (${engine}): a project pinned to v1 loads its own v1 copy after v2 is approved, never the studio's v2 skill`, async (t) => {
+    const s = await startServer(t, engine);
+    const c = await channels(s);
+    const pinned = (await s.ok('/api/learning/projects', { name: 'Pinned alpha', versionId: c.va1.id, entry: 'idea', build: 'scene' })).id;
+    const v2 = await c.approve((await c.L(`/formats/${c.FA.id}/draft-rule`, { area: 'visuals', text: 'ORANGE-FOX titles from v2.' })).session.id);
+    assert.equal(v2.number, 2);
+    assert.match(readFileSync(join(s.studio, '.claude/skills', c.skillA, 'SKILL.md'), 'utf8'), /ORANGE-FOX/, 'the studio skill follows v2');
+    const chat = await s.turn(`/api/projects/${pinned}/chat`, { text: 'Which format skills do you see?' });
+    assert.equal(chat.status, 200);
+    const pinnedName = `${c.skillA}-v1`, skills = join(s.studio, 'projects', pinned, '.octopus/context/.claude/skills');
+    const copy = readFileSync(join(skills, pinnedName, 'SKILL.md'), 'utf8');
+    assert.match(copy, new RegExp(`^---\\nname: ${pinnedName}\\n`));
+    assert.match(copy, /RULE-A-V1/);
+    assert.doesNotMatch(copy, /ORANGE-FOX/);
+    const seen = engine === 'codex' ? chat.roots.names[0] : engine === 'pi' ? chat.launch.piSkills : chat.launch.addDirSkills;
+    assert.ok(seen.includes(pinnedName), 'the pinned copy is loaded');
+    assert.ok(!seen.includes(c.skillA) && !seen.includes(c.skillB), 'no studio format skill in the chat\'s skill root');
+    const prompt = engine === 'codex' ? chat.thread.prompt : chat.launch.prompt;
+    assert.ok(prompt.includes(`use only ${pinnedName}.`));
+    assert.doesNotMatch(prompt, /ORANGE-FOX/);
+    if (engine === 'claude') {
+      assert.deepEqual(chat.launch.settings.skillOverrides, { [c.skillA]: 'off', [c.skillB]: 'off' }, 'every studio format skill is off; the pinned copy is not');
+    }
+    // A new video takes v2.
+    const fresh = (await s.ok('/api/learning/projects', { name: 'New alpha', versionId: v2.id, entry: 'idea', build: 'scene' })).id;
+    const context = await s.ok(`/api/project-context/${fresh}`);
+    assert.equal(context.bundle.versionId, v2.id);
+    assert.ok(existsSync(join(s.studio, 'projects', fresh, '.octopus/context/.claude/skills', `${c.skillA}-v2`, 'SKILL.md')));
+  });
+}
+
+test('P1 migration: a project pinned before pinned copies had their own name gets the new copy; the old folder is kept aside', async (t) => {
+  const s = await startServer(t, 'claude');
+  const c = await channels(s);
+  const pinned = (await s.ok('/api/learning/projects', { name: 'Old pin', versionId: c.va1.id, entry: 'idea', build: 'scene' })).id;
+  const projectDir = join(s.studio, 'projects', pinned), skills = join(projectDir, '.octopus/context/.claude/skills');
+  await s.ok(`/api/project-context/${pinned}`);
+  // What a project from beta.11 has: the pinned copy under the studio skill's name, here with an edit of its own.
+  const { renameSync } = await import('node:fs');
+  renameSync(join(skills, `${c.skillA}-v1`), join(skills, c.skillA));
+  appendFileSync(join(skills, c.skillA, 'SKILL.md'), '\nOLD-PIN-EDIT\n');
+  const chat = await s.turn(`/api/projects/${pinned}/chat`, { text: 'hello' });
+  assert.equal(chat.status, 200);
+  assert.deepEqual(chat.launch.addDirSkills.filter((n) => n.startsWith('format-')), [`${c.skillA}-v1`]);
+  assert.equal(chat.launch.settings.skillOverrides[c.skillA], 'off');
+  const aside = join(projectDir, '.octopus/replaced-format-skills');
+  const kept = readdirSync(aside);
+  assert.equal(kept.length, 1);
+  assert.ok(kept[0].endsWith(`-${c.skillA}`));
+  assert.match(readFileSync(join(aside, kept[0], 'SKILL.md'), 'utf8'), /OLD-PIN-EDIT/);
+});
 
 test('S5: a stray edit to one generated skill no longer blocks other chats; a rebuild that had to wait runs once work is idle', async (t) => {
   const s = await startServer(t, 'claude');

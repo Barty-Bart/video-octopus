@@ -192,11 +192,14 @@ async function home(route, nav = null) {
     onNewVideo: () => startVideo({ profileId: view === 'channel' ? active.channelId : null }),
     onAddChannel: () => newChannelDialog({ onCreated: (p) => { location.hash = channelHref(p.id, 'formats'); } }),
   });
-  // After a channel is renamed, archived or restored the whole page redraws; a new or archived format only recounts.
+  // After a channel is renamed, archived or restored the whole page redraws; a new or archived format, or a brand
+  // change, only recounts.
   const onChannelsChange = () => router();
+  // Returns the fresh counts (the channel hub also repaints its avatar from them after a brand change).
   const onFormatsChange = async () => {
     const fresh = await api('/api/app/counts').catch(() => null);
     if (fresh && nav?.alive?.() !== false) updateChannelRows(el, fresh, active);
+    return fresh;
   };
   let page = null;
   if (view === 'projects') renderProjects(main, projects, takes, claudeNote, counts, route.query);

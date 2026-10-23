@@ -879,10 +879,15 @@ function pruneScoped(parent, keep) {
 
 // Per-turn context: unavailable forks must not be rediscovered as executable instructions.
 // Agents may still help review their source while unrelated compatible workflows remain usable.
-export function skillSelectionBrief({ studio, appRoot = APP } = {}) {
+// formatIds: a chat with its own skill root (scopedSkillRoot: a format conversation, brand research) is told only
+// about the format skills it can load; other formats' skills are left out of the inventory entirely.
+export function skillSelectionBrief({ studio, appRoot = APP, formatIds = null } = {}) {
   if (!studio) return '';
   const s = readState(studio), catalog = loadSkillCatalog(appRoot);
-  const entries = Object.values(s?.entries || {}).sort((a, b) => a.id.localeCompare(b.id));
+  const allowed = Array.isArray(formatIds) ? new Set(formatIds) : null;
+  const entries = Object.values(s?.entries || {})
+    .filter((e) => !allowed || e.mode !== 'generated' || allowed.has(e.formatId))
+    .sort((a, b) => a.id.localeCompare(b.id));
   const blocked = entries.filter((e) => e.mode === 'override' && !e.disabled &&
     forkProblem({ ...e, forkAvailable: true }, catalog.apiVersion));
   const unavailable = new Set(blocked.map((e) => e.id));
@@ -897,7 +902,7 @@ export function skillSelectionBrief({ studio, appRoot = APP } = {}) {
     blocked: blocked.map((e) => e.id), held: Boolean(s?.held) })).slice(0, 24);
   return `Video Octopus skill API: ${catalog.apiVersion}. Core workflows belong to the app; creator preferences and custom versions are separate. ` +
     `Active publication revision: ${revision}. Active skills: ${JSON.stringify(active)}. Disabled skills: ${JSON.stringify(disabled)}. ` +
-    'When this revision changes, discard cached instructions for the prior selection and read the relevant SKILL.md from the active .claude/skills publication before using it. Do not use a disabled, absent or saved inactive workflow from chat history. ' +
+    `When this revision changes, discard cached instructions for the prior selection and read the relevant SKILL.md from ${allowed ? 'the skill folder this chat was given (only the skills listed here)' : 'the active .claude/skills publication'} before using it. Do not use a disabled, absent or saved inactive workflow from chat history. ` +
     (s?.held ? 'A restored skill snapshot is held. Use this active inventory for compatible work; skill choices cannot change until the creator explicitly resumes updates in Settings → Updates. ' : '') +
     (blocked.length ? `Unavailable selected custom workflows: ${blocked.map((e) => e.name).join(', ')}. They need compatibility review and are not active skills. Help the creator review or adapt their saved source when asked, but do not run those workflows until they explicitly confirm compatibility in Settings → Updates or select the latest core version. Confirmation is the creator's review acknowledgement, not an automatic merge or a test result.`
       : 'Use only the active skill publication. Saved inactive custom versions are not additional skills.');

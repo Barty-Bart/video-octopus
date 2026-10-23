@@ -6,11 +6,12 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, rmSync, renameSync, lstatSync, readdirSync } from 'node:fs';
 import { join, dirname, relative, sep } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { LearningStore, safeFile, formatSkillName, formatSkillId } from './learning-store.mjs';
+import { LearningStore, safeFile, formatSkillName, formatSkillId, pinnedFormatSkillName } from './learning-store.mjs';
 import { FileStore, PROJECTED_MANIFEST, projectedManifest, readProjectedManifest, hashFile } from './file-store.mjs';
 
 // Bump when the generated layout or wording changes: unmodified pinned project copies are then regenerated.
-export const FORMAT_SKILL_GENERATOR = 1;
+// 2: pinned copies are named format-<8hex>-v<N> (pinnedFormatSkillName), no longer the studio skill's name.
+export const FORMAT_SKILL_GENERATOR = 2;
 const PINNED_MARKER = '.octopus-format-skill.json';
 const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const TYPE_LABELS = { tutorial: 'Tutorial', faceless: 'Faceless', short: 'Short', explainer: 'Explainer' };
@@ -55,7 +56,8 @@ function write(dest, rel, body) {
 // Assets, knowledge and key frames are listed in PROJECTED_MANIFEST. With projectFiles they are cloned from the file
 // store now (a project's pinned copy); otherwise the projector clones them after the skill is published.
 export function renderFormatSkill(store, { format, version, names, videos = null, pinned = false, activeNumber = null, projectFiles = false }, dest) {
-  const name = formatSkillName(format.id);
+  const studioName = formatSkillName(format.id);
+  const name = pinned ? pinnedFormatSkillName(format.id, version.number) : studioName;
   const chain = lineage(store, version);
   const references = new Map();
   for (const v of chain) for (const ref of v.evidence || []) if (!references.has(ref.id)) references.set(ref.id, { ...ref, studiedIn: v.number });
@@ -158,7 +160,7 @@ export function renderFormatSkill(store, { format, version, names, videos = null
     '## When to use it',
     '',
     pinned
-      ? `This project is pinned to v${version.number} of this format. This copy governs this project even if the format's active skill is newer${activeNumber && activeNumber !== version.number ? ` (now v${activeNumber})` : ''}; do not use a studio-wide copy of ${name} for this project.`
+      ? `This project is pinned to v${version.number} of this format. This copy (${name}) governs this project even if the format's active skill is newer${activeNumber && activeNumber !== version.number ? ` (now v${activeNumber})` : ''}. The studio-wide skill ${studioName} follows the format's active version and does not apply to this project.`
       : `Use it for a video whose project context names this format (${format.id}). A project pinned to another version of this format follows that version's copy in its own context folder, not this one.`,
     '',
     '## Rules summary',
@@ -228,16 +230,35 @@ function filesOf(dir) {
   return out;
 }
 
-// A project's own copy of its pinned version, inside its generated context skill root. Names come from the pin,
-// so a later rename never changes it. Unmodified copies from an older generator are regenerated; edited ones fail
-// like any other generated context file.
-export function pinnedFormatSkill(store, bundle, skillRoot) {
+// Older pinned copies of this format in a project's skill root: the studio skill's own name (before generator 2) or
+// another version's name. They are moved aside, edits included, never deleted.
+function moveAsideOldPinnedCopies(format, skillRoot, keep, aside) {
+  if (!existsSync(skillRoot)) return [];
+  const prefix = formatSkillName(format.id), moved = [];
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  for (const folder of readdirSync(skillRoot)) {
+    if (folder === keep || !(folder === prefix || new RegExp(`^${prefix}-v\\d+$`).test(folder))) continue;
+    const from = safeFile(skillRoot, folder), to = join(aside, `${stamp}-${folder}`);
+    mkdirSync(aside, { recursive: true });
+    renameSync(from, to);
+    moved.push(to);
+  }
+  return moved;
+}
+
+// A project's own copy of its pinned version, inside its generated context skill root, named format-<8hex>-v<N> so it
+// never shares a name with the studio's format skill. Names come from the pin, so a later rename never changes it.
+// Unmodified copies from an older generator are regenerated; edited ones fail like any other generated context file.
+// A copy under an older name (projects pinned before generator 2) is moved to aside (default: <project>/.octopus/
+// replaced-format-skills when skillRoot is <project>/.octopus/context/.claude/skills) and regenerated under the new one.
+export function pinnedFormatSkill(store, bundle, skillRoot, { aside = join(dirname(dirname(dirname(skillRoot))), 'replaced-format-skills') } = {}) {
   if (!bundle?.versionId || !bundle.formatId) return null;
   const format = store.get('formats', bundle.formatId), version = store.version(bundle.versionId);
   if (version.formatId !== format.id) throw new Error('Pinned version belongs to another format.');
-  const name = formatSkillName(format.id), target = safeFile(skillRoot, name);
+  const name = pinnedFormatSkillName(format.id, version.number), target = safeFile(skillRoot, name);
   const active = format.activeVersion ? store.get('versions', format.activeVersion) : null;
-  const result = { name, path: target, versionId: version.id, number: version.number, activeNumber: active?.number || null };
+  const movedAside = moveAsideOldPinnedCopies(format, skillRoot, name, aside);
+  const result = { name, path: target, versionId: version.id, number: version.number, activeNumber: active?.number || null, movedAside };
   if (existsSync(target)) {
     let marker = null;
     try { marker = JSON.parse(readFileSync(safeFile(target, PINNED_MARKER), 'utf8')); } catch {}

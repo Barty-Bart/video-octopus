@@ -3,11 +3,11 @@
 // and the pinned copy a project sees. Disposable temporary studios only; no agents, network or creator data.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { realpathSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, readdirSync } from 'node:fs';
+import { realpathSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, readdirSync, renameSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { LearningStore, formatSkillName, formatSkillId } from '../server/learning-store.mjs';
+import { LearningStore, formatSkillName, formatSkillId, pinnedFormatSkillName, workflowConflicts } from '../server/learning-store.mjs';
 import { ProfileStore } from '../server/profile-store.mjs';
 import { syncSkills, skillsView, activeSkillRoot, registerGeneratedSkills, skillSelectionBrief, takeSkillNotices } from '../server/managed-skills.mjs';
 import { generateFormatSkills, pinnedFormatSkill } from '../server/format-skills.mjs';
@@ -406,13 +406,19 @@ test('a project pinned to an older version gets that version as its format skill
   syncSkills({ studio: root });
   const x = store.materialize('pinned', projectDir);
   assert.ok(x.skillRoot.endsWith(join('.octopus', 'context', '.claude', 'skills')));
-  const copy = join(x.skillRoot, formatSkillName(format.id), 'SKILL.md');
+  // P1 (real Claude test, 23 Oct 2026): the pinned copy has its own name, so it can't lose to the studio skill.
+  assert.equal(x.formatSkill.name, `${formatSkillName(format.id)}-v1`);
+  assert.equal(existsSync(join(x.skillRoot, formatSkillName(format.id))), false, 'nothing under the studio skill\'s name');
+  const copy = join(x.skillRoot, pinnedFormatSkillName(format.id, 1), 'SKILL.md');
   const text = readFileSync(copy, 'utf8');
+  assert.match(text, new RegExp(`^---\\nname: ${pinnedFormatSkillName(format.id, 1)}\\n`));
   assert.match(text, /\(v1\)/); assert.match(text, /pinned to v1/); assert.match(text, /Show the result first/);
+  assert.match(text, new RegExp(`studio-wide skill ${formatSkillName(format.id)} follows the format's active version`));
   assert.doesNotMatch(text, /Version two opening/);
   assert.match(readFileSync(join(root, '.claude/skills', formatSkillName(format.id), 'SKILL.md'), 'utf8'), /Version two opening/);
   const context = store.contextText('pinned', projectDir);
-  assert.match(context, /is this project's copy of Instagram reel v1/);
+  assert.match(context, /is this project's pinned copy of Instagram reel v1/);
+  assert.match(context, new RegExp(`use only ${pinnedFormatSkillName(format.id, 1)}\\.`));
   assert.match(context, /active skill is now v2, which does not apply here/);
   assert.deepEqual(pinnedSkillDir(x.skillRoot), ['--add-dir', join(projectDir, '.octopus/context')]);
   // Renaming the format does not change the pinned copy; tampering is detected like other generated context.
@@ -428,4 +434,99 @@ test('a project pinned to an older version gets that version as its format skill
   assert.throws(() => store.bundle({ profileId: format.profileId, formatId: format.id, type: 'short' }), /archived/);
   assert.ok(store.materialize('pinned', projectDir).formatSkill);
   assert.equal(pinnedFormatSkill(store, { ...bundle, versionId: null }, x.skillRoot), null);
+});
+
+test('a project pinned before pinned copies had their own name is migrated: the old copy is kept aside, edits included', (t) => {
+  const { root, store, format } = fixture(t, ProfileStore);
+  syncSkills({ studio: root, fresh: true });
+  const { session, v1 } = firstVersion(store, format);
+  syncSkills({ studio: root });
+  const bundle = store.bundle({ profileId: format.profileId, formatId: format.id, type: 'short' });
+  const projectDir = join(root, 'projects/legacy');
+  mkdirSync(projectDir, { recursive: true });
+  store.pinContext('legacy', bundle);
+  const x = store.materialize('legacy', projectDir);
+  // What an older version left: the pinned copy under the studio skill's name, with the creator's own edit.
+  const oldName = formatSkillName(format.id), oldCopy = join(x.skillRoot, oldName);
+  renameSync(x.formatSkill.path, oldCopy);
+  writeFileSync(join(oldCopy, 'SKILL.md'), `---\nname: ${oldName}\n---\nCREATOR EDIT\n`);
+  writeDraft(store, session.id, { rules: [{ id: 'opening', area: 'scripting', text: 'Version two opening.', confidence: 'high', evidence: [{ referenceId: store.get('sessions', session.id).references[0].id, note: 'n' }] }] });
+  approveAll(store, session.id);
+  syncSkills({ studio: root });
+  const again = store.materialize('legacy', projectDir);
+  assert.equal(again.formatSkill.name, pinnedFormatSkillName(format.id, v1.number));
+  assert.equal(existsSync(oldCopy), false, 'nothing is left under the studio skill\'s name');
+  assert.match(readFileSync(join(again.formatSkill.path, 'SKILL.md'), 'utf8'), /pinned to v1/);
+  assert.equal(again.formatSkill.movedAside.length, 1);
+  const aside = again.formatSkill.movedAside[0];
+  assert.ok(aside.startsWith(join(projectDir, '.octopus', 'replaced-format-skills') + sep));
+  assert.ok(aside.endsWith(`-${oldName}`));
+  assert.match(readFileSync(join(aside, 'SKILL.md'), 'utf8'), /CREATOR EDIT/, 'the creator\'s edit is kept');
+  // The next start finds nothing more to move.
+  assert.deepEqual(store.materialize('legacy', projectDir).formatSkill.movedAside, []);
+});
+
+// P2 (real Claude test, 23 Oct 2026): v2 changed the highlight to blue, the workflow carried over from v1 still said
+// "a red highlight". The review now warns; approval is not blocked.
+test('a carried-over workflow that still states a changed or removed rule is flagged in the draft, without blocking approval', (t) => {
+  const { store, format } = fixture(t);
+  let s = noteRef(store, store.session(format.id, { name: 'Captions' }));
+  const ref = s.references[0].id;
+  writeDraft(store, s.id, {
+    rules: [
+      { id: 'key-word', area: 'scripting', text: 'Highlight the key word in red.', confidence: 'low', evidence: [{ referenceId: ref, note: 'red word' }] },
+      { id: 'zoom', area: 'scripting', text: 'Punch-in zoom on every punchline.', confidence: 'low', evidence: [{ referenceId: ref, note: 'zooms' }] },
+      { id: 'outro', area: 'scripting', text: 'End on the logo.', confidence: 'low', evidence: [{ referenceId: ref, note: 'logo' }] },
+    ],
+    workflow: 'Script the hook.\nCaptions: three words, a red highlight on the key word.\nAdd a punch-in zoom on each punchline.\nEnd on the logo.',
+  });
+  approveAll(store, s.id);
+  s = store.get('sessions', s.id);
+  const messageId = randomUUID();
+  store.recordMessage(s.id, { id: messageId, text: 'Use blue instead of red and drop the zooms.', ts: Date.now() });
+  const said = { kind: 'instruction', messageId, quote: 'Use blue instead of red' };
+  writeDraft(store, s.id, {
+    rules: [{ id: 'key-word', area: 'scripting', text: 'Highlight the key word in blue (not red).', confidence: 'high', evidence: [said] }],
+    remove: [{ id: 'zoom', evidence: [{ ...said, quote: 'drop the zooms' }] }],
+  });
+  const p = store.proposal(s.id);
+  assert.equal(p.workflowChanged, false);
+  assert.deepEqual(p.workflowWarnings.map((w) => [w.id, w.change, w.terms]), [['key-word', 'changed', ['red']], ['zoom', 'removed', ['punch-in', 'punchline', 'zoom']]]);
+  assert.deepEqual(p.workflowWarnings[0].lines, ['Captions: three words, a red highlight on the key word.']);
+  // A draft that updates the workflow is not flagged, and a flagged one still approves.
+  writeDraft(store, s.id, {
+    rules: [{ id: 'key-word', area: 'scripting', text: 'Highlight the key word in blue (not red).', confidence: 'high', evidence: [said] }],
+    workflow: 'Script the hook.\nCaptions: three words, a blue highlight on the key word.\nEnd on the logo.',
+  });
+  assert.deepEqual(store.proposal(s.id).workflowWarnings, []);
+  writeDraft(store, s.id, { rules: [{ id: 'key-word', area: 'scripting', text: 'Highlight the key word in blue (not red).', confidence: 'high', evidence: [said] }] });
+  assert.equal(store.proposal(s.id).workflowWarnings.length, 1);
+  assert.equal(approveAll(store, s.id).number, 2);
+  // Words the new text keeps, and filler, are not flagged; nothing is flagged when the workflow doesn't use them.
+  assert.deepEqual(workflowConflicts('Keep captions short.', { changed: [{ id: 'a', text: 'Captions in blue.', previous: { text: 'Captions in red.' } }] }), []);
+  assert.deepEqual(workflowConflicts('Use red captions.', { changed: [{ id: 'a', text: 'Use blue captions instead of red ones.', previous: { text: 'Use red captions.' } }] }).map((w) => w.terms), [['red']]);
+});
+
+// P3 (real Claude test): a format conversation was told the other channel's format skill and invited to read its
+// SKILL.md. A chat with its own skill root is now told only about what it can load.
+test('the skill inventory brief of a scoped chat lists only the format skills that chat can load', (t) => {
+  const { root, store, format, profile } = fixture(t);
+  syncSkills({ studio: root, fresh: true });
+  firstVersion(store, format);
+  const other = store.format(store.profile('Other channel').id, 'Other reel', 'short', 30);
+  firstVersion(store, other);
+  syncSkills({ studio: root });
+  const mine = formatSkillName(format.id), theirs = formatSkillName(other.id);
+  const studioWide = skillSelectionBrief({ studio: root });
+  assert.ok(studioWide.includes(mine) && studioWide.includes(theirs), 'the studio-wide brief is unchanged');
+  assert.match(studioWide, /from the active \.claude\/skills publication/);
+  const conversation = skillSelectionBrief({ studio: root, formatIds: store.list('formats').filter((f) => f.profileId === profile.id).map((f) => f.id) });
+  assert.ok(conversation.includes(mine));
+  assert.ok(!conversation.includes(theirs), 'no other channel\'s format skill');
+  assert.ok(!conversation.includes(other.id));
+  assert.match(conversation, /the skill folder this chat was given/);
+  assert.doesNotMatch(conversation, /active \.claude\/skills publication/);
+  assert.match(conversation, /"name":"transcribe"/, 'core skills are still listed');
+  const research = skillSelectionBrief({ studio: root, formatIds: [] });
+  assert.ok(!research.includes(mine) && !research.includes(theirs) && !research.includes('"selection":"format"'));
 });

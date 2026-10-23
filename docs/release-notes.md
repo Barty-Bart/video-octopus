@@ -1,3 +1,13 @@
+# v0.1.0-beta.12
+
+- **Pinned format skills hold.** A video's pinned copy of its format skill now has its own name (`format-…-v<N>`), and every studio format skill is switched off in pinned project chats and scheduled runs, so a newer approved version can't replace the one a video started with. Existing pinned projects get the renamed copy on their next chat; any older copy is kept aside, never deleted. Verified with a real Claude Code run as well as Codex and pi test adapters.
+- **Workflow check.** When a draft changes or removes a rule but keeps the old workflow, the review shows a warning with the lines that still mention the old behaviour. The format conversation is also asked to update the workflow itself.
+- **Only your own skills are listed.** Format conversations and brand research are told only about the format skills they can actually use.
+- **Brand tab.** Approving, saving or restoring a brand updates the tab, the channel avatar and the sidebar at once, and the research status updates while it runs.
+- **Phones.** The floating Ask Claude button no longer covers dialog buttons or chat send buttons.
+
+Verified with 289 unit tests on Node 24.22.1 and 22.22.1, the format-skill (14 checks) and learning runtimes, disposable browser checks, and a real Claude Code check that a video pinned to v2 loads only v2 after v3 is approved. Codex and pi are verified with test adapters only. This is a source update on main; the downloadable tagged prerelease remains separate.
+
 # v0.1.0-beta.11
 
 - **New layout.** A grouped sidebar: New video; Make (Projects, Recordings); My style (All channels and one row per channel, with a dot when memories await review); Assets (Library); Automation (Skills, Scheduled); Settings. On narrow windows the sidebar becomes a drawer.

@@ -4,7 +4,9 @@
 //   node test/format-skill-integration.mjs
 // Flow: study → save v1 → chat edit with instruction evidence → save v2 → a project pinned to v1 still gets v1
 // (context and its own format skill copy, through Claude's --add-dir) → the studio format skill follows v2,
-// rename/archive/restore, the direct-edit endpoint and the videos query. Skill files (23 October 2026): v1 carries an
+// rename/archive/restore, the direct-edit endpoint and the videos query. The pinned copy is named format-<8hex>-v1 and
+// the studio skill is switched off for that chat; after v3, a new chat on the v1 project still loads only v1 and a new
+// video gets format-<8hex>-v3 (P1, 23 October 2026). Skill files (23 October 2026): v1 carries an
 // asset and two knowledge files, Add files uploads one more for a later version, the v1 project keeps v1's files, and
 // none of their bytes are in SQLite.
 import assert from 'node:assert/strict';
@@ -88,8 +90,12 @@ async function fakeAgent() {
     } else {
       const skills = addDir ? join(addDir, '.claude/skills') : null;
       const names = skills && existsSync(skills) ? readdirSync(skills) : [];
-      const format = names.find((n) => /^format-[a-f0-9]{8}$/.test(n)) || null;
-      writeFileSync(join(process.cwd(), 'work', 'agent-receipt.json'), JSON.stringify({ addDir, format,
+      // Pinned copies are named format-<8hex>-v<N>; the studio's are format-<8hex> (hidden through --settings).
+      const formats = names.filter((n) => /^format-[a-f0-9]{8}(-v\d+)?$/.test(n)).sort(), format = formats[0] || null;
+      let settings = null;
+      try { settings = JSON.parse(argv[argv.indexOf('--settings') + 1]); } catch {}
+      writeFileSync(join(process.cwd(), 'work', 'agent-receipt.json'), JSON.stringify({ addDir, format, formats, pid: process.pid,
+        skillOverrides: settings?.skillOverrides || null,
         skill: format ? readFileSync(join(skills, format, 'SKILL.md'), 'utf8') : null,
         pinnedV1: /copy of .+ v1\. It is authoritative/.test(context), activeV2: context.includes("active skill is now v2, which does not apply here") }));
     }
@@ -156,7 +162,8 @@ try {
   await ready();
   const profile = await call('/profiles', { name: 'Main YouTube' });
   let format = await call('/formats', { profileId: profile.id, name: 'Instagram reel', type: 'short', targetSeconds: 45 });
-  const skillDir = join(studio, '.claude/skills', `format-${format.id.replace(/-/g, '').slice(0, 8)}`);
+  const skillName = `format-${format.id.replace(/-/g, '').slice(0, 8)}`;
+  const skillDir = join(studio, '.claude/skills', skillName);
   let session = await call('/sessions', { formatId: format.id, name: 'Reel study' });
   session = await call(`/sessions/${session.id}/references`, { kind: 'note', name: 'Synthetic reel', note: '00:02: result first.', revision: session.revision });
   const receipt = () => JSON.parse(readFileSync(join(studio, '.studio/learning/sessions', session.id, 'work/agent-receipt.json'), 'utf8'));
@@ -207,6 +214,7 @@ try {
     assert.deepEqual(p.rules.map((x) => [x.id, x.change]), [['colour', 'new']]);
     assert.deepEqual(p.rules[0].evidence, [{ kind: 'instruction', messageId: r.messageId, quote: 'use blue instead of red' }]);
     assert.deepEqual(p.removals.map((x) => [x.id, x.change]), [['outro', 'removed']]);
+    assert.deepEqual(p.workflowWarnings, [], 'the carried-over workflow mentions neither the removed rule nor a changed one');
     const { DatabaseSync } = await import('node:sqlite');
     const db = new DatabaseSync(join(studio, '.studio/studio.sqlite'), { readOnly: true });
     try {
@@ -247,7 +255,10 @@ try {
   await check('the project pinned to v1 still gets v1 (Claude: --add-dir with its own format skill copy)', async () => {
     const r = JSON.parse(readFileSync(projectReceipt, 'utf8'));
     assert.equal(r.addDir, join(studio, 'projects', project.id, '.octopus/context'));
-    assert.equal(r.format, `format-${format.id.replace(/-/g, '').slice(0, 8)}`);
+    // P1: the pinned copy has its own name and the studio skill (now v2) is switched off for this chat.
+    assert.deepEqual(r.formats, [`${skillName}-v1`]);
+    assert.match(r.skill, new RegExp(`^---\\nname: ${skillName}-v1\\n`));
+    assert.deepEqual(r.skillOverrides, { [skillName]: 'off' });
     assert.match(r.skill, /pinned to v1/);
     assert.match(r.skill, /Show the finished result first, in red/);
     assert.doesNotMatch(r.skill, /blue/);
@@ -261,14 +272,37 @@ try {
     assert.equal(rows[0].project, project.id); assert.equal(rows[0].name, 'Pinned to v1'); assert.equal(rows[0].number, 1); assert.equal(rows[0].exists, true);
   });
 
+  let v3;
   await check('a direct edit drafts a manual change that is reviewed and saved as v3', async () => {
     const edit = await call(`/formats/${format.id}/draft-rule`, { ruleId: 'colour', area: 'visuals', text: 'Use navy blue accents.' });
     assert.equal(edit.session.id, session.id, 'goes into the open conversation');
     assert.equal(edit.proposal.rules[0].change, 'changed');
     assert.equal(edit.proposal.rules[0].evidence[0].note, 'Edited by creator');
-    const v3 = await approveAll(session.id);
+    v3 = await approveAll(session.id);
     assert.equal(v3.number, 3);
     assert.match(readFileSync(join(skillDir, 'rules.md'), 'utf8'), /Use navy blue accents[\s\S]*Edited by you/);
+  });
+
+  // P1 (real Claude test, 23 Oct 2026): the studio skill moved on after the pin. A new chat on the v1 project still
+  // gets only its v1 copy; a new video gets v3.
+  await check('after v3, a new chat on the v1 project still loads only its v1 copy; a new video gets v3', async () => {
+    const before = JSON.parse(readFileSync(projectReceipt, 'utf8')).pid;
+    await request(`/api/projects/${project.id}/chat-sessions`, { op: 'new' });
+    rmSync(projectReceipt);
+    await request(`/api/projects/${project.id}/chat`, { text: 'Which format skills do you see?' });
+    for (let i = 0; i < 200 && !existsSync(projectReceipt); i++) await sleep(50);
+    const r = JSON.parse(readFileSync(projectReceipt, 'utf8'));
+    assert.notEqual(r.pid, before, 'a new agent process');
+    assert.deepEqual(r.formats, [`${skillName}-v1`]);
+    assert.deepEqual(r.skillOverrides, { [skillName]: 'off' });
+    assert.match(r.skill, /Show the finished result first, in red/);
+    assert.doesNotMatch(r.skill, /navy/);
+    assert.match(readFileSync(join(skillDir, 'SKILL.md'), 'utf8'), /\(v3\)[\s\S]*navy/, 'the studio skill is v3');
+    const fresh = await call('/projects', { name: 'Made with v3', versionId: v3.id, entry: 'idea', build: 'scene' });
+    const context = await request(`/api/project-context/${fresh.id}`);
+    assert.equal(context.formatSkill.number, 3);
+    assert.equal(context.formatSkill.name, `${skillName}-v3`);
+    assert.match(readFileSync(join(context.formatSkill.path, 'SKILL.md'), 'utf8'), /navy/);
   });
 
   await check('Add files uploads a knowledge file into the draft; saving adds it to the skill as a new version', async () => {
