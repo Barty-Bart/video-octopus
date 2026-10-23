@@ -17,6 +17,7 @@ import { createStudio, studioPathInfo, defaultStudioPath } from './starter.mjs';
 import { SAM2_MODELS, sam2Have, sam2Recommend, sam2Machine, sam2Download } from './sam2.mjs';
 import { scanPython, probePython, describeEnvironment } from './python-environments.mjs';
 import { sources, sourceLine, downloadState, startDownload, stopDownload } from './hfmodels.mjs';
+import runtime from './runtime-check.cjs';
 
 // What the object-separation skill needs from Python: torch (and the device it can use), torchvision (transformers' SAM 2
 // image processor won't load without it), transformers with SAM 2's video model, numpy and Pillow.
@@ -55,11 +56,12 @@ export const CHECKS = [
   ['recorder', 'Recorder'],
   ['folders', 'Your studio and projects folders'],
   ['python', 'Python'],
+  ['node', 'Node.js: runs Video Octopus'],
   ['claude', 'Agent (Claude Code, Codex or pi)'],
   ['whisper', 'Transcription model (Whisper)'],
   ['objsep', 'Object separation (SAM 2)'],
 ];
-const CARD = { ffmpeg: 'tools', recorder: 'tools', folders: 'tools', python: 'tools', claude: 'agents', whisper: 'machine', objsep: 'machine' };
+const CARD = { ffmpeg: 'tools', recorder: 'tools', folders: 'tools', python: 'tools', node: 'tools', claude: 'agents', whisper: 'machine', objsep: 'machine' };
 
 // How ffmpeg gets installed here with one command, after the creator's OK: Homebrew on a Mac, winget on Windows (with
 // winget's package agreements, which the OK covers). Null when neither is there: the row links the manual install.
@@ -67,6 +69,26 @@ export function ffmpegInstaller() {
   if (IS_MAC) { const b = studioTool('brew'); return existsSync(b) ? { bin: b, args: ['install', 'ffmpeg'], cmd: 'brew install ffmpeg' } : null; }
   if (IS_WIN) { const w = studioTool('winget'); return { bin: w, args: ['install', '--id', 'Gyan.FFmpeg', '-e', '--accept-source-agreements', '--accept-package-agreements'], cmd: 'winget install --id Gyan.FFmpeg -e' }; }
   return null;
+}
+
+// FFmpeg releases before 8.1.2 have known flaws that a crafted video file can exploit (CVE-2026-8461 among them, fixed
+// in 8.0.3, 8.1.2 and 9.0). Video Octopus runs FFmpeg on downloaded example videos, so Setup warns below it.
+export const FFMPEG_PATCHED = '8.1.2';
+
+// The release in `ffmpeg -version`'s "version …" word: "9.0.2-https://www.martin-riedl.de", "n8.1.2",
+// "8.1.2-essentials_build-www.gyan.dev" or "6.0" → [major, minor, patch]. A git snapshot ("N-12345-g…",
+// "2026-03-14-git-…") or anything else → null: its release can't be told, so it never gets a warning.
+export function ffmpegRelease(word) {
+  const m = /^n?(\d+)\.(\d+)(?:\.(\d+))?(?![\d.])/.exec(String(word || '').trim());
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3] || 0)] : null;
+}
+
+// Whether an FFmpeg release is below FFMPEG_PATCHED; false when its release can't be told.
+export function ffmpegOutdated(word) {
+  const have = ffmpegRelease(word), want = ffmpegRelease(FFMPEG_PATCHED);
+  if (!have) return false;
+  for (let i = 0; i < 3; i++) if (have[i] !== want[i]) return have[i] < want[i];
+  return false;
 }
 
 const run = async (bin, args, ms = 8000) => {
@@ -158,7 +180,24 @@ const CHECK = {
     if (missing.length) return { state: 'fail', detail: `${missing.join(' and ')} not found: exporting needs ${missing.length > 1 ? 'them' : 'it'}.`,
       install: inst ? { action: 'ffmpeg', cmd: inst.cmd } : null, manual: 'https://ffmpeg.org/download.html',
       fix: `Setup check "ffmpeg" failed: Video Octopus can't find ${missing.join(' or ')}. Video Octopus looks on the PATH, in the studio's .venv, in ~/.local/bin and ${IS_WIN ? 'winget\'s Links folder' : '/opt/homebrew/bin and /usr/local/bin'} (or the "ffmpeg" / "ffprobe" paths in Video Octopus's local/settings.json). Get ${missing.join(' and ')} working on this computer so Video Octopus finds ${missing.length > 1 ? 'them' : 'it'}${IS_WIN ? ' (winget install Gyan.FFmpeg is the usual way on Windows)' : ''}. Tell me your plan first and ask before installing anything.` };
-    return { state: 'ok', detail: `ffmpeg ${ver(a) || ''} · ffprobe ${ver(b) || ''}`.replace(/ +·/, ' ·').trim() };
+    const detail = `ffmpeg ${ver(a) || ''} · ffprobe ${ver(b) || ''}`.replace(/ +·/, ' ·').trim();
+    const old = [['ffmpeg', ver(a)], ['ffprobe', ver(b)]].filter(([, v]) => ffmpegOutdated(v));
+    if (!old.length) return { state: 'ok', detail };
+    const which = old.map(([name, v]) => `${name} ${v}`).join(' and ');
+    const update = IS_MAC ? 'brew upgrade ffmpeg' : IS_WIN ? 'winget upgrade --id Gyan.FFmpeg -e' : 'the package manager or ffmpeg.org';
+    // Non-blocking: exports still work, so this is "Needs a look", never "Missing".
+    return { state: 'warn', detail, manual: 'https://ffmpeg.org/download.html',
+      how: `${which} ${old.length > 1 ? 'are' : 'is'} older than ${FFMPEG_PATCHED}. Video Octopus runs FFmpeg on downloaded example videos, and older releases have known flaws that a crafted video file can exploit. Exports still work; update FFmpeg (${update}) when you can.${IS_MAC || IS_WIN ? '' : ' (Some Linux distributions backport the fixes without changing the version.)'}`,
+      fix: `Setup check "ffmpeg": ${which} ${old.length > 1 ? 'are' : 'is'} older than ${FFMPEG_PATCHED}, the release with the 2026 security fixes for crafted media files. Video Octopus runs FFmpeg on downloaded example videos. Find where this FFmpeg comes from (${IS_WIN ? "winget's Links folder, the PATH" : 'Homebrew, ~/.local/bin, the PATH'} or the "ffmpeg" / "ffprobe" paths in Video Octopus's local/settings.json) and update it to ${FFMPEG_PATCHED} or newer${IS_MAC ? ' (Homebrew: brew upgrade ffmpeg)' : IS_WIN ? ' (winget upgrade --id Gyan.FFmpeg -e)' : ''}. Ask me before installing or replacing anything.` };
+  },
+
+  // The Node.js running Video Octopus. The launchers already refused an unsupported one (runtime-check.cjs); below the
+  // latest security release of its line it only warns.
+  async node() {
+    const version = process.versions.node, security = runtime.nodeSecurity(version), fts5 = runtime.fts5Problem();
+    if (fts5) return { state: 'fail', detail: `Node.js ${version} · no SQLite full-text search`, how: runtime.fts5Message(version, fts5) };
+    if (!security.current) return { state: 'warn', detail: `Node.js ${version}`, how: security.text, manual: 'https://nodejs.org' };
+    return { state: 'ok', detail: `Node.js ${version}` };
   },
 
   // Only when something on this computer needs it (settings.mjs needsLocalPython): else "Not needed", greyed out, and

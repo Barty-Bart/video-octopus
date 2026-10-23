@@ -60,6 +60,10 @@ export function updatesSection(V, save, { row, group, toggle }) {
     const running = u.restart.needed ? `<span class="sub">Running ${esc(u.restart.running.commit || 'the old version')} until Video Octopus restarts.</span>` : '';
     const activity = u.activity || {}, unavailable = Boolean(activity.busy || S.skillWorking || S.updating);
     const parts = [row('This copy', 'App updates include the matching bundled skills. Your projects and personal skill versions are preserved.', h(`<div class="found"><span class="dot ok"></span>${ver}${running}</div>`))];
+    // The Node.js running Video Octopus: updated by the creator, outside the app; a warning only, never a block.
+    const rt = u.runtime;
+    if (rt) parts.push(row('Node.js', 'Runs Video Octopus. Install updates from nodejs.org, then restart Video Octopus.',
+      h(`<div class="found"><span class="dot ${rt.current ? 'ok' : 'warn'}"></span><b>Node.js ${esc(rt.version)}</b>${rt.current ? '' : `<span class="sub" role="status">${esc(rt.text)}</span>`}</div>`)));
 
     // ---- new version: check, list, update ----
     const card = h('<div class="found"></div>');

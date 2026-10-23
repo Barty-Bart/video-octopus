@@ -13,6 +13,7 @@ import { loginState, setLogin } from './login-item.mjs';
 import { syncSkills, skillsView, compareSkill } from './managed-skills.mjs';
 import { readSkillPreferences } from './skill-preferences.mjs';
 import { activityView, beginMaintenance, endMaintenance, maintenanceActive } from './maintenance.mjs';
+import runtime from './runtime-check.cjs';
 
 export const RESTART_CODE = 75;
 const CACHE = join(LOCAL_DIR, 'updates.json'); // the last quiet check: { checkedAt, triedAt, offline, behind }
@@ -183,7 +184,9 @@ async function updatesView() {
   return { app: pick(app), lastCheck: last.checkedAt || null, auto: section('updates').auto, restart: await restartView(app),
     starter: starterView(), skills: managedSkillsView(),
     preferences: { status: preferences.status, path: preferences.path, diagnostics: preferences.diagnostics },
-    activity: activityView(), login: loginState(), bootId: BOOT.id, pending: last.pending || null, restartPending };
+    activity: activityView(), login: loginState(), bootId: BOOT.id, pending: last.pending || null, restartPending,
+    // The Node.js running this copy: a non-blocking warning below its line's latest security release.
+    runtime: runtime.nodeSecurity(process.versions.node) };
 }
 
 export async function updatesRoute(req, res, url, { send, body, restart }) {

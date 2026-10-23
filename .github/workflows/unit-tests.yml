@@ -1,6 +1,6 @@
 name: Unit tests
 # node --test test/*.test.mjs on every push and pull request, on the two systems Video Octopus supports, with the
-# oldest Node it supports (package.json engines: >=22.13.0 <23 || >=23.4.0) and the current LTS line.
+# oldest Node it supports (package.json engines: >=22.16.0 <23 || >=24.0.0) and the current LTS line.
 on:
   push:
   pull_request:
@@ -18,7 +18,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [macos-15, windows-2025]
-        node: ['22.13.0', '24.x']
+        node: ['22.16.0', '24.x']
     steps:
       - uses: actions/checkout@v4
         with:

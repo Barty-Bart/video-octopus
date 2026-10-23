@@ -142,6 +142,11 @@ export async function setupPage(ctx, { back = '#/', assistantPanel }) {
       a.append(b);
     }
     // ffmpeg: one command (Homebrew or winget) after an OK, with its progress here, or the manual install.
+    // An outdated tool (ffmpeg, Node.js) still works: its row says why to update and links the download.
+    if (c.manual && s === 'warn') {
+      const site = c.manual.replace(/^https?:\/\//, '').replace(/\/$/, '').replace(/\.html$/, '');
+      $('.su-b', r.li).append(h(`<span class="sub">Download the update: <a href="${esc(c.manual)}" target="_blank" rel="noopener">${esc(site)}</a>.</span>`));
+    }
     if (id === 'ffmpeg' && s === 'fail') {
       if (c.manual) $('.su-b', r.li).append(h(`<span class="sub">Or install it yourself: <a href="${esc(c.manual)}" target="_blank" rel="noopener">ffmpeg.org/download</a>.</span>`));
       if (c.install?.action) a.prepend(actionButton(id, { action: c.install.action, label: 'Install', title: 'Install ffmpeg?', text: `Video Octopus runs ${c.install.cmd} for you, then checks again.` }));
