@@ -6,8 +6,8 @@
 Example studies (history), Approved guide (the result) and Format assistant.
 Navigation, primary workflow labels and the agent's format context use these names.
 A wording change does not rename database tables, skill IDs, project keys or URLs.
-`#/learning`, `/api/learning`, `sessions`, `versions` and existing project pins remain
-compatible. Update surrounding explanatory copy and current docs when terms change;
+`/api/learning`, `sessions`, `versions` and existing project pins remain compatible; old
+`#/learning` links redirect to the channel hub's Formats tab (`legacyRoute()` in `web/nav.js`). Update surrounding explanatory copy and current docs when terms change;
 retain dated release notes as historical evidence.
 
 New studies belong in Video formats. Library shows retained legacy style notes

@@ -1,8 +1,8 @@
 import { TERMS } from './terms.js';
 import { $, esc, h, api, toast, confirmBox } from './ui.js';
-import { addSkillsDialog } from './brand.js';
 import { projectProfilePanel } from './profiles.js';
 import { loadScript, scriptCard } from './prompter.js';
+import { channelHref } from './nav.js';
 const E='/api/learning';
 const videoSetups=[
  {id:'tutorial',name:'Long-form · on camera',example:'Long-form explainers with me on camera',hint:'A landscape tutorial with a presenter or screen recording. Starts with the tutorial workflow.'},
@@ -11,11 +11,10 @@ const videoSetups=[
  {id:'explainer',name:'Product explainer',example:'Product demonstrations',hint:'A landscape explainer built around a product or idea. Starts with the explainer workflow.'},
 ];
 
-const kindLabel=k=>({'core':'Core','customized-core':'Customized core','personal':'Personal','format':'Format skill'}[k]||k);
 const button=(label,action,kind='')=>`<button class="btn ${kind}" data-action="${action}">${label}</button>`;
-const field=(label,name,value='',kind='input',placeholder='')=>`<label>${label}${kind==='textarea'?`<textarea name="${name}" rows="4">${esc(value)}</textarea>`:`<input name="${name}" value="${esc(value)}" placeholder="${esc(placeholder)}" ${name==='summary'?'maxlength="320"':''} required>`}</label>`;
+export const field=(label,name,value='',kind='input',placeholder='')=>`<label>${label}${kind==='textarea'?`<textarea name="${name}" rows="4">${esc(value)}</textarea>`:`<input name="${name}" value="${esc(value)}" placeholder="${esc(placeholder)}" ${name==='summary'?'maxlength="320"':''} required>`}</label>`;
 const options=(list,value)=>list.map(x=>`<option value="${esc(x.id)}"${x.id===value?' selected':''}>${esc(x.name)}</option>`).join('');
-function dialog(title,markup,save,label='Save') {
+export function dialog(title,markup,save,label='Save') {
  const modal=$('#modal'),el=h(`<form class="dialog learn-dialog" role="dialog" aria-modal="true"><h2>${esc(title)}</h2>${markup}<p class="learn-error" role="alert"></p><div class="learn-actions"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary" type="submit">${esc(label)}</button></div></form>`);
  modal.replaceChildren(el);modal.hidden=false;el.querySelector('input,textarea,select,button')?.focus();el.onkeydown=e=>{if(e.key==='Escape'){e.preventDefault();modal.hidden=true;}};$('[data-close]',el).onclick=()=>modal.hidden=true;
  el.onsubmit=async e=>{e.preventDefault();const b=$('[type=submit]',el);b.disabled=true;try{await save(Object.fromEntries(new FormData(el)));modal.hidden=true;}catch(err){$('.learn-error',el).textContent=err.message;}finally{b.disabled=false;}};
@@ -109,7 +108,7 @@ function closeMenu() {
   document.removeEventListener('keydown', openMenu.key, true);
   openMenu = null;
 }
-function showMenu(anchor, items) {
+export function showMenu(anchor, items) {
   const again = openMenu?.anchor === anchor;
   closeMenu();
   if (again) return;
@@ -143,15 +142,108 @@ function showMenu(anchor, items) {
   menu.querySelector('.vf-mi')?.focus();
 }
 
-export async function renderLearning(root, { makeChat, startVideo } = {}) {
+// ---- Channels, outside any one page: the sidebar's +, the channel hub's ··· menu and All channels share these. ----
+
+// The Formats tab remembers its format and tab per channel; `_` routes open the channel used last.
+// The older single selection ({ profileId, formatId, tab }) is read as that channel's entry.
+const LAST_CHANNEL_KEY = 'octopus.channel.last';
+function readSelection() {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(SELECTION_KEY) || '{}') || {}; } catch {}
+  if (typeof saved.profileId === 'string' || 'formatId' in saved) {
+    const old = saved;
+    saved = old.profileId ? { [old.profileId]: { formatId: old.formatId || null, tab: old.tab || 'skill' } } : {};
+    try {
+      localStorage.setItem(SELECTION_KEY, JSON.stringify(saved));
+      if (old.profileId && !localStorage.getItem(LAST_CHANNEL_KEY)) localStorage.setItem(LAST_CHANNEL_KEY, old.profileId);
+    } catch {}
+  }
+  return saved;
+}
+function writeSelection(profileId, value) {
+  if (!profileId) return;
+  const saved = readSelection();
+  saved[profileId] = value;
+  try { localStorage.setItem(SELECTION_KEY, JSON.stringify(saved)); } catch {}
+}
+export function rememberedChannel() {
+  readSelection(); // migrates the old single selection first
+  try { return localStorage.getItem(LAST_CHANNEL_KEY) || null; } catch { return null; }
+}
+export function rememberChannel(profileId) {
+  try { if (profileId) localStorage.setItem(LAST_CHANNEL_KEY, profileId); } catch {}
+}
+
+export function newChannelDialog({ onCreated } = {}) {
+  dialog('New channel', '<p class="sub">A YouTube channel, brand or series. Add its video formats next; each one learns its own skill.</p>' + field('Channel name', 'name', '', 'input', 'My main YouTube channel'), async (b) => {
+    const p = await api(`${E}/profiles`, b);
+    await onCreated?.(p);
+  }, 'Create channel');
+}
+
+export function renameChannelDialog(p, { onDone } = {}) {
+  dialog('Rename channel', field('Channel name', 'name', p.name) + '<p class="sub">Existing videos keep the names they were made with.</p>', async (b) => {
+    const result = await api(`${E}/profiles/${p.id}/update`, { expected: p.revision || 1, name: b.name });
+    if (result?.warning) toast(result.warning);
+    await onDone?.();
+  }, 'Rename');
+}
+
+export async function archiveChannel(p, archive, { onDone } = {}) {
+  if (archive && !await confirmBox({ title: `Archive ${p.name}?`, text: 'The channel and its formats are hidden from New video. Nothing is deleted, existing videos are untouched, and you can restore it from All channels.', ok: 'Archive channel' })) return false;
+  const result = await api(`${E}/profiles/${p.id}/${archive ? 'archive' : 'unarchive'}`, { expected: p.revision || 1 });
+  toast(result?.warning || (archive ? `${p.name} archived.` : `${p.name} restored.`));
+  await onDone?.();
+  return true;
+}
+
+// New format. With `profileId` the channel is fixed (the channel hub); otherwise the creator picks one.
+export function newFormatDialog({ profiles, profileId = null, onCreated } = {}) {
+  const open = (profiles || []).filter((p) => !p.archived);
+  if (!open.length) return newChannelDialog();
+  const fixed = profileId && open.some((p) => p.id === profileId);
+  const channelField = fixed
+    ? `<input type="hidden" name="profileId" value="${esc(profileId)}">`
+    : `<label>${TERMS.channel}<select name="profileId">${options(open, profileId)}</select></label>`;
+  const el = dialog('New format', `${channelField}<p class="sub">Choose a starting setup and give your format a name. It is ready for New video as soon as you save. Teaching it a skill is optional.</p><label>Video setup<select name="type">${options(videoSetups, 'tutorial')}</select></label><p class="sub" id="formatSetupHint"></p>` + field('Your format name', 'name', '', 'input', 'Long-form explainers with me on camera') + '<p class="sub">This is your own name, not another preset. You can create several formats with the same video setup and teach each one a different skill.</p><label>Target length in seconds (optional)<input name="targetSeconds" type="number" min="0" max="7200" placeholder="e.g. 600 for a 10-minute video"></label>', async (b) => {
+    const x = await api(`${E}/formats`, b);
+    toast('Format saved. You can use it in New video now.');
+    await onCreated?.(x, b.profileId);
+  }, 'Create format');
+  const change = () => {
+    const x = videoSetups.find((s) => s.id === $('[name=type]', el).value);
+    $('#formatSetupHint', el).textContent = x.hint;
+    $('[name=name]', el).placeholder = x.example;
+  };
+  $('[name=type]', el).onchange = change;
+  change();
+  return el;
+}
+
+// The channel's options (the hub's ··· menu): rename, a new format, archive or restore.
+export function channelMenuItems(p, { onChange, newFormat } = {}) {
+  return [
+    { label: 'Rename channel', run: () => renameChannelDialog(p, { onDone: onChange }) },
+    ...(!p.archived && newFormat ? [{ label: 'New format', run: newFormat }] : []),
+    '-',
+    p.archived
+      ? { label: 'Restore channel', run: () => archiveChannel(p, false, { onDone: onChange }) }
+      : { label: 'Archive channel', danger: true, run: () => archiveChannel(p, true, { onDone: onChange }) },
+  ];
+}
+
+// The channel hub's Formats tab: this channel's formats beside the format home, with Talk to this format.
+// `channelId` fixes the channel; `basePath` is the address the selection is written to (#/channel/<id>/formats).
+// `onFormatsChange` runs after a format is made or archived (the sidebar's count); `onChannelChange` after the
+// channel itself changes (restore from the archived notice).
+export async function renderLearning(root, { makeChat, startVideo, channelId, basePath, onFormatsChange, onChannelChange } = {}) {
   const params = new URLSearchParams(location.hash.split('?')[1]);
-  let remembered = {};
-  try { remembered = JSON.parse(localStorage.getItem(SELECTION_KEY) || '{}') || {}; } catch {}
+  const remembered = readSelection()[channelId] || {};
   let live = true;
   let data = null;
   let view = {};
-  let pid = params.get('profile') || remembered.profileId || null;
-  let fid = params.has('profile') ? params.get('format') : params.get('format') || remembered.formatId || null;
+  let pid = channelId;
+  let fid = params.get('format') || remembered.formatId || null;
   let sid = params.get('session');
   let tab = TABS.includes(params.get('tab')) ? params.get('tab') : TABS.includes(remembered.tab) ? remembered.tab : 'skill';
   let talking = Boolean(sid);
@@ -206,13 +298,13 @@ export async function renderLearning(root, { makeChat, startVideo } = {}) {
     data = await api(E);
     const chosen = data.sessions.find((s) => s.id === sid);
     if (chosen) fid = chosen.formatId; else sid = null;
-    const chosenFormat = data.formats.find((f) => f.id === fid);
-    if (chosenFormat) pid = chosenFormat.profileId;
-    // A deep link to something archived shows archived items rather than silently jumping elsewhere.
+    // The channel is fixed: a format or conversation from another channel isn't opened here.
+    const chosenFormat = data.formats.find((f) => f.id === fid && f.profileId === pid);
+    if (!chosenFormat) { fid = null; sid = null; }
+    // A deep link to something archived shows archived formats rather than silently jumping elsewhere.
     if (firstLoad && (chosenFormat?.archived || data.profiles.find((p) => p.id === pid)?.archived)) showArchived = true;
     firstLoad = false;
-    const profiles = data.profiles.filter((p) => showArchived || !p.archived);
-    pid = profiles.some((p) => p.id === pid) ? pid : profiles[0]?.id || null;
+    const profiles = data.profiles.filter((p) => p.id === pid);
     const formats = data.formats.filter((f) => f.profileId === pid && (showArchived || !f.archived));
     fid = formats.some((f) => f.id === fid) ? fid : formats[0]?.id || null;
     if (sid && conversation(sid)?.formatId !== fid) sid = null;
@@ -264,14 +356,14 @@ export async function renderLearning(root, { makeChat, startVideo } = {}) {
   }
 
   function remember() {
-    try { localStorage.setItem(SELECTION_KEY, JSON.stringify({ profileId: pid || null, formatId: fid || null, tab })); } catch {}
+    writeSelection(pid, { formatId: fid || null, tab });
+    rememberChannel(pid);
     const query = new URLSearchParams();
-    if (pid) query.set('profile', pid);
     if (fid) query.set('format', fid);
     if (talking && sid) query.set('session', sid);
     if (tab !== 'skill') query.set('tab', tab);
     if (legacyStyle) query.set('legacyStyle', legacyStyle);
-    window.history.replaceState(null, '', `#/learning${query.size ? '?' + query : ''}`);
+    window.history.replaceState(null, '', `${basePath || channelHref(pid, 'formats')}${query.size ? '?' + query : ''}`);
   }
 
   async function paint() {
@@ -307,49 +399,10 @@ export async function renderLearning(root, { makeChat, startVideo } = {}) {
       : '';
     return `<div class="learn-page vf3-page">${notice}
       <div class="vf3${open ? ' talking' : ''}">
-        ${channelsPane()}
         ${formatsPane()}
         <section class="vf3-pane vf3-home" data-scroll="home" aria-label="${esc(view.format?.name || TERMS.formats)}">${homeInner()}</section>
         ${open ? panelMarkup() : ''}
       </div>
-    </div>`;
-  }
-
-  function channelsPane() {
-    const rows = view.profiles.map((p) => {
-      const count = data.formats.filter((f) => f.profileId === p.id && (showArchived || !f.archived)).length;
-      const on = p.id === pid;
-      return `<div class="vf-chan${on ? ' on' : ''}${p.archived ? ' archived' : ''}">
-        <button type="button" class="vf-chan-pick" data-profile="${p.id}" aria-pressed="${on}">
-          <span class="vf-chan-name">${esc(p.name)}</span>${p.archived ? '<span class="badge">Archived</span>' : ''}
-          <span class="vf-count" aria-label="${plural(count, 'format')}">${count}</span>
-        </button>
-        <button type="button" class="vf-icon vf-dots" data-channel-menu="${p.id}" aria-haspopup="menu" aria-expanded="false" aria-label="Options for ${esc(p.name)}">···</button>
-      </div>`;
-    }).join('');
-    return `<section class="vf3-pane vf3-channels" aria-label="${TERMS.channels}" data-scroll="channels">
-      <div class="vf-pane-head">
-        <h2 class="vf-label">${TERMS.channels}</h2>
-        <button type="button" class="vf-icon" data-action="channel" aria-label="Add a channel" title="Add a channel">+</button>
-      </div>
-      <div class="vf-chan-list">${rows || '<p class="vf-none">No channels yet.</p>'}</div>
-      <div class="vf-pane-foot">
-        <label class="learn-check vf-toggle"><input type="checkbox" data-show-archived${showArchived ? ' checked' : ''}>Show archived</label>
-        <details class="vf-how"><summary>How formats work</summary>
-          <p><b>A channel</b> is a YouTube channel, brand or series. It is shared with Brand settings and New video.</p>
-          <p><b>A format</b> is a repeatable kind of video. Its <b>skill</b> is the guide you teach it by talking to it, reviewed and saved as versions.</p>
-          <p>Saving a new version affects only future videos; existing videos keep the version they started with. <a href="#/settings/brand">Brand profiles</a> hold identity and voice; <a href="#/settings/look">Video defaults</a> hold starting appearance.</p>
-        </details>
-      </div>
-    </section>`;
-  }
-
-  // Shown instead of the channels pane on narrower screens and while the conversation panel is open.
-  function channelSelect() {
-    const list = view.profiles.map((p) => `<option value="${p.id}"${p.id === pid ? ' selected' : ''}>${esc(p.name)}${p.archived ? ' (archived)' : ''}</option>`).join('');
-    return `<div class="vf-chan-select">
-      <label class="vf-grow"><span class="vh">${TERMS.channel}</span><select data-channel-select aria-label="${TERMS.channel}">${list}<option value="__new">+ New channel…</option></select></label>
-      ${view.profile ? `<button type="button" class="vf-icon vf-dots" data-channel-menu="${view.profile.id}" aria-haspopup="menu" aria-expanded="false" aria-label="Options for ${esc(view.profile.name)}">···</button>` : ''}
     </div>`;
   }
 
@@ -375,17 +428,22 @@ export async function renderLearning(root, { makeChat, startVideo } = {}) {
       </button>`;
     }).join('');
     const empty = p.archived
-      ? `<div class="vf-empty"><b>This channel is archived</b><p class="sub">It is hidden from New video. Nothing was deleted.</p>${button('Restore channel', 'unarchiveChannel', 'small')}</div>`
+      ? '<div class="vf-empty"><p class="sub">No formats.</p></div>' // the hub's banner says the channel is archived
       : `<div class="vf-empty"><b>No formats yet</b><p class="sub">A format is a repeatable kind of video, such as long-form explainers or Shorts.</p>${button('+ Format', 'format', 'small primary')}</div>`;
     return `<section class="vf3-pane vf3-formats" aria-label="Formats in ${esc(p.name)}" data-scroll="formats">
-      ${channelSelect()}
       <div class="vf-pane-head">
-        <h2 class="vf-formats-title">${esc(p.name)}</h2>
+        <h2 class="vf-label">Formats</h2>
         ${p.archived ? '' : `<button type="button" class="btn small" data-action="format">+ Format</button>`}
       </div>
-      ${p.archived && view.formats.length ? `<p class="sub">This channel is archived. ${button('Restore channel', 'unarchiveChannel', 'small')}</p>` : ''}
       ${view.formats.length > 4 ? `<input type="search" class="vf-search" data-search placeholder="Search formats" aria-label="Search formats" value="${esc(search)}">` : ''}
       <div class="vf-fmt-list">${rows || empty}</div>
+      <div class="vf-pane-foot">
+        <label class="learn-check vf-toggle"><input type="checkbox" data-show-archived${showArchived ? ' checked' : ''}>Show archived formats</label>
+        <details class="vf-how"><summary>How formats work</summary>
+          <p><b>A format</b> is a repeatable kind of video for this channel. Its <b>skill</b> is the guide you teach it by talking to it, reviewed and saved as versions.</p>
+          <p>Saving a new version affects only future videos; existing videos keep the version they started with. The channel's <a href="${channelHref(p.id, 'brand')}">Brand tab</a> holds identity and voice; <a href="#/settings/look">Video defaults</a> hold starting appearance.</p>
+        </details>
+      </div>
     </section>`;
   }
 
@@ -402,7 +460,7 @@ export async function renderLearning(root, { makeChat, startVideo } = {}) {
     if (!f) {
       return p.archived
         ? `<div class="empty vf-home-empty"><b>${esc(p.name)} is archived</b><p class="sub">Restore it to add formats and make new videos.</p>${button('Restore channel', 'unarchiveChannel', 'primary')}</div>`
-        : `<div class="empty vf-home-empty"><b>Add the first format to ${esc(p.name)}</b><p class="sub">A format is a repeatable kind of video, such as long-form explainers or Shorts. It is ready for New video as soon as you save it.</p>${button('+ New format', 'format', 'primary')}</div>`;
+        : `<div class="empty vf-home-empty"><b>No formats yet</b><p class="sub">A format is a kind of video you make for this channel (a Short, a deep explainer…). It is ready for New video as soon as you save it.</p>${button('+ New format', 'format', 'primary')}</div>`;
     }
     const used = view.videos.get(f.id)?.length || 0;
     const number = activeNumber();
@@ -1154,44 +1212,25 @@ export async function renderLearning(root, { makeChat, startVideo } = {}) {
 
   // ---- Dialogs ----
 
+  // Channel changes go through the shared dialogs above; the hub redraws (and the sidebar recounts) afterwards.
   function newChannel() {
-    dialog('New channel', '<p class="sub">A YouTube channel, brand or series. Add its video formats next; each one learns its own skill.</p>' + field('Channel name', 'name', '', 'input', 'My main YouTube channel'), async (b) => {
-      const p = await api(`${E}/profiles`, b);
-      pid = p.id; fid = null; sid = null; talking = false;
-      await paint();
-    }, 'Create channel');
+    newChannelDialog({ onCreated: (p) => { location.hash = channelHref(p.id, 'formats'); } });
   }
 
-  function renameChannel(p) {
-    dialog('Rename channel', field('Channel name', 'name', p.name) + '<p class="sub">Existing videos keep the names they were made with.</p>', async (b) => {
-      warn(await api(`${E}/profiles/${p.id}/update`, { expected: p.revision || 1, name: b.name }));
-      await paint();
-    }, 'Rename');
-  }
-
-  async function archiveChannel(p, archive) {
-    if (archive && !await confirmBox({ title: `Archive ${p.name}?`, text: 'The channel and its formats are hidden from Video formats and New video. Nothing is deleted, existing videos are untouched, and you can restore it with Show archived.', ok: 'Archive channel' })) return;
-    warn(await api(`${E}/profiles/${p.id}/${archive ? 'archive' : 'unarchive'}`, { expected: p.revision || 1 }), archive ? `${p.name} archived.` : `${p.name} restored.`);
-    if (archive && p.id === pid) { pid = null; fid = null; sid = null; talking = false; }
-    await paint();
+  function archiveThisChannel(p, archive) {
+    return archiveChannel(p, archive, { onDone: onChannelChange || paint });
   }
 
   function newFormat() {
-    const choicesList = data.profiles.filter((p) => !p.archived);
-    if (!choicesList.length) return newChannel();
-    const el = dialog('New format', `<label>${TERMS.channel}<select name="profileId">${options(choicesList, pid)}</select></label><p class="sub">Choose a starting setup and give your format a name. It is ready for New video as soon as you save. Teaching it a skill is optional.</p><label>Video setup<select name="type">${options(videoSetups, 'tutorial')}</select></label><p class="sub" id="formatSetupHint"></p>` + field('Your format name', 'name', '', 'input', 'Long-form explainers with me on camera') + '<p class="sub">This is your own name, not another preset. You can create several formats with the same video setup and teach each one a different skill.</p><label>Target length in seconds (optional)<input name="targetSeconds" type="number" min="0" max="7200" placeholder="e.g. 600 for a 10-minute video"></label>', async (b) => {
-      const x = await api(`${E}/formats`, b);
-      pid = b.profileId; fid = x.id; sid = null; talking = false; tab = 'skill';
-      await paint();
-      toast('Format saved. You can use it in New video now.');
-    }, 'Create format');
-    const change = () => {
-      const x = videoSetups.find((s) => s.id === $('[name=type]', el).value);
-      $('#formatSetupHint', el).textContent = x.hint;
-      $('[name=name]', el).placeholder = x.example;
-    };
-    $('[name=type]', el).onchange = change;
-    change();
+    newFormatDialog({
+      profiles: data.profiles,
+      profileId: pid,
+      onCreated: async (x) => {
+        fid = x.id; sid = null; talking = false; tab = 'skill';
+        await paint();
+        onFormatsChange?.();
+      },
+    });
   }
 
   function editFormat() {
@@ -1209,10 +1248,11 @@ export async function renderLearning(root, { makeChat, startVideo } = {}) {
 
   async function archiveFormat(archive) {
     const f = view.format;
-    if (archive && !await confirmBox({ title: `Archive ${f.name}?`, text: 'It is hidden from Video formats and New video, and its generated skill is unpublished. Nothing is deleted, existing videos are untouched, and you can restore it with Show archived.', ok: 'Archive format' })) return;
+    if (archive && !await confirmBox({ title: `Archive ${f.name}?`, text: 'It is hidden from the channel’s formats and New video, and its generated skill is unpublished. Nothing is deleted, existing videos are untouched, and you can restore it with Show archived.', ok: 'Archive format' })) return;
     warn(await api(`${E}/formats/${f.id}/${archive ? 'archive' : 'unarchive'}`, { expected: f.revision || 1 }), archive ? `${f.name} archived.` : `${f.name} restored.`);
     if (archive) { fid = null; sid = null; talking = false; }
     await paint();
+    onFormatsChange?.();
   }
 
   // The conversation a direct edit should join: the visible draft when it is based on the current skill.
@@ -1288,15 +1328,6 @@ export async function renderLearning(root, { makeChat, startVideo } = {}) {
     ];
   }
 
-  function channelMenuItems(p) {
-    return [
-      { label: 'Rename channel', run: () => renameChannel(p) },
-      { label: 'Brand, voice and colours', href: '#/settings/brand' },
-      '-',
-      p.archived ? { label: 'Restore channel', run: () => archiveChannel(p, false) } : { label: 'Archive channel', danger: true, run: () => archiveChannel(p, true) },
-    ];
-  }
-
   async function chooseSkills() {
     const f = view.format;
     const inv = await api(`${E}/skills`);
@@ -1318,7 +1349,7 @@ export async function renderLearning(root, { makeChat, startVideo } = {}) {
   const actions = {
     channel: () => newChannel(),
     format: () => newFormat(),
-    unarchiveChannel: () => archiveChannel(view.profile, false),
+    unarchiveChannel: () => archiveThisChannel(view.profile, false),
     unarchiveFormat: () => archiveFormat(false),
     editFormat: () => editFormat(),
     newVideo: () => startVideo(view.format),
@@ -1386,7 +1417,7 @@ export async function renderLearning(root, { makeChat, startVideo } = {}) {
   };
 
   root.onclick = async (e) => {
-    const el = e.target.closest('[data-action],[data-profile],[data-format],[data-tab],[data-channel-menu],[data-edit-rule],[data-choice],[data-remove-reference],[data-file-kind],[data-file-reveal],[data-file-remove],[data-file-unstage]');
+    const el = e.target.closest('[data-action],[data-format],[data-tab],[data-edit-rule],[data-choice],[data-remove-reference],[data-file-kind],[data-file-reveal],[data-file-remove],[data-file-unstage]');
     if (!el || !root.contains(el) || el.disabled) return;
     const busy = (fn) => run(fn)({ currentTarget: el });
     if (el.dataset.action) {
@@ -1396,12 +1427,6 @@ export async function renderLearning(root, { makeChat, startVideo } = {}) {
       // Menus and toggles stay clickable; everything else is disabled while it runs.
       if (['formatMenu', 'studySettings', 'attach'].includes(name)) { try { await fn(el, arg); } catch (err) { toast(err.message); } return; }
       await busy(() => fn(el, arg));
-      return;
-    }
-    if (el.dataset.profile) {
-      if (el.dataset.profile === pid) return;
-      pid = el.dataset.profile; fid = null; sid = null;
-      await busy(paint);
       return;
     }
     if (el.dataset.format) {
@@ -1414,11 +1439,6 @@ export async function renderLearning(root, { makeChat, startVideo } = {}) {
       tab = el.dataset.tab;
       paintHome();
       $(`[data-tab="${tab}"]`, root)?.focus();
-      return;
-    }
-    if (el.dataset.channelMenu) {
-      const p = data.profiles.find((x) => x.id === el.dataset.channelMenu);
-      if (p) showMenu(el, channelMenuItems(p));
       return;
     }
     if (el.dataset.editRule) { ruleDialog(el.dataset.editRule); return; }
@@ -1447,10 +1467,6 @@ export async function renderLearning(root, { makeChat, startVideo } = {}) {
     const el = e.target;
     if (el.matches('[data-show-archived]')) {
       showArchived = el.checked;
-      await run(paint)();
-    } else if (el.matches('[data-channel-select]')) {
-      if (el.value === '__new') { el.value = pid || ''; newChannel(); return; }
-      pid = el.value; fid = null; sid = null;
       await run(paint)();
     } else if (el.matches('[data-conversation]')) {
       sid = el.value || null;
@@ -1489,37 +1505,18 @@ export async function renderLearning(root, { makeChat, startVideo } = {}) {
  function projectDialog(versionId){dialog('Start a project',field('Project name','name')+'<label>Start with<select name="entry"><option value="idea">An idea</option><option value="script">A script</option><option value="footage">Existing footage / narration</option></select></label>'+field('Idea, direction or script','brief','','textarea')+'<label>Build preference<select name="build"><option value="scene">Scene by scene</option><option value="full">Full build, with approval checkpoints</option></select></label><p class="sub">The project keeps this version. You can record or import footage in the editor.</p>',async b=>{const p=await api(`${E}/projects`,{...b,versionId});location.hash=`#/p/${encodeURIComponent(p.id)}`;});}
 
   await paint();
-  return { teardown() { live = false; closeMenu(); cleanup(); } };
+  return { teardown() { live = false; closeMenu(); cleanup(); }, newFormat };
 }
 
 
 // A generated format skill, read-only: edits go through the format's reviewed drafts.
-function readOnlySkill(x){
+export function readOnlySkill(x){
  const modal=$('#modal');
- const el=h(`<div class="dialog learn-dialog" role="dialog" aria-modal="true" aria-label="${esc(x.name)}"><h2>${esc(x.name)} · generated</h2><p class="sub">Generated from the format's active skill version. To change it, open the format in ${TERMS.formats} and talk to it, or edit a rule; every change is reviewed and saved as a new version.</p><pre>${esc(x.text)}</pre><div class="learn-actions"><button type="button" class="btn" data-close>Close</button></div></div>`);
+ const el=h(`<div class="dialog learn-dialog" role="dialog" aria-modal="true" aria-label="${esc(x.name)}"><h2>${esc(x.name)} · generated</h2><p class="sub">Generated from the format's active skill version. To change it, open the format in its channel and talk to it, or edit a rule; every change is reviewed and saved as a new version.</p><pre>${esc(x.text)}</pre><div class="learn-actions"><button type="button" class="btn" data-close>Close</button></div></div>`);
  modal.replaceChildren(el);modal.hidden=false;
  const close=()=>{modal.hidden=true;};
  $('[data-close]',el).onclick=close;el.onkeydown=e=>{if(e.key==='Escape'){e.preventDefault();close();}};$('[data-close]',el).focus();
 }
-export async function renderSkillDatabase(root){
- const data=await api(`${E}/skills`);
- root.innerHTML=`<div class="home-wrap wide learn-page"><div class="home-head"><div><h1>Skills</h1><p class="sub">Stored and versioned in local SQLite. Core updates keep your personal versions.</p></div>${button('+ Personal skill','create')}${button('Import from GitHub','import')}${button('Refresh / import file edits','refresh')}${button('Rebuild agent files','regenerate')}</div><div class="learn-toolbar"><label>Show<select id="skillKind"><option value="all">All skills</option><option value="core">Core</option><option value="customized-core">Customized core</option><option value="personal">Personal</option><option value="format">Format skills</option></select></label><a class="btn" href="#/settings/updates">Update & compatibility review</a></div><p class="learn-error">${esc(data.error||'')}</p><div class="skill-grid" id="skillRows"></div><details><summary>Database version history</summary><div id="skillHistory"></div></details></div>`;
- const run=fn=>async()=>{try{await fn();}catch(e){toast(e.message);}};
- // Format skills are generated from a format's active version: read them here, change them in Video formats.
- const formatCard=s=>`<article class="skill-card"><span class="badge">${esc(kindLabel(s.kind))}</span><b>${esc(s.label||('/'+s.name))}</b><span class="sub">Generated from ${TERMS.formats} · /${esc(s.name)}</span><p class="skill-explanation">${esc(s.summary||'The rules and workflow of this format’s active skill version. Change it by talking to the format.')}</p>${s.reason?`<p class="sub">${esc(s.reason)}</p>`:''}<div class="learn-actions">${button('Read','read-'+s.id)}${s.formatId?`<a class="btn" href="#/learning?format=${encodeURIComponent(s.formatId)}">Open format</a>`:''}</div></article>`;
- const card=s=>s.kind==='format'?formatCard(s):`<article class="skill-card"><span class="badge">${esc(kindLabel(s.kind))}</span><b>${esc(s.label||('/'+s.name))}</b><span class="sub">${s.activeVersion?'v'+esc(s.activeVersion):'Personal version'} · ${s.disabled?'Disabled':'Enabled'}</span><p class="skill-explanation">${esc(s.summary||'Open Read / edit to inspect this skill and add a short explanation.')}</p>${s.reason?`<p class="sub">${esc(s.reason)}</p>`:''}${button('Read / edit','edit-'+s.id)}${button(s.disabled?'Enable':'Disable','toggle-'+s.id)}</article>`;
- const rows=()=>{
-  const kind=$('#skillKind',root).value;
-  $('#skillRows',root).innerHTML=(data.items||[]).filter(s=>kind==='all'||s.kind===kind).map(card).join('');
-  root.querySelectorAll('[data-action^=read-]').forEach(b=>b.onclick=run(async()=>{const x=await api(`${E}/skills/${b.dataset.action.slice(5)}`);readOnlySkill(x);}));
- root.querySelectorAll('[data-action^=edit-]').forEach(b=>b.onclick=run(async()=>{const id=b.dataset.action.slice(5),x=await api(`${E}/skills/${id}`);dialog(`${x.name} · ${x.kind}`,`<p class="sub">${x.kind==='core'?'Changing the workflow creates your own customized core version. Editing only the explanation keeps it Core.':x.name.startsWith('learned-')?'This edits the reusable skill copy. Pinned projects retain their approved snapshot. To change approved rules, talk to the format in Video formats.':'Saving creates a database revision.'}</p>`+field('Short explanation (shown on the card)','summary',x.summary)+field('Skill Markdown','text',x.text,'textarea'),async form=>{await api(`${E}/skills/${id}`,{action:form.text===x.text?'describe':'edit',text:form.text,summary:form.summary,revision:x.revision});await renderSkillDatabase(root);});}));
- root.querySelectorAll('[data-action^=toggle-]').forEach(b=>b.onclick=run(async()=>{const id=b.dataset.action.slice(7),s=data.items.find(x=>x.id===id);await api(`${E}/skills/${id}`,{action:s.disabled?'enable':'disable',revision:data.revision});await renderSkillDatabase(root);}));};rows();$('#skillKind',root).onchange=rows;
-  $('[data-action=import]',root).onclick=()=>addSkillsDialog({onDone:()=>renderSkillDatabase(root)});
- $('[data-action=create]',root).onclick=()=>dialog('New personal skill',field('Short explanation (shown on the card)','summary')+field('Skill Markdown','text','---\nname: my-workflow\ndescription: Describe when this skill should be used.\n---\n\n# Workflow\n','textarea'),async b=>{await api(`${E}/skills`,{action:'create',text:b.text,summary:b.summary,revision:data.revision});await renderSkillDatabase(root);});
- for(const a of ['refresh','regenerate'])$(`[data-action=${a}]`,root).onclick=run(async()=>{await api(`${E}/skills`,{action:a,revision:data.revision});await renderSkillDatabase(root);});
- for(const v of data.history||[]){const row=h(`<p><span>${esc(v.created)} · ${esc(v.reason)}</span> <button class="btn small">Restore this version</button></p>`);$('#skillHistory',root).append(row);$('button',row).onclick=run(async()=>{if(!await confirmBox({title:'Restore skill version?',text:'Current skills stay in database history. This older version will be held until you resume updates.',ok:'Restore'}))return;await api(`${E}/skills`,{action:'restore-sql',snapshot:v.id,revision:data.revision});await renderSkillDatabase(root);});}
-}
-
 export async function projectLearningPanel(root,id,meta,{send}={}){
  const holder=h('<details class="project-learning"><summary>Script & approved guide</summary><div class="project-learning-body"></div></details>');root.append(holder);if(meta.learning?.entry!=='footage'&&meta.learning)holder.open=true;const el=$('.project-learning-body',holder);
  await projectProfilePanel(root,id);
@@ -1530,7 +1527,7 @@ export async function projectLearningPanel(root,id,meta,{send}={}){
  const actions=h(`<div class="learn-actions">${button('Develop script','script')}${button('Review scene plan','plan')}${button('Study this project','recap')}${button('Review version upgrade','upgrade')}</div>`);el.append(actions);
  $('[data-action=script]',actions).onclick=()=>send?.('Develop or revise script.md using this project’s pinned format skill, direction and target duration. Show the script for review before recording or building. Preserve any existing draft until changes are agreed.');
  $('[data-action=plan]',actions).onclick=async()=>{try{const p=await api(`${E}/projects/${id}/plan-review`,{});dialog('Approve scene plan',`<p>Review the scene plan and timing. Approval applies to this exact plan, cut and guide version.</p><pre>${esc(JSON.stringify(p.plan,null,2))}</pre>`,async()=>{await api(`${E}/projects/${id}/approve-plan`,{token:p.token});toast('Scene plan approved. You can start the build.');});}catch(e){toast(e.message);}};
- $('[data-action=recap]',actions).onclick=()=>dialog('Study this project',field('What worked, what changed and why','note','','textarea'),async b=>{const s=await api(`${E}/projects/${id}/recap`,b);location.hash=`#/learning?session=${s.id}`;});
+ $('[data-action=recap]',actions).onclick=()=>dialog('Study this project',field('What worked, what changed and why','note','','textarea'),async b=>{const s=await api(`${E}/projects/${id}/recap`,b);location.hash=channelHref('_','formats',{session:s.id});});
  $('[data-action=upgrade]',actions).onclick=async()=>{try{const all=await api(E),f=all.formats.find(f=>f.id===meta.learning.formatId);if(f.activeVersion===v.id){toast('This project already uses the active version.');return;}const diff=await api(`${E}/projects/${id}/upgrade-preview`,{versionId:f.activeVersion});dialog('Review format upgrade',`<h3>Current rules</h3><pre>${esc(diff.oldRules.map(r=>r.text).join('\n\n'))}</pre><h3>New rules</h3><pre>${esc(diff.newRules.map(r=>r.text).join('\n\n'))}</pre>${diff.notices?.length?`<div class="notice">${diff.notices.map(n=>`<p>${esc(n)}</p>`).join('')}</div>`:''}<p>Existing cuts, graphics and overrides stay as they are. Ask the agent to review changes before rebuilding.</p>`,async()=>{await api(`${E}/projects/${id}/upgrade`,{versionId:diff.to,expected:diff.from});location.reload();});}catch(e){toast(e.message);}};
 }
 
@@ -1543,14 +1540,15 @@ export async function renderDatabaseRecovery(root) {
   const size = (n) => n >= 1024 ** 3 ? `${Math.round((n / 1024 ** 3) * 10) / 10} GB` : n >= 1024 ** 2 ? `${Math.round((n / 1024 ** 2) * 10) / 10} MB` : `${Math.max(0, Math.round((n || 0) / 1024))} KB`;
   const unused = files.unused || [];
   const missing = files.missing || [];
-  root.innerHTML = `<div class="home-wrap learn-page storage-page">
-    <h1>Local database recovery</h1>
-    <p>Skills, approved guides, sound catalog metadata and their relationships are stored in SQLite. A backup includes their saved content. Skill files (assets, knowledge and key frames) are kept in the file store below and need their own backup, as do large media and draft intake.</p>
-    ${button('Create database backup', 'backup')}
-    <div id="dbBackups"></div>
-    <p class="sub">A full restore preserves the displaced database and refuses backups that would break a current project’s version pin. Skill files a restored version needs but the file store lacks are listed, not fatal. For ordinary changes, use skill history or format history instead.</p>
-    <section class="vf-card storage-files" aria-labelledby="storageFilesTitle">
-      <h2 id="storageFilesTitle">Skill files</h2>
+  root.innerHTML = `<div class="learn-page storage-page">
+    <section class="vo-card" aria-labelledby="dbBackupsTitle">
+      <div class="vo-card-head"><h2 id="dbBackupsTitle">Database backups</h2>${button('Create backup', 'backup', 'primary small')}</div>
+      <p class="sub">Skills, approved guides, sound catalog metadata and their relationships are stored in SQLite. A backup includes their saved content. Skill files (below), large media and draft intake need their own backup.</p>
+      <div id="dbBackups" class="storage-rows">${backups.length ? '' : '<p class="sub">No backups yet.</p>'}</div>
+      <p class="sub">A full restore preserves the displaced database and refuses backups that would break a current project’s version pin. Skill files a restored version needs but the file store lacks are listed, not fatal. For ordinary changes, use skill history or format history instead.</p>
+    </section>
+    <section class="vo-card storage-files" aria-labelledby="storageFilesTitle">
+      <div class="vo-card-head"><h2 id="storageFilesTitle">Skill files</h2></div>
       ${files.error ? `<p class="notice">${esc(files.error)}</p>` : `
       <p>${files.objects} stored file${files.objects === 1 ? '' : 's'} · ${size(files.bytes)}. Each identical file is stored once in <code>${esc(files.root)}</code>. Skill folders hold copy-on-write clones of these files.</p>
       ${missing.length ? `<div class="notice"><b>${missing.length} file${missing.length === 1 ? ' is' : 's are'} missing from the file store.</b> Restore them from a skill file backup.<ul>${missing.slice(0, 20).map((m) => `<li>${esc(m.file)} · ${esc(m.uses.map((u) => `${u.format || 'format'} v${u.number}`).join(', '))}</li>`).join('')}</ul></div>` : ''}
@@ -1596,7 +1594,7 @@ export async function renderDatabaseRecovery(root) {
     };
   }
   for (const b of backups) {
-    const row = h(`<section class="learn-version"><b>${esc(b.created)}</b><p>${b.profiles} profiles · ${b.versions} guide versions · ${b.sounds || 0} catalog sounds · ${Math.round(b.bytes / 1024)} KB</p><button class="btn">Review restore</button></section>`);
+    const row = h(`<div class="storage-row"><span class="sr-t"><b>${esc(Number.isNaN(+new Date(b.created)) ? b.created : new Date(b.created).toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }))}</b><small class="sub">${b.profiles} channels · ${b.versions} guide versions · ${b.sounds || 0} catalog sounds · ${size(b.bytes)}</small></span><button type="button" class="btn small">Review restore…</button></div>`);
     $('#dbBackups', root).append(row);
     $('button', row).onclick = async () => {
       try {

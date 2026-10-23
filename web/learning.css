@@ -1,4 +1,4 @@
-.learn-page{padding:28px;max-width:1500px;margin:auto}.learn-toolbar,.learn-actions{display:flex;align-items:end;gap:10px;flex-wrap:wrap}.learn-toolbar{margin:22px 0}.learn-page label,.learn-dialog label{display:grid;gap:7px;font-size:13px}.learn-page input,.learn-page select,.learn-page textarea,.learn-dialog input,.learn-dialog select,.learn-dialog textarea{font:inherit;padding:10px;border:1px solid var(--line,#ddd);border-radius:7px;background:var(--panel,#fff);color:inherit;max-width:100%;box-sizing:border-box}.learn-page textarea,.learn-dialog textarea{width:100%;resize:vertical}.learn-toolbar select{min-width:180px}.learn-session{display:grid;gap:8px;text-align:left;width:100%;padding:14px;margin:6px 0;background:transparent;color:inherit;border:1px solid var(--line,#ddd);border-radius:8px;cursor:pointer}.learn-session.selected{background:var(--panel,#fff);border-color:currentColor;box-shadow:inset 0 0 0 1px currentColor}.learn-session small,.learn-refs small{display:block;color:var(--muted,#666);overflow-wrap:anywhere}.learn-refs{padding-left:20px}.learn-refs li{margin-bottom:12px}.learn-chat{height:520px!important;min-height:300px;margin-top:22px;border:1px solid var(--line,#ddd);border-radius:10px;overflow:hidden}.learn-chat .msgs{min-height:100px;flex:1;overflow:auto}.learn-chat .chat-head{flex-wrap:wrap}.learn-review{margin-top:24px;padding:20px;border:1px solid var(--line,#ddd);border-radius:12px}.learn-rule,.learn-version{padding:16px 0;border-bottom:1px solid var(--line,#ddd);margin-bottom:16px}.learn-rule textarea{margin-top:12px}.learn-rule .badge{margin-left:10px}.learn-page pre,.learn-dialog pre,.learn-guide{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;max-height:350px;overflow:auto;line-height:1.5}.learn-page details,.learn-dialog details{margin:16px 0}.learn-dialog{width:min(760px,90vw)!important;max-height:85vh;overflow:auto;display:grid;gap:16px}.learn-dialog .learn-check,.learn-page .learn-check{display:flex;align-items:center;gap:8px;margin:8px 0}.learn-check input{width:auto}.learn-error{color:var(--bad,#a32c2c)}.project-learning{border-bottom:1px solid var(--line,#ddd);padding:10px 14px;max-height:45vh;overflow:auto}.project-learning-body{padding-top:12px}.project-learning .learn-actions{gap:6px}.project-learning .btn{font-size:11px}#learnDetail{min-width:0}.learn-page .skill-card{gap:10px}@media(max-width:850px){.learn-page{padding:18px}.learn-toolbar label{flex:1}.learn-toolbar select{min-width:120px}.learn-chat{height:480px!important}}
+.learn-page{padding:28px;max-width:1500px;margin:auto}.learn-toolbar,.learn-actions{display:flex;align-items:end;gap:10px;flex-wrap:wrap}.learn-toolbar{margin:22px 0}.learn-page label,.learn-dialog label{display:grid;gap:7px;font-size:13px}.learn-page input,.learn-page select,.learn-page textarea,.learn-dialog input,.learn-dialog select,.learn-dialog textarea{font:inherit;padding:10px;border:1px solid var(--line);border-radius:7px;background:var(--panel);color:inherit;max-width:100%;box-sizing:border-box}.learn-page textarea,.learn-dialog textarea{width:100%;resize:vertical}.learn-toolbar select{min-width:180px}.learn-session{display:grid;gap:8px;text-align:left;width:100%;padding:14px;margin:6px 0;background:transparent;color:inherit;border:1px solid var(--line);border-radius:8px;cursor:pointer}.learn-session.selected{background:var(--panel);border-color:currentColor;box-shadow:inset 0 0 0 1px currentColor}.learn-session small,.learn-refs small{display:block;color:var(--muted);overflow-wrap:anywhere}.learn-refs{padding-left:20px}.learn-refs li{margin-bottom:12px}.learn-chat{height:520px!important;min-height:300px;margin-top:22px;border:1px solid var(--line);border-radius:10px;overflow:hidden}.learn-chat .msgs{min-height:100px;flex:1;overflow:auto}.learn-chat .chat-head{flex-wrap:wrap}.learn-review{margin-top:24px;padding:20px;border:1px solid var(--line);border-radius:12px}.learn-rule,.learn-version{padding:16px 0;border-bottom:1px solid var(--line);margin-bottom:16px}.learn-rule textarea{margin-top:12px}.learn-rule .badge{margin-left:10px}.learn-page pre,.learn-dialog pre,.learn-guide{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;max-height:350px;overflow:auto;line-height:1.5}.learn-page details,.learn-dialog details{margin:16px 0}.learn-dialog{width:min(760px,90vw)!important;max-height:85vh;overflow:auto;display:grid;gap:16px}.learn-dialog .learn-check,.learn-page .learn-check{display:flex;align-items:center;gap:8px;margin:8px 0}.learn-check input{width:auto}.learn-error{color:var(--bad)}.project-learning{border-bottom:1px solid var(--line);padding:10px 14px;max-height:45vh;overflow:auto}.project-learning-body{padding-top:12px}.project-learning .learn-actions{gap:6px}.project-learning .btn{font-size:11px}#learnDetail{min-width:0}.learn-page .skill-card{gap:10px}@media(max-width:850px){.learn-page{padding:18px}.learn-toolbar label{flex:1}.learn-toolbar select{min-width:120px}.learn-chat{height:480px!important}}
 
 .learn-page .skill-explanation{font-size:13px;line-height:1.5;margin:4px 0 12px;flex:1;overflow-wrap:anywhere}
 
@@ -10,30 +10,24 @@
 .learn-suggestion a, .learn-suggestion small { font-size: 12px; overflow-wrap: anywhere; }
 .learn-suggestion small { color: var(--muted); }
 
-/* ---- Video formats: channels › formats › format home, plus the "Talk to this format" panel. ----
-   Narrow: one column (channel picker on top of the formats). 700px+: formats beside the format home.
-   1040px+: three panes; while talking, the channels pane folds into the picker and the panel takes the right. */
+/* ---- A channel's Formats tab (the channel hub): formats › format home, plus the "Talk to this format" panel. ----
+   Narrow: one column (the formats on top). 700px+: formats beside the format home.
+   1040px+: while talking, the panel takes the right (it slides over the format home below 1260px). */
 .learn-page.vf3-page { padding: 0; max-width: none; margin: 0; display: flex; flex-direction: column; min-height: 100%; }
 .vf-legacy { margin: 12px 16px 0; }
 .vf3 { display: grid; grid-template-columns: minmax(0, 1fr); position: relative; flex: 1; min-height: 0; }
 .vf3-pane { min-width: 0; display: flex; flex-direction: column; gap: 8px; padding: 18px 14px; }
-.vf3-channels { display: none; border-right: 1px solid var(--line); }
 .vf3-formats { background: var(--panel-2); border-bottom: 1px solid var(--line); }
 .vf3-home { gap: 16px; padding: 22px 20px 40px; container: vfhome / inline-size; }
 .vf3-chat { min-width: 0; display: flex; flex-direction: column; height: min(88vh, 760px); background: var(--panel); border-top: 1px solid var(--line); }
 
 @container (min-width: 700px) {
-  .vf3 { grid-template-columns: 240px minmax(0, 1fr); }
+  .vf3 { grid-template-columns: 250px minmax(0, 1fr); }
   .vf3-formats { border-bottom: 0; border-right: 1px solid var(--line); }
   .vf3-chat { grid-column: 1 / -1; }
 }
 @container (min-width: 1040px) {
-  .vf3 { grid-template-columns: 200px 250px minmax(0, 1fr); }
-  .vf3-channels { display: flex; }
-  .vf3:not(.talking) .vf-chan-select { display: none; }
-  .vf3:not(.talking) .vf-formats-title { display: block; }
   .vf3.talking { grid-template-columns: 240px minmax(0, 1fr) minmax(380px, 460px); }
-  .vf3.talking .vf3-channels { display: none; }
   .vf3.talking .vf3-chat { grid-column: auto; height: auto; border-top: 0; border-left: 1px solid var(--line); }
 }
 /* Wide windows: the page fills the content area and each pane scrolls on its own. */
@@ -51,24 +45,13 @@
 .vf-pane-head h2 { margin: 0; flex: 1; min-width: 0; font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
 .vf-pane-head .btn { margin-left: auto; }
 .vf-pane-head .vf-label { font-size: 11px; color: var(--muted); text-transform: var(--label-case); letter-spacing: var(--label-track); }
-.vf-formats-title { display: none; }
 .vf-icon { width: 28px; height: 28px; flex: none; display: inline-grid; place-items: center; padding: 0; border: 1px solid transparent; border-radius: calc(var(--ctl-radius) * 7 / 9); background: transparent; color: var(--muted); font-size: 16px; line-height: 1; }
 .vf-icon:hover, .vf-icon[aria-expanded="true"] { background: var(--panel-3); color: var(--text); }
 .vf-dots { font-size: 12px; letter-spacing: 1px; }
 .vf-grow { flex: 1; min-width: 0; }
 .vf-none { margin: 0; padding: 4px 10px; font-size: 12px; color: var(--muted); }
 
-.vf-chan-list, .vf-fmt-list { display: grid; gap: 2px; align-content: start; }
-.vf-chan { display: flex; align-items: center; gap: 2px; padding-right: 4px; border-radius: 8px; }
-.vf-chan:hover { background: var(--panel-2); }
-.vf-chan.on { background: var(--panel-3); }
-.vf-chan-pick { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 4px 0 10px; border: 0; background: transparent; color: var(--text); text-align: left; }
-.vf-chan.on .vf-chan-pick { font-weight: 600; }
-.vf-chan-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.vf-chan.archived .vf-chan-name { color: var(--muted); }
 .vf-count { color: var(--muted); font-size: 12px; font-weight: 400; font-variant-numeric: tabular-nums; }
-.vf-chan .vf-dots { width: 24px; height: 24px; opacity: 0; }
-.vf-chan:hover .vf-dots, .vf-chan.on .vf-dots, .vf-chan .vf-dots:focus-visible, .vf-chan .vf-dots[aria-expanded="true"] { opacity: 1; }
 .vf-pane-foot { margin-top: auto; padding: 12px 4px 0; border-top: 1px solid var(--line); display: grid; gap: 8px; font-size: 12px; }
 .learn-page .vf-toggle { margin: 0; color: var(--text-2); }
 .learn-page .vf-how { margin: 0; line-height: 1.5; color: var(--muted); }
@@ -76,8 +59,6 @@
 .vf-how p { margin: 8px 0 0; }
 .vf-how a { color: var(--text); }
 
-.vf-chan-select { display: flex; align-items: center; gap: 6px; }
-.learn-page .vf-chan-select select { width: 100%; height: 34px; padding: 0 8px; font-weight: 600; }
 .learn-page .vf-search { height: 32px; padding: 0 10px; }
 .vf-fmt { display: grid; gap: 3px; width: 100%; padding: 10px 12px; text-align: left; border: 1px solid transparent; border-radius: 10px; background: transparent; color: var(--text); min-width: 0; }
 .vf-fmt:hover { background: var(--panel); }
@@ -186,11 +167,6 @@
 .learn-page .vf-draft { margin: 0; padding: 10px 12px; }
 .vf-draft summary { display: flex; align-items: baseline; gap: 8px; cursor: pointer; }
 .vf-draft .vf-stale { margin: 8px 0 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.vf-changes { list-style: none; margin: 8px 0; padding: 0; overflow: hidden; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
-.vf-change { display: flex; align-items: flex-start; gap: 10px; padding: 9px 10px; border-top: 1px solid var(--line-3); }
-.vf-change:first-child { border-top: 0; }
-.vf-change.discarded .vf-change-text { opacity: 0.55; }
-.vf-change-text { flex: 1; min-width: 0; display: grid; gap: 2px; line-height: 1.45; overflow-wrap: anywhere; }
 .vf-keep { display: flex; gap: 4px; flex: none; }
 .vf-compose { flex: none; padding-bottom: 10px; border-top: 1px solid var(--line); }
 .vf-compose .composer { margin: 8px 12px 6px; }

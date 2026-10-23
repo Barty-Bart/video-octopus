@@ -20,7 +20,7 @@ Save useful preferences with **Remember this**, review proposed lessons, and reu
 | Exports | MP4; WAV, M4A/AAC and MP3; transcript text/Markdown; SRT/VTT and burned captions; layer exports and timeline XML. Tested platform coverage and limitations are listed below. |
 | Project formats | YouTube tutorial, faceless explainer, Short and product explainer. |
 
-> **v0.1.0-beta.10 — source update.** Formats can hold real files (assets and knowledge such as product sheets) kept outside the database; the app now needs Node 22.16+ or 24+ and checks Node and FFmpeg versions; agents get the right context in scheduled runs, upgrades and format conversations. Reviewed scoped memories, searchable chat history, format research and example studies, a SQLite sound catalog, skills and instructions, brand profiles, and automatic New video context are included. Read the [release notes](docs/release-notes.md) and [verification limits](docs/managed-skills-verification.md) before relying on an untested workflow.
+> **v0.1.0-beta.11 — source update.** A new layout: a grouped sidebar with your channels, a channel hub (Formats · Brand · Memories), All channels, Skills as a list with details, and Settings with Usage and Storage. Memories have two levels: This channel and Everything. Reviewed scoped memories, searchable chat history, format research and example studies, a SQLite sound catalog, skills and instructions, brand profiles, and automatic New video context are included. Read the [release notes](docs/release-notes.md) and [verification limits](docs/managed-skills-verification.md) before relying on an untested workflow.
 
 ### Six bundled starter skills
 
@@ -110,7 +110,7 @@ Your studio/                          Creator-owned
 
 ### Personalize the result with preferences
 
-For everyday changes, save your shared preferences in Settings → Instructions and your brand in Settings → Brand profiles. Assistant-written file edits require an explicit import. The supported options in `preferences/skills.json` cover tone, pacing, captions, transcription hints, rough-cut pauses/fillers, review detail, B-roll density, zooms and object-separation preview colour. For example:
+For everyday changes, save your shared preferences in My style → All channels → Instructions and your brand in each channel's Brand tab. Assistant-written file edits require an explicit import. The supported options in `preferences/skills.json` cover tone, pacing, captions, transcription hints, rough-cut pauses/fillers, review detail, B-roll density, zooms and object-separation preview colour. For example:
 
 ```json
 {

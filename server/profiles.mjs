@@ -107,3 +107,79 @@ export function hasPinnedContext(id){
  try{return Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='project_context'").get()&&db.prepare('SELECT 1 FROM project_context WHERE project=?').get(id));}
  finally{db.close();}
 }
+
+// ---- Direction A (read-only): the sidebar's channels and each project's channel and format ----
+// Both read studio.sqlite read-only, without opening a store, so a page load never migrates or creates tables.
+function readStudioDb(fn, fallback) {
+ const studio = settings().studio;
+ const file = studio && join(studio, '.studio/studio.sqlite');
+ if (!file || !existsSync(file)) return fallback;
+ const db = new DatabaseSync(file, { readOnly: true });
+ try {
+  const tables = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r) => r.name));
+  return fn(db, tables);
+ } catch {
+  return fallback;
+ } finally {
+  db.close();
+ }
+}
+const rowsOf = (db, tables, table) => (tables.has(table)
+ ? db.prepare(`SELECT data FROM ${table} ORDER BY rowid`).all().map((r) => JSON.parse(r.data))
+ : []);
+
+// Non-archived channels in creation order: { id, name, formats, color, pendingMemories }. `color` is the approved
+// brand's first colour; `pendingMemories` counts the review inbox the channel's Memories tab shows (the channel, its
+// formats and its videos).
+export function channelSummaries() {
+ return readStudioDb((db, tables) => {
+  const profiles = rowsOf(db, tables, 'profiles').filter((p) => !p.archived);
+  const formats = rowsOf(db, tables, 'formats');
+  const entries = rowsOf(db, tables, 'memory_entries').filter((m) => m.status === 'pending');
+  const chats = rowsOf(db, tables, 'memory_chats').filter((c) => c.project);
+  const brandColor = (profileId) => {
+   if (!tables.has('brand_heads') || !tables.has('brand_versions')) return null;
+   const row = db.prepare('SELECT v.data FROM brand_heads h JOIN brand_versions v ON v.id=h.version WHERE h.profile_id=?').get(profileId);
+   const color = row ? JSON.parse(row.data).brand?.colors?.[0] : null;
+   return typeof color === 'string' && /^#[0-9a-f]{6}$/i.test(color) ? color : null;
+  };
+  return profiles.map((p) => {
+   const own = formats.filter((f) => f.profileId === p.id);
+   const scopes = new Set([
+    `profile:${p.id}`,
+    ...own.map((f) => `format:${f.id}`),
+    ...chats.filter((c) => c.profileId === p.id).map((c) => `project:${c.project}`),
+   ]);
+   return {
+    id: p.id,
+    name: p.name,
+    formats: own.filter((f) => !f.archived).length,
+    color: brandColor(p.id),
+    pendingMemories: entries.filter((m) => scopes.has(m.scope)).length,
+   };
+  });
+ }, []);
+}
+
+// Adds profileId, profileName, formatId and formatName to project rows from their pinned setup (null when a project
+// has none). Names are the channel's and format's current ones, falling back to the names pinned with the project.
+export function withProjectChannels(projects) {
+ const blank = { profileId: null, profileName: null, formatId: null, formatName: null };
+ const pins = readStudioDb((db, tables) => {
+  if (!tables.has('project_context')) return null;
+  const names = (table) => new Map(rowsOf(db, tables, table).map((x) => [x.id, x.name]));
+  const profiles = names('profiles'), formats = names('formats');
+  const map = new Map();
+  for (const row of db.prepare('SELECT project, data FROM project_context').all()) {
+   const b = JSON.parse(row.data);
+   map.set(row.project, {
+    profileId: b.profileId || null,
+    profileName: b.profileId ? profiles.get(b.profileId) || b.profileName || null : null,
+    formatId: b.formatId || null,
+    formatName: b.formatId ? formats.get(b.formatId) || b.formatName || null : null,
+   });
+  }
+  return map;
+ }, null);
+ return projects.map((p) => ({ ...p, ...blank, ...(pins?.get(p.id) || {}) }));
+}

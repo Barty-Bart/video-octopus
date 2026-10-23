@@ -1,12 +1,12 @@
 .memory-page { max-width: 1100px; margin: 0 auto; }
 .memory-page > label { display: grid; gap: 8px; max-width: 520px; margin: 24px 0; }
 .memory-page .learn-actions { flex-wrap: wrap; margin: 16px 0; }
-.memory-card { background: var(--panel, #fff); border: 1px solid var(--line, #ddd); border-radius: 14px; padding: 22px; margin: 16px 0; }
+.memory-card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 22px; margin: 16px 0; }
 .memory-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 .memory-page details { margin: 32px 0; }
 .memory-page input, .memory-page select { min-width: 0; max-width: 100%; }
 .msg-user .remember-message, .msg-ai .remember-message { display: block; margin-top: 8px; font-size: 12px; opacity: .8; }
-.memory-page select, .memory-page input { padding: 10px 12px; border: 1px solid var(--line, #ddd); border-radius: 9px; background: var(--panel, #fff); color: inherit; font: inherit; }
+.memory-page select, .memory-page input { padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); color: inherit; font: inherit; }
 .memory-card details { margin: 18px 0 0; }
 @media (max-width: 700px) { .memory-page { padding: 0 16px 24px; } }
 /* Memory levels: the Keep for choice, level chips and the per-memory options menu. Tokens only. */

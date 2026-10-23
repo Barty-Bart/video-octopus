@@ -4,7 +4,9 @@ import { TERMS } from './terms.js';
 // as "•••• set ✓ · Replace · Test · Remove" and never come back to the page.
 import { $, esc, h, api, toast, tilde, ENGINES } from './ui.js';
 import { setupPage, studioCreator } from './setup.js';
-import { profileSettings, instructionSettings } from './profiles.js';
+import { renderDashboard } from './dashboard.js';
+import { renderDatabaseRecovery } from './learning.js';
+import { channelHref } from './nav.js';
 import { LOOKS, applyLook } from './appearance.js';
 import { updatesSection, markUpdateBadge } from './updates.js';
 import { support, browserName } from './recorder.js';
@@ -26,6 +28,7 @@ export async function appPage(hash, ctx) {
   if (show && drawerWasOpen(page)) setTimeout(() => { if (page === pageKey(location.hash)) openDrawer(); }, 0);
   if (hash.startsWith('#/settings')) return settingsPage(hash.split('/')[2] || 'claude');
   if (hash === '#/setup') return setupPage(ctx, { back: backTo, assistantPanel });
+  // Channel pages (#/channel…, #/channels…) stay behind this gate, like Home (Direction A decision 6).
   if (!hash.startsWith('#/p/') && !hash.startsWith('#/recordings') && !hash.startsWith('#/skills')) {
     // First time (or no studio folder yet): Setup opens by itself, until it's finished or skipped this session.
     const st = await api('/api/app/setup').catch(() => null);
@@ -75,11 +78,11 @@ const SECTIONS = [
   ['recorder', 'Recording', 'Camera, mic, screen, takes'],
   ['editing', 'Editing', 'Trimming at a cut, telling Claude'],
   ['sound', 'Sound', 'Sources, voice vs effects'],
-  ['folders', 'Folders', 'Studio, media and local database'],
   ['appearance', 'Appearance', 'How Video Octopus looks'],
   ['look', 'Video defaults', 'Starting background and framing'],
-  ['brand', 'Brand profiles', 'Research, identity and assets per profile'],
-  ['instructions', 'Instructions', 'Shared prompts and agent instructions'],
+  ['folders', 'Folders', 'Studio, media and local database'],
+  ['storage', 'Storage & backups', 'Database backups and skill files'],
+  ['usage', 'Usage', 'What you’ve made, from a local log'],
   ['updates', 'Updates', 'New versions, starter files, log-in'],
 ];
 const ABOUT = {
@@ -91,9 +94,9 @@ const ABOUT = {
   sound: 'Where sound effects come from, and how they sit under your voice.',
   folders: 'The studio is the home for your local database, projects and media. Skills are managed in the app; you do not need to arrange their folders.',
   appearance: 'How Video Octopus looks. Your videos keep their own look, under Look.',
-  look: 'Starting background and framing for your videos. Brand profiles provide colours and fonts; Video formats provides approved format guidance. Existing edits remain under your control.',
-  brand: 'Create a profile, research its website, review the findings and save its brand. New video loads the selected profile’s approved brand and format.',
-  instructions: 'Canonical studio prompts and agent instructions, saved in local SQLite with version history.',
+  look: 'Starting background and framing for your videos. Each channel’s Brand tab provides colours and fonts; its formats provide approved format guidance. Existing edits remain under your control.',
+  storage: 'Back up and restore the local database, and look after the skill file store.',
+  usage: 'What you’ve made with Video Octopus, counted from your own folders and a usage log that stays on this computer.',
   updates: 'New versions of Video Octopus, the starter files in your studio, and opening Video Octopus when you log in.',
 };
 // More words the settings search finds a section by.
@@ -108,7 +111,8 @@ const SEC_ICON = {
   folders: '<path d="M2 4.5h4.2l1.4 1.5H14v6.5a1 1 0 01-1 1H3a1 1 0 01-1-1z"/>',
   appearance: '<circle cx="8" cy="8" r="5.8"/><path d="M8 2.2v11.6A5.8 5.8 0 018 2.2z" fill="currentColor" stroke="none"/>',
   look: '<rect x="2.2" y="3" width="11.6" height="10" rx="1.5"/><path d="M2.6 11.4l3.4-3.4 2.6 2.6 1.8-1.8 3.2 3.2"/><circle cx="10.6" cy="6.1" r="1"/>',
-  brand: '<path d="M8 2.2l1.7 3.5 3.8.5-2.8 2.7.7 3.8L8 10.9l-3.4 1.8.7-3.8-2.8-2.7 3.8-.5z"/>',
+  storage: '<ellipse cx="8" cy="4" rx="5.5" ry="2"/><path d="M2.5 4v8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2V4M2.5 8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2"/>',
+  usage: '<path d="M2.5 13.5h11"/><rect x="3" y="8" width="2.4" height="4" rx=".6"/><rect x="6.8" y="4.5" width="2.4" height="7.5" rx=".6"/><rect x="10.6" y="6.5" width="2.4" height="5.5" rx=".6"/>',
   updates: '<path d="M13 8a5 5 0 01-8.6 3.5M3 8a5 5 0 018.6-3.5"/><path d="M11.8 2.2v2.6H9.2M4.2 13.8v-2.6h2.6"/>',
 };
 const secIcon = (k) => `<span class="sec-ic" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 16 16">${SEC_ICON[k] || ''}</svg></span>`;
@@ -629,11 +633,11 @@ const DRAW = {
     drawColors();
     return frag(
       group('Video defaults',
-        row(TERMS.formats, 'For pacing, captions, storytelling and format-specific visual rules, use Video formats. Review the scene plan before applying those rules to a video.', h(`<a class="btn small" href="#/learning">Open ${TERMS.formats}</a>`)),
+        row('Formats', 'For pacing, captions, storytelling and format-specific visual rules, use a channel’s formats. Review the scene plan before applying those rules to a video.', h(`<a class="btn small" href="${channelHref('_', 'formats')}">Open formats</a>`)),
         row('Background', 'Behind the picture in the picture-in-picture, Boxed and Split layouts.', sw),
         row('Picture-in-picture frame', '', seg([['rounded', 'Rounded'], ['circle', 'Circle'], ['frame', 'Whole frame']], l.pip, (x) => save('look', { pip: x }).then(redraw)))),
-      group('Profile brand',
-        row('Colours, fonts and brand assets', 'Choose these in Brand profiles. New video loads the selected profile’s approved brand; these global video controls do not replace it.', h('<a class="btn small" href="#/settings/brand">Open Brand profiles</a>'))),
+      group('Channel brand',
+        row('Colours, fonts and brand assets', 'Set these in each channel’s Brand tab. New video loads the channel’s approved brand; these global video controls do not replace it.', h(`<a class="btn small" href="${channelHref('_', 'brand')}">Open the Brand tab</a>`))),
     );
   },
 };
@@ -641,10 +645,20 @@ const DRAW = {
 DRAW.updates = (V, save) => updatesSection(V, save, { row, group, toggle });
 FIND.updates = 'version git github update restart starter log in login startup autostart open when i log in';
 
-// Settings → Brand (web/brand.js): the Setup answers, the brand files and colours, BRAND.md / STYLE.md and the skills.
-// "Write my style" goes to the Video Octopus assistant, in the drawer.
-DRAW.brand = () => profileSettings({makeChat:CTX.makeChat});
-DRAW.instructions = () => instructionSettings();
+// Settings → Storage & backups and Usage (Direction A): the former Storage and Dashboard pages. Brand and
+// Instructions moved to each channel's Brand tab and All channels › Instructions (web/channel.js).
+DRAW.storage = () => {
+  const box = h('<div class="set-embed"><p class="sub">Loading…</p></div>');
+  renderDatabaseRecovery(box).catch((e) => { box.replaceChildren(h(`<p class="notice">${esc(e.message)}</p>`)); });
+  return box;
+};
+DRAW.usage = () => {
+  const box = h('<div class="set-embed"></div>');
+  renderDashboard(box, { recordingsDir: tilde(CTX.status?.()?.recordingsDir || ''), embedded: true });
+  return box;
+};
+FIND.storage = 'backup restore database sqlite skill files disk';
+FIND.usage = 'dashboard statistics stats made videos hours';
 
 // ---------- the Video Octopus assistant: an app-level chat (id "_studio"), same Claude Code login, own session ----------
 // `id` another chat instead: the drawer's "This project" shows a project's own chat (the same conversation as inside

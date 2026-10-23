@@ -10,10 +10,14 @@ const TIME = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-di
 const when = (t) => `${DAY.format(t)} ${TIME.format(t)}`;
 const hours = (s) => (s >= 3600 ? `${(s / 3600).toFixed(1)} h` : `${Math.round(s / 60)} min`);
 
-export async function renderDashboard(main, { recordingsDir = '' } = {}) {
-  main.replaceChildren(h(`<div class="home-wrap wide dash">
-    <div class="home-head"><div class="hh-title"><h1>Dashboard</h1>
-      <div class="sub">What you've made with Video Octopus, counted from your own folders and a usage log that stays on this computer.</div></div>
+// `embedded`: Settings › Usage, whose section head supplies the title.
+export async function renderDashboard(main, { recordingsDir = '', embedded = false } = {}) {
+  const title = embedded
+    ? '<div class="hh-title"></div>'
+    : `<div class="hh-title"><h1>Dashboard</h1>
+      <div class="sub">What you've made with Video Octopus, counted from your own folders and a usage log that stays on this computer.</div></div>`;
+  main.replaceChildren(h(`<div class="${embedded ? 'dash dash-embedded' : 'home-wrap wide dash'}">
+    <div class="home-head">${title}
       <div class="seg dash-range" role="group" aria-label="Range">${RANGES.map(([k, l]) => `<button type="button" data-r="${k}"${k === range ? ' class="on" aria-pressed="true"' : ' aria-pressed="false"'}>${l}</button>`).join('')}</div>
       <span class="dash-local" title="The usage log is a file in Video Octopus's local folder. Nothing is sent anywhere."><i></i>Stays on this computer</span>
     </div>

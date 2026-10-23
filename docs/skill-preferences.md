@@ -1,8 +1,8 @@
 # Creator preferences
 
 The technical skills define commands, files, timing and review rules. Supported creative
-options use the `preferences/skills.json` schema below. In the SQLite workflow, Settings → Instructions owns this document and shared notes;
-Settings → Brand profiles owns profile identity and creative brand guidance.
+options use the `preferences/skills.json` schema below. In the SQLite workflow, My style → All channels → Instructions owns this document and shared notes;
+each channel's Brand tab owns its identity and creative brand guidance.
 First migration imports known instruction files once, preserving originals. External
 file edits require explicit import in Instructions. See [storage](learning-and-storage.md).
 

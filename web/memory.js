@@ -1,7 +1,15 @@
 import { $, esc, h, api, toast, confirmBox } from './ui.js';
+import { channelHref } from './nav.js';
 const E = '/api/memory';
 const options = (list, selected) => list.map(s => `<option value="${esc(s.id)}"${s.id === selected ? ' selected' : ''}>${esc(s.name)}</option>`).join('');
 const HINT = 'Only about one video? Choose Not a rule; it stays in that video’s chat. About one format? Add it to the format’s rules instead.';
+// The hint links "the format’s rules" to the channel's Formats tab when the channel is known.
+let hintChannel = null;
+const hintHTML = () => hintChannel
+  ? esc(HINT).replace('the format’s rules', `<a href="${channelHref(hintChannel, 'formats')}">the format’s rules</a>`)
+  : esc(HINT);
+// Video names for "You said, in …" (project ids otherwise).
+let projectNames = new Map();
 const day = iso => new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
 
 // The two levels a creator sees. `levels` are {scope|id, name} pairs; the channel one reads "This channel".
@@ -12,7 +20,7 @@ function keepFor(name, levels, selected) {
     const id = levelId(level), global = id === 'global';
     return `<label class="memory-keep-choice"><input type="radio" name="${esc(name)}" value="${esc(id)}"${id === selected ? ' checked' : ''}><span><b>${global ? 'Everything' : 'This channel'}</b><small>${global ? 'All channels' : esc(level.name)}</small></span></label>`;
   }).join('');
-  return `<fieldset class="memory-keep"><legend>Keep for</legend><div class="memory-keep-choices">${choices}</div><p class="sub memory-hint">${HINT}</p></fieldset>`;
+  return `<fieldset class="memory-keep"><legend>Keep for</legend><div class="memory-keep-choices">${choices}</div><p class="sub memory-hint">${hintHTML()}</p></fieldset>`;
 }
 // The level chip on a memory: its channel (accent tint), Everything (solid), or where an older one came from.
 function levelChip(m, names) {
@@ -26,7 +34,7 @@ function suggestedLevel(m) {
   if (scopes.includes(m.scope)) return m.scope;
   return scopes.find(s => s.startsWith('profile:')) || scopes[0];
 }
-const chatLink = q => q.project ? `<a href="#/p/${encodeURIComponent(q.project)}">${esc(q.project)}</a>` : esc(q.chat);
+const chatLink = q => q.project ? `<a href="#/p/${encodeURIComponent(q.project)}">${esc(projectNames.get(q.project) || q.project)}</a>` : esc(q.chat);
 
 function editor(title, scopes, selected, initial, save, { keep = false } = {}) {
   const level = keep ? keepFor('scope', scopes, selected) : `<label>Applies to<select name="scope">${options(scopes, selected)}</select></label>`;
@@ -56,18 +64,49 @@ export async function reviewLessons(chat, send) {
     } catch (e) { toast(e.message); return false; }
   } });
 }
-export async function renderMemories(root) {
-  let live = true, data, scope = new URLSearchParams(location.hash.split('?')[1]).get('scope') || 'global', tab = 'pending';
-  const initialChat = new URLSearchParams(location.hash.split('?')[1]).get('chat');
-  if (initialChat) scope = (await api(`${E}?chat=${encodeURIComponent(initialChat)}`)).scope;
+// The Memories pages. `profileId`: a channel hub's Memories tab (the channel's level, plus the Everything memories
+// it inherits, read-only). `scope: 'global'`: All channels › Memories. Neither: the scope picker, as before.
+export async function renderMemories(root, { profileId = null, profileName = '', scope: fixedScope = null } = {}) {
+  const query = new URLSearchParams(location.hash.split('?')[1]);
+  let live = true, data, inherited = [], tab = 'pending';
+  let scope = profileId ? `profile:${profileId}` : fixedScope || query.get('scope') || 'global';
+  const embedded = Boolean(profileId || fixedScope);
+  let onlyChat = query.get('chat');
+  hintChannel = profileId;
+  if (onlyChat && !embedded) scope = (await api(`${E}?chat=${encodeURIComponent(onlyChat)}`)).scope;
+  if (!embedded) onlyChat = null;
+  projectNames = new Map((await api('/api/projects').catch(() => [])).map(p => [p.id, p.name]));
+  const levelName = () => profileId ? profileName || 'this channel' : 'Everything';
   const reload = async () => {
-    data = await api(`${E}?scope=${encodeURIComponent(scope)}`);
+    data = await api(profileId ? `${E}?profile=${encodeURIComponent(profileId)}` : `${E}?scope=${encodeURIComponent(scope)}`);
+    // A channel also uses every approved Everything memory; they are shown read-only here and edited in All channels.
+    inherited = profileId ? (await api(`${E}?scope=global`)).entries.filter(m => m.status === 'approved' && m.scope === 'global') : [];
     if (!live) return;
     const names = new Map(data.scopes.map(s => [s.id, s.name]));
-    root.replaceChildren(h(`<section class="memory-page"><div class="home-head"><h1>Memories</h1><button class="btn primary" data-add>+ Memory</button></div><p>Preferences that carry into your next video. Review proposed lessons, choose where each one applies, and keep only what helps.</p><p class="sub">Two levels: <b>Everything</b> reaches every channel and video; <b>This channel</b> reaches every video in that channel and wins when both cover the same topic. A format’s style belongs in its rules, and notes about one video stay in that video’s chat. Your current request and pinned project setup take precedence.</p><label>Applies to<select data-scope>${options(data.scopes, scope)}</select></label><div class="learn-actions" role="group" aria-label="Memory views"><button class="btn ${tab === 'pending' ? 'primary' : ''}" data-tab="pending">Review inbox (${data.entries.filter(m => m.status === 'pending').length})</button><button class="btn ${tab === 'approved' ? 'primary' : ''}" data-tab="approved">Approved</button><button class="btn ${tab === 'history' ? 'primary' : ''}" data-tab="history">History</button><button class="btn ${tab === 'search' ? 'primary' : ''}" data-tab="search">Search chat history</button></div><div data-list></div><details><summary>Storage, forgetting and backups</summary><p>SQLite owns these memories and newly recorded app chat messages. A small generated MEMORY.md gives each agent the approved context. This does not train the model or read its private memory.</p><p>Forget removes a memory and its revision text from the active catalog and blocks its evidence from proposing it again. Forgetting a history result also removes that message from the search catalog. Existing app/provider transcripts and older backups can still contain the text. Start a new chat to leave an already-loaded memory behind. Studio restores preserve current forget markers.</p><p>Automatic candidates quote explicit corrections before compaction and after a successful export. Review lessons asks your chosen agent for a broader recap, including at project completion. Both wait for approval.</p></details></section>`));
-    $('[data-scope]', root).onchange = e => { scope = e.target.value; reload().catch(e => toast(e.message)); };
+    const pending = data.entries.filter(m => m.status === 'pending');
+    const tabs = [
+      ['pending', `Review inbox`, pending.length],
+      ['approved', profileId ? `In use for ${levelName()}` : 'Approved', null],
+      ['history', 'History', null],
+      ['search', 'Search chat history', null],
+    ];
+    const tabBar = `<div class="seg mem-tabs scroll-row" role="group" aria-label="Memory views">${tabs.map(([key, label, n]) => `<button type="button" data-tab="${key}" class="${tab === key ? 'on' : ''}" aria-pressed="${tab === key}">${esc(label)}${n ? ` <span class="pill accent">${n}</span>` : n === 0 ? ' <span class="seg-n">0</span>' : ''}</button>`).join('')}</div>`;
+    const intro = profileId
+      ? `<p class="sub">Lessons for every video in ${esc(levelName())}. They win over an <a href="#/channels/memories">Everything</a> memory on the same topic. A format’s style belongs in <a href="${channelHref(profileId, 'formats')}">its rules</a>; notes about one video stay in that video’s chat.</p>`
+      : `<p class="sub">Two levels: <b>Everything</b> reaches every channel and video; <b>This channel</b> reaches every video in that channel and wins when both cover the same topic. A format’s style belongs in its rules, and notes about one video stay in that video’s chat. Your current request and pinned project setup take precedence.</p>`;
+    const head = embedded
+      ? `<div class="tab-head"><div>${intro}</div><button class="btn primary" data-add>+ Memory</button></div>`
+      : `<div class="home-head"><h1>Memories</h1><button class="btn primary" data-add>+ Memory</button></div><p>Preferences that carry into your next video. Review proposed lessons, choose where each one applies, and keep only what helps.</p>${intro}<label>Applies to<select data-scope>${options(data.scopes, scope)}</select></label>`;
+    const chatNote = onlyChat && tab === 'pending' ? `<p class="notice mem-chat-note">Showing the lessons proposed in one chat. <button type="button" class="link-btn" data-all-chats>Show the whole inbox</button></p>` : '';
+    root.replaceChildren(h(`<section class="memory-page${embedded ? ' embedded' : ''}">${head}${tabBar}${chatNote}<div data-list></div><details><summary>Storage, forgetting and backups</summary><p>SQLite owns these memories and newly recorded app chat messages. A small generated MEMORY.md gives each agent the approved context. This does not train the model or read its private memory.</p><p>Forget removes a memory and its revision text from the active catalog and blocks its evidence from proposing it again. Forgetting a history result also removes that message from the search catalog. Existing app/provider transcripts and older backups can still contain the text. Start a new chat to leave an already-loaded memory behind. Studio restores preserve current forget markers.</p><p>Automatic candidates quote explicit corrections before compaction and after a successful export. Review lessons asks your chosen agent for a broader recap, including at project completion. Both wait for approval.</p></details></section>`));
+    $('[data-all-chats]', root)?.addEventListener('click', () => { onlyChat = null; reload().catch(e => toast(e.message)); });
+    $('[data-scope]', root)?.addEventListener('change', e => { scope = e.target.value; reload().catch(e => toast(e.message)); });
     root.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { tab = b.dataset.tab; reload().catch(e => toast(e.message)); });
-    $('[data-add]', root).onclick = async () => { if (await editor('New memory', data.scopes, scope, {}, value => api(`${E}/propose`, value))) await reload(); };
+    $('[data-add]', root).onclick = async () => {
+      // In a channel: This channel (default) or Everything, as the Keep for choice.
+      const levels = profileId ? data.scopes.filter(x => x.id === 'global' || x.id === scope) : data.scopes;
+      if (await editor('New memory', levels, scope, {}, value => api(`${E}/propose`, value), { keep: Boolean(profileId) })) await reload();
+    };
     const list = $('[data-list]', root);
     if (tab === 'search') {
       list.append(h('<form class="learn-actions"><input aria-label="Search chat history" name="q" placeholder="Find an earlier correction or decision" required><button class="btn">Search</button></form><div></div>'));
@@ -91,12 +130,28 @@ export async function renderMemories(root) {
       return;
     }
     const act = async payload => { await api(`${E}/action`, payload); await reload(); };
-    const rows = data.entries.filter(m => tab === 'history' ? !['pending', 'approved'].includes(m.status) : m.status === tab);
-    if (!rows.length) list.append(h(`<p class="empty">${tab === 'pending' ? 'No proposed memories here yet. Use Remember this beside a chat message or Review lessons at a stopping point.' : 'No memories in this view.'}</p>`));
+    const rows = data.entries
+      .filter(m => tab === 'history' ? !['pending', 'approved'].includes(m.status) : m.status === tab)
+      .filter(m => tab !== 'pending' || !onlyChat || m.chat === onlyChat);
+    const emptyText = tab === 'pending'
+      ? 'Nothing to review. When you correct your agent in a chat, it may suggest a lesson here; nothing is used until you approve it.'
+      : tab === 'approved' && profileId ? `No memories for ${levelName()} yet.` : 'No memories in this view.';
+    if (!rows.length) {
+      const empty = h(`<div class="vo-card mem-empty"><p>${esc(emptyText)}</p>${tab === 'pending' ? '<button type="button" class="btn" data-add-empty>+ Memory</button>' : ''}</div>`);
+      $('[data-add-empty]', empty)?.addEventListener('click', () => $('[data-add]', root).click());
+      list.append(empty);
+    }
     for (const m of rows) {
       const card = m.status === 'pending' ? pendingCard(m, names, act) : m.status === 'approved' ? approvedCard(m, names, act) : pastCard(m, names);
       wireCommon(card, m, names, act);
       list.append(card);
+    }
+    // Everything memories a channel inherits: read-only here, with a link to where they are edited.
+    if (tab === 'approved' && inherited.length) {
+      list.append(h(`<h3 class="mem-sub">From Everything <span class="sub">· used by every channel</span></h3>`));
+      for (const m of inherited) {
+        list.append(h(`<article class="memory-card inherited"><div class="memory-head"><p class="memory-text">${esc(m.text)}</p><a class="memory-level everything" href="#/channels/memories" title="Edit in All channels › Memories">Everything</a></div><p class="sub">${esc(m.key)}</p></article>`));
+      }
     }
   };
   // Pending: the lesson, the creator's own words with a link to the chat, then the level to keep it at.

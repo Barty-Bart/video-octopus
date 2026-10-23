@@ -27,7 +27,7 @@ import { buildSteps, renderKind } from './built.mjs';
 import { appRoute } from './setup.mjs';
 import { onboardingRoute, ffmpegReady, setupBusy } from './onboarding.mjs';
 import { createStudio, defaultStudioPath } from './starter.mjs';
-import { profileRoute, profileBusy, killProfileResearch, createConfiguredProject, pinnedContext, profilePalette, projectIdHasRows, hasPinnedContext } from './profiles.mjs';
+import { profileRoute, profileBusy, killProfileResearch, createConfiguredProject, pinnedContext, profilePalette, projectIdHasRows, hasPinnedContext, channelSummaries, withProjectChannels } from './profiles.mjs';
 import { memoryRoute } from './memory.mjs';
 import { learningRoute, learningProjectContext, projectLearning, guardLearnedStep, learningBusy, killLearning } from './learning.mjs';
 import { assistantRoute, killAssistant, assistantBusy } from './assistant.mjs';
@@ -417,7 +417,9 @@ async function route(req, res) {
   if (p === '/api/app/counts') {
     let inbox = 0; try { inbox = settings().studio ? inboxItems().length : 0; } catch {}
     const skillUpdates = settings().studio ? managedSkillsView().pending : 0;
-    return send(res, 200, { schedules: readSchedules().filter((x) => x.enabled).length, inbox, skillUpdates, update: await updateCount() });
+    // channels: the sidebar's My style rows (Direction A), read-only from the studio database.
+    const channels = settings().studio ? channelSummaries() : [];
+    return send(res, 200, { schedules: readSchedules().filter((x) => x.enabled).length, inbox, skillUpdates, channels, update: await updateCount() });
   }
   // Settings → Updates: the app's update (git), Restart, starter files, Open Video Octopus when I log in (server/updates.mjs).
   if (await updatesRoute(req, res, url, { send, body, restart: () => shutdown(RESTART_CODE) })) return;
@@ -483,7 +485,7 @@ async function route(req, res) {
     if (patch.permissionMode || patch.model !== undefined) for (const c of chats.values()) c.restart();
     return send(res, 200, s);
   }
-  if (p === '/api/projects' && req.method === 'GET') return send(res, 200, listProjects());
+  if (p === '/api/projects' && req.method === 'GET') return send(res, 200, withProjectChannels(listProjects()));
   if (p === '/api/projects' && req.method === 'POST') {
     const b = await body(req);
     if (!b.name?.trim()) return send(res, 400, { error: 'Give the project a name.' });

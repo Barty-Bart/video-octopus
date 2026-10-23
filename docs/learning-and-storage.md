@@ -273,13 +273,20 @@ copy a format to reuse its complete approved package. Source media stay in place
 
 ## Brand profiles, instructions and New video
 
-**Brand profiles** owns identity, audience, voice, colours, fonts, guidance and uploaded
+Since the Direction A shell (23 Oct 2026) a profile is shown as a **channel** under **My style** in the
+sidebar. Each channel's hub (`#/channel/<id>`) has **Formats**, **Brand** and **Memories** tabs;
+**All channels** (`#/channels`) lists every channel, including archived ones, and holds the shared
+**Instructions** and the Everything memories. Old addresses (`#/learning`, `#/memories`,
+`#/settings/brand`, `#/settings/instructions`, `#/storage`, `#/dashboard`) redirect through
+`legacyRoute()` in `web/nav.js`. Storage & backups and Usage are Settings sections.
+
+The channel's **Brand** tab owns identity, audience, voice, colours, fonts, guidance and uploaded
 brand assets. A profile can have several learned formats. Each format can select
-additional enabled personal skills in Video formats → Skills → Choose skills; enabled compatible
+additional enabled personal skills from the format's options (Personal skills for this format); enabled compatible
 core skills are included automatically. The approved learned package is selected
 separately and supplies its rules, workflow and reusable assets.
 
-Setup and Settings share the same optional profile onboarding. Enter a brand manually
+Setup and the channel's Brand tab share the same optional profile onboarding. Enter a brand manually
 or give a public website to a dedicated research session using the configured agent.
 Review the proposed fields and source observations, edit them, then approve. Approval
 writes a new immutable brand version only to that profile. Missing browsing tools must
@@ -309,9 +316,9 @@ format skill copy in `.octopus/context/.claude/skills/`. Brand palettes are
 available to the editor; instructions/format guidance inform the agent's planning.
 This does not automatically render or redesign a video. Explicit project choices
 still win. **Video defaults** retains background and framing controls; brand colours
-and font guidance now live in Brand profiles.
+and font guidance now live in each channel's Brand tab.
 
-Later profile edits apply to new videos, preserving existing project pins. Settings →
+Later profile edits apply to new videos, preserving existing project pins. All channels →
 Instructions says so and counts the videos on an earlier instruction version. A
 deliberate learned-format upgrade retains the project's brand and instructions while
 selecting the upgraded format and its current skills. Upgrades stay within the video's

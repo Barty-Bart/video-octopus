@@ -1,3 +1,14 @@
+# v0.1.0-beta.11
+
+- **New layout.** A grouped sidebar: New video; Make (Projects, Recordings); My style (All channels and one row per channel, with a dot when memories await review); Assets (Library); Automation (Skills, Scheduled); Settings. On narrow windows the sidebar becomes a drawer.
+- **Channel hub.** Each channel has Formats (its formats, format home, skill and Talk to this format), Brand (its brand profile) and Memories tabs. All channels lists every channel, the studio instructions and Everything memories. Projects can be filtered by channel and show their channel and format; New video can start from a channel.
+- **Skills** is a list with on/off switches and a detail panel. **Settings** gains Usage (formerly Dashboard) and Storage & backups; Brand profiles and Instructions moved to the channel hub and All channels.
+- **Old links keep working.** Earlier addresses for Video formats, Memories, Storage, Dashboard and Settings › Brand/Instructions redirect to their new places.
+- **Memory levels.** Memories have two visible levels, This channel and Everything; the channel wins on the same topic. Lessons the agent proposes go to the chat's channel by default, and you choose "Keep for" when approving or in Remember this. Older video- or format-level memories keep working and can be moved to their channel. A channel's memories never reach another channel.
+- Styling of the new screens uses theme tokens only (checked by a test) and works across all looks.
+
+Verified with 282 unit tests on Node 24.22.1 and 22.22.1, the format-skill and learning runtimes, route-redirect tests, and disposable browser checks at desktop, 980 px and 375 px in several looks. Not verified: brand research inside the Brand tab, real-provider runs, Windows UI. This is a source update on main; the downloadable tagged prerelease remains separate.
+
 # v0.1.0-beta.10
 
 - **Skill files.** A format's skill can hold real files: assets (backgrounds, icons, images, motion files) and knowledge (product sheets, specs, price lists) with an index in SKILL.md. Files live once in a content-addressed store in the studio (`.studio/files/`); SQLite keeps their records; skill folders get copy-on-write copies. Up to 300 files per skill, 1 GB each. A Files tab stages additions and removals into the next reviewed version. Storage lists unused files, deletes them on request (never one a version uses) and backs the file store up to a folder.
