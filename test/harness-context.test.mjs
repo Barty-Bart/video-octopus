@@ -373,14 +373,17 @@ async function worker(engine, root) {
   }
 }
 
+// GitHub's Windows runners are much slower at spawning processes; give each engine worker more time there.
+const WORKER_MS = process.platform === 'win32' ? 120000 : 35000;
+
 if (process.argv[2] === '--harness-worker') {
   worker(process.argv[3], process.argv[4]).then((result) => console.log(JSON.stringify(result)), (error) => { console.error(error.stack); process.exitCode = 1; });
 } else {
-  for (const engine of ['claude', 'codex', 'pi']) test(`${engine}: real adapter context and skill lifecycle over fake CLI`, { timeout: 45000 }, async (t) => {
+  for (const engine of ['claude', 'codex', 'pi']) test(`${engine}: real adapter context and skill lifecycle over fake CLI`, { timeout: WORKER_MS + 10000 }, async (t) => {
     const f = fixture(engine);
     try {
       const { stdout, stderr } = await promisify(childProcess.execFile)(process.execPath, [SELF, '--harness-worker', engine, f.root],
-        { cwd: f.app, env: f.env, timeout: 35000, maxBuffer: 2 * 1024 * 1024 });
+        { cwd: f.app, env: f.env, timeout: WORKER_MS, maxBuffer: 2 * 1024 * 1024 });
       // Node 22 (the oldest supported) still marks node:sqlite experimental and says so once on stderr; nothing else may be there.
       assert.equal(stderr.replace(/^\(node:\d+\) ExperimentalWarning: SQLite is an experimental feature.*\n(\(Use `node --trace-warnings.*\n)?/m, ''), '');
       const result = JSON.parse(stdout.trim());
