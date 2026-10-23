@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const FILES = ['web/shell.css', 'web/memory.css', 'web/learning.css'];
+const FILES = ['web/shell.css', 'web/memory.css', 'web/learning.css', 'web/packaging.css'];
 const ALLOWED = []; // no exceptions
 
 export function hexColours(css) {

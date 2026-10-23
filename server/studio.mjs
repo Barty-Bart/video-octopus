@@ -351,10 +351,11 @@ function duration(dir, f) {
 }
 
 // ---- pipeline ----
-// The five stages a video goes through, always the same (core/pipelines.json "stages": name, title, what for the
+// The stages a video goes through, always the same (core/pipelines.json "stages": name, title, what for the
 // first-time help). Every step names one (`stage`); a studio's own step without one joins the stage before it.
-export const STAGE_NAMES = ['Record', 'Cut', 'Plan', 'Build', 'Polish'];
-const TABS = new Set(['canvas', 'scenes', 'cut', 'renders', 'post']);
+// Package (thumbnails, optional, never blocking) comes first; a format without a package step doesn't show it.
+export const STAGE_NAMES = ['Package', 'Record', 'Cut', 'Plan', 'Build', 'Polish'];
+const TABS = new Set(['packaging', 'canvas', 'scenes', 'cut', 'renders', 'post']);
 const two = (t) => { t = Math.max(0, Math.round(t || 0)); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; };
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 // "your intro, main body, sponsor read and outro": a format's block names, for a step's {blocks}.
@@ -404,10 +405,12 @@ export function pipelineStatus(dir, type, opts = {}) {
   const current = next || steps.find((s) => !s.done && !s.skipped)?.id || null;
   const cur = steps.find((s) => s.id === current);
   const words = new Map((Array.isArray(p.stages) ? p.stages : []).map((x) => [x.name, x]));
-  const stages = STAGE_NAMES.map((name) => {
+  const stages = STAGE_NAMES.filter((name) => name !== 'Package' || steps.some((s) => s.stage === name)).map((name) => {
     const ss = steps.filter((s) => s.stage === name);
     return { name, title: words.get(name)?.title || '', what: words.get(name)?.what || '', steps: ss.map((s) => s.id),
-      done: ss.length > 0 && ss.every((s) => s.done || s.optional), current: cur?.stage === name };
+      // A stage of optional steps only (Package) is done when they are done or skipped, not by being optional.
+      done: ss.length > 0 && ss.every((s) => s.done || s.optional) && (ss.some((s) => !s.optional) || ss.every((s) => s.done || s.skipped)),
+      current: cur?.stage === name };
   });
   // Single steps that stay reachable from the rail's ⋯ menu (Clean up runs them in one go).
   prevStage = 'Cut';
@@ -477,6 +480,7 @@ function keptItems(dir, rel) {
 }
 const RENDERED = { intro: 'Intro', 'edit-short': 'Short', 'edit-explainer': 'Explainer' };
 const DONE_LINES = {
+  package: (dir) => { const w = readJSON(join(dir, 'packaging/packaging.json'), {})?.winners || []; return `Main thumbnail chosen${w.length > 1 ? `, ${w.length} winners` : ''}`; },
   import: (dir) => { const r = roles(dir); const d = r.main ? probe(dir, r.main)?.duration : 0; return d ? `Take added: ${two(d)}` : 'Take added'; },
   prepare: (dir) => { const { joins, look } = joinCounts(dir); return `${plural(cutCount(dir), 'cut')} made, ${plural(joins, 'join')} checked, ${lookText(look)}`; },
   transcribe: (dir) => { const w = readJSON(join(dir, existsSync(join(dir, 'work/tr/words.json')) ? 'work/tr/words.json' : 'work/words.json'), []); return Array.isArray(w) && w.length ? `${plural(w.length, 'word')} transcribed` : 'Transcript written'; },

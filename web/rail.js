@@ -27,7 +27,7 @@ const ICON = {
 };
 // Where Show me goes, in words, by its target.
 const SHOW_WHERE = { sections: 'on the timeline', zooms: 'on the timeline', picture: 'on the canvas', cut: 'in the Cut tab', lock: 'in the Cut tab', scenes: 'in Scenes', newest: 'in Renders', post: 'in the Post tab' };
-const showLabel = (show) => `Show me ${SHOW_WHERE[show?.target] || { canvas: 'on the canvas', cut: 'in the Cut tab', scenes: 'in Scenes', renders: 'in Renders', post: 'in the Post tab' }[show?.tab] || 'where'}`;
+const showLabel = (show) => `Show me ${SHOW_WHERE[show?.target] || { packaging: 'in Packaging', canvas: 'on the canvas', cut: 'in the Cut tab', scenes: 'in Scenes', renders: 'in Renders', post: 'in the Post tab' }[show?.tab] || 'where'}`;
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 // hooks: runStep(step), setTab(tab), applyNotes() (Save changes → Claude), openCutList() (what Clean up left for you),
@@ -607,7 +607,7 @@ export function makeRail({ root, id, getP, hooks }) {
         <span class="vh">${c === 'done' ? 'Done.' : c === 'next' ? 'Next.' : ''}</span></div>`;
     }).join('');
     const d = h(`<div class="dialog rail-first" role="dialog" aria-modal="true" aria-labelledby="rfT" aria-describedby="rfD">
-      <div class="ft-head"><h2 id="rfT">How a video gets made here</h2><p id="rfD">Five stages, left to right. The step that’s next is lit at the top and waits just above the message box: press Run and Claude does the work in the chat on the left, then tells you what changed and where.</p></div>
+      <div class="ft-head"><h2 id="rfT">How a video gets made here</h2><p id="rfD">The stages, left to right (Package is optional: do it now, later or never). The step that’s next is lit at the top and waits just above the message box: press Run and Claude does the work in the chat on the left, then tells you what changed and where.</p></div>
       <div class="ft-row">${cards}</div>
       <div class="ft-acts"><span class="ft-note">${again ? 'The' : 'This shows once. The'} <span class="ft-q">${ICON.help}</span> next to the stages brings ${again ? 'this back any time' : 'it back'}.</span><span class="gap"></span>
         <button type="button" class="btn ft-skip" data-a="ok">Got it</button>${cur ? `<button type="button" class="nc-run" data-a="start">${ICON.play}Start: ${esc(cur.name)}</button>` : ''}</div></div>`);

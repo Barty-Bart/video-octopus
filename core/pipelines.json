@@ -1,7 +1,8 @@
 {
-  "_about": "The formats a project can be and the steps each goes through. A format is a template: its blocks (the row on the section band, kept in work/blocks.json), its steps, its frame shape and, for Shorts, its styles. App steps (kind app) open a part of Video Octopus instead of asking Claude: import, open-cut, open-scenes. The app lights the first step that isn't done. A step is done when one of its files exists in the project, its worklog line is in WORKLOG.md, (json) a key is set in a JSON file, or (kept) a zooms or shots file has an item that isn't a proposal. Claude steps send the skill's slash command plus `ask` into the project's chat (`motion`: \"plan\" or \"build\" adds a line on the studio's motion-graphics skills, or what to do without any: server/skills-gh.mjs motionNote); `brief` steps get their text from Video Octopus (server/blocks.mjs). {source} is replaced by the project's source files, {style} by the Short's style. `more` lists single steps that stay reachable from the rail's ⋯ menu. Old format ids stay readable through `aliases` (project.json files are never rewritten). A studio adds its own formats and Short styles in <studio>/.studio/formats.json, merged over these (server/studio.mjs mergeFormats): keep creator-specific styles and skills there, not here. What a creator reads about a step comes from the step itself, one source for the stage chips, the Next and Done cards, the empty states and the first-time help: `stage` (one of the five in `stages`, which never change: Record, Cut, Plan, Build, Polish), `name` (the plain name the creator sees; `label` stays for the chat, old logs and the prompts), `what` (one sentence: what it does and who does it; {blocks} becomes the format's own block names), `where` (where its result shows) and `show` {tab: canvas|scenes|cut|renders|post, target} (what Show me points at). The line a finished step shows is worked out from its files on the server (server/studio.mjs doneLine). A studio's own step without these fields shows its label and a plain line.",
+  "_about": "The formats a project can be and the steps each goes through. A format is a template: its blocks (the row on the section band, kept in work/blocks.json), its steps, its frame shape and, for Shorts, its styles. App steps (kind app) open a part of Video Octopus instead of asking Claude: import, open-cut, open-scenes, open-packaging. The app lights the first step that isn't done. A step is done when one of its files exists in the project, its worklog line is in WORKLOG.md, (json) a key is set in a JSON file, or (kept) a zooms or shots file has an item that isn't a proposal. Claude steps send the skill's slash command plus `ask` into the project's chat (`motion`: \"plan\" or \"build\" adds a line on the studio's motion-graphics skills, or what to do without any: server/skills-gh.mjs motionNote); `brief` steps get their text from Video Octopus (server/blocks.mjs). {source} is replaced by the project's source files, {style} by the Short's style. `more` lists single steps that stay reachable from the rail's ⋯ menu. Old format ids stay readable through `aliases` (project.json files are never rewritten). A studio adds its own formats and Short styles in <studio>/.studio/formats.json, merged over these (server/studio.mjs mergeFormats): keep creator-specific styles and skills there, not here. What a creator reads about a step comes from the step itself, one source for the stage chips, the Next and Done cards, the empty states and the first-time help: `stage` (one of the six in `stages`, which never change: Package, Record, Cut, Plan, Build, Polish; Package is optional and never blocks), `name` (the plain name the creator sees; `label` stays for the chat, old logs and the prompts), `what` (one sentence: what it does and who does it; {blocks} becomes the format's own block names), `where` (where its result shows) and `show` {tab: packaging|canvas|scenes|cut|renders|post, target} (what Show me points at). The line a finished step shows is worked out from its files on the server (server/studio.mjs doneLine). A studio's own step without these fields shows its label and a plain line.",
   "aliases": { "long": "tutorial", "reel": "short" },
   "stages": [
+    { "name": "Package", "title": "Thumbnail first, if you like", "what": "Ideas for the thumbnail in the Packaging tab, made with Codex. Optional: do it now, later, or never." },
     { "name": "Record", "title": "Your take", "what": "Record yourself, or bring a video in." },
     { "name": "Cut", "title": "Claude tidies it", "what": "Cleans up the ums and pauses and splits the video into sections. You can fix any cut, then lock it." },
     { "name": "Plan", "title": "Claude plans the scenes", "what": "For each line, what is on screen. They show up in the Scenes tab." },
@@ -17,6 +18,17 @@
     "custom": "Custom"
   },
   "shared": {
+    "package": {
+      "label": "Package",
+      "stage": "Package", "name": "Package",
+      "what": "Thumbnail ideas with Codex in the Packaging tab: generate six, refine one, pick the main thumbnail.",
+      "where": "the Packaging tab",
+      "show": { "tab": "packaging", "target": "packaging" },
+      "kind": "app",
+      "action": "open-packaging",
+      "optional": true,
+      "done": { "json": ["packaging/packaging.json", "main"] }
+    },
     "import": {
       "label": "Record or import",
       "stage": "Record", "name": "Record",
@@ -124,7 +136,7 @@
       ],
       "more": ["transcribe", "rough-cut", "join-check"],
       "steps": [
-        "import", "prepare", "sections", "cut-editor", "lock",
+        "package", "import", "prepare", "sections", "cut-editor", "lock",
         {
           "id": "plan",
           "label": "Plan scenes",
@@ -200,7 +212,7 @@
         "camera": false
       },
       "steps": [
-        "import",
+        "package", "import",
         "prepare",
         "sections",
         "cut-editor",
@@ -281,7 +293,7 @@
       ],
       "more": ["transcribe", "rough-cut", "join-check"],
       "steps": [
-        "import", "prepare", "sections", "cut-editor", "lock",
+        "package", "import", "prepare", "sections", "cut-editor", "lock",
         {
           "id": "plan",
           "label": "Plan scenes",
@@ -330,7 +342,7 @@
       ],
       "more": ["transcribe", "rough-cut", "join-check"],
       "steps": [
-        "import", "prepare", "sections", "cut-editor", "lock",
+        "package", "import", "prepare", "sections", "cut-editor", "lock",
         {
           "id": "plan",
           "label": "Plan scenes",

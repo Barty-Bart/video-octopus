@@ -1,4 +1,5 @@
 import { $, esc, h, api, toast, confirmBox } from './ui.js';
+import { mountResources } from './resources.js';
 const field=(label,name,value='',rows=2)=>`<label>${label}<textarea name="${name}" rows="${rows}">${esc(value)}</textarea></label>`;
 const run=fn=>async e=>{const b=e?.currentTarget;if(b)b.disabled=true;try{await fn(e);}catch(err){toast(err.message);}finally{if(b)b.disabled=false;}};
 function brandFields(b={},assets=[]){return ['identity','audience','voice','fonts','notes'].map(k=>field(({identity:'Brand identity and offering',audience:'Audience',voice:'Voice and tone',fonts:'Fonts',notes:'Brand guidance and uncertainties'})[k],k,b[k]||'')).join('')+field('Colours (hex codes, separated by commas)','colors',(b.colors||[]).join(', '))+`<fieldset><legend>Assets included in this brand version</legend>${assets.map(a=>`<label class="learn-check"><input type="checkbox" name="asset-${a.id}"${b.assets?.includes(a.id)?' checked':''}>${esc(a.name)}</label>`).join('')||'<p class="sub">Upload logos, images or fonts below.</p>'}</fieldset>`;}
@@ -10,9 +11,9 @@ const when = (iso) => { const d = new Date(iso); return Number.isNaN(+d) ? Strin
 // and sidebar can follow.
 export function profileSettings({ makeChat, profileId, onBrandChange } = {}) {
  const root = h('<div class="brand-tab"><p class="sub">Loading the brand…</p></div>');
- let session = null, live = true, chat = null, events = null;
+ let session = null, live = true, chat = null, events = null, resources = null;
  const cleanup = () => { events?.close(); chat?.destroy?.(); events = null; chat = null; };
- root.teardown = () => { live = false; cleanup(); };
+ root.teardown = () => { live = false; cleanup(); resources?.teardown?.(); };
 
  async function paint() {
   cleanup();
@@ -27,7 +28,6 @@ export function profileSettings({ makeChat, profileId, onBrandChange } = {}) {
     <div class="learn-actions"><button type="button" class="btn primary" data-go="research">Research a website</button><button type="button" class="btn" data-go="brand">Fill it in yourself</button></div>
    </section>`;
   const history = p.history.map((v) => `<li><span>${esc(when(v.created))} · ${esc(v.reason)}</span><button type="button" class="btn small" data-brand-version="${v.id}">Review version</button></li>`).join('');
-  const assets = p.assets.map((a) => `<li><span>${esc(a.name)}</span><small class="sub">${Math.max(1, Math.round((a.size || 0) / 1024))} KB</small></li>`).join('');
   const sessions = p.research.map((r) => `<button type="button" class="btn small${r.id === session ? ' on' : ''}" data-research="${r.id}">${esc(r.url)} · ${esc(r.status)}</button>`).join('');
   root.innerHTML = `${lead}
    <section class="vo-card" id="brandCard" aria-labelledby="brandCardTitle">
@@ -35,9 +35,9 @@ export function profileSettings({ makeChat, profileId, onBrandChange } = {}) {
     <form id="brandForm" class="learn-page brand-form">${brandFields(brand, p.assets)}<div class="learn-actions"><button class="btn primary">Save brand version</button></div></form>
    </section>
    <section class="vo-card" aria-labelledby="assetsTitle">
-    <div class="vo-card-head"><h2 id="assetsTitle">Assets</h2><label class="btn small">Upload<input type="file" id="brandUpload" multiple hidden accept=".png,.jpg,.jpeg,.webp,.svg,.ttf,.otf,.woff,.woff2"></label></div>
-    <p class="sub">Images and fonts up to 20 MB each are stored in SQLite. After uploading, tick them in the brand above and save a brand version.</p>
-    ${assets ? `<ul class="brand-assets">${assets}</ul>` : '<p class="sub">No assets yet.</p>'}
+    <div class="vo-card-head"><h2 id="assetsTitle">Images &amp; files</h2></div>
+    <p class="sub">Images and fonts you add at “This channel” can also be ticked in the brand above (save a brand version to include them).</p>
+    <div id="brandResources" class="rs-panel"></div>
    </section>
    <section class="vo-card" id="researchCard" aria-labelledby="researchTitle">
     <div class="vo-card-head"><h2 id="researchTitle">Research this brand</h2></div>
@@ -59,23 +59,17 @@ export function profileSettings({ makeChat, profileId, onBrandChange } = {}) {
    toast('Brand saved. Existing projects keep their version.');
    await brandChanged();
   });
-  $('#brandUpload', root).onchange = run(async (e) => {
-   const draft = values($('#brandForm', root), brand.sources), added = [];
-   for (const file of [...e.target.files]) {
-    const r = await fetch(`/api/profiles/${profileId}/upload?name=${encodeURIComponent(file.name)}`, { method: 'POST', headers: { 'X-Studio': '1' }, body: file });
-    const j = await r.json();
-    if (!r.ok) throw Error(j.error);
-    added.push(j.id);
-   }
-   if (!live) return;
-   await paint();
-   // Keep what was typed but not saved, and tick the new assets.
-   const form = $('#brandForm', root);
-   for (const k of ['identity', 'audience', 'voice', 'fonts', 'notes']) form.elements[k].value = draft[k];
-   form.elements.colors.value = draft.colors.join(', ');
-   for (const id of [...draft.assets, ...added]) if (form.elements['asset-' + id]) form.elements['asset-' + id].checked = true;
-   toast('Assets uploaded and selected. Save the brand version to include them.');
-  });
+  // Resources at All channels, this channel and its videos (web/resources.js). A new channel image or font becomes a
+  // choice in the brand's asset list without losing what was typed there.
+  resources?.teardown?.();
+  resources = $('#brandResources', root);
+  mountResources(resources, { profileId, onChange: async () => {
+   const fresh = (await api('/api/profiles')).profiles.find((x) => x.id === profileId);
+   const form = $('#brandForm', root), set = form?.querySelector('fieldset');
+   if (!fresh || !set) return;
+   const ticked = values(form, brand.sources).assets;
+   set.outerHTML = brandFields({ assets: ticked }, fresh.assets).match(/<fieldset>[\s\S]*<\/fieldset>/)[0];
+  } });
   $('#researchForm', root).onsubmit = run(async (e) => {
    e.preventDefault();
    const r = await api(`/api/profiles/${profileId}/research`, Object.fromEntries(new FormData(e.target)));

@@ -29,6 +29,7 @@ import { onboardingRoute, ffmpegReady, setupBusy } from './onboarding.mjs';
 import { createStudio, defaultStudioPath } from './starter.mjs';
 import { profileRoute, profileBusy, killProfileResearch, createConfiguredProject, pinnedContext, profilePalette, projectIdHasRows, hasPinnedContext, channelSummaries, withProjectChannels } from './profiles.mjs';
 import { memoryRoute } from './memory.mjs';
+import { packagingRoute, resourcesRoute, packagingBusy, killPackaging } from './packaging.mjs';
 import { learningRoute, learningProjectContext, projectLearning, guardLearnedStep, learningBusy, killLearning } from './learning.mjs';
 import { assistantRoute, killAssistant, assistantBusy } from './assistant.mjs';
 import { onSettingsChange, restartWhenIdle, section, transcribeHow } from './settings.mjs';
@@ -57,7 +58,7 @@ const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; ch
 // ---- per-project chat sessions and event streams ----
 const chats = new Map();
 setActivityProbe(() => [
-  ([...chats.values()].some((c) => c.busy) || assistantBusy() || learningBusy() || profileBusy()) && 'An agent is working or awaiting your reply.',
+  ([...chats.values()].some((c) => c.busy) || assistantBusy() || learningBusy() || profileBusy() || packagingBusy()) && 'An agent is working or awaiting your reply.',
   schedulesBusy() && 'A scheduled run is running or queued.',
   (exportsBusy() || layersBusy() || audioBusy() || backgroundsBusy()) && 'An export or render is running.',
   recorderBusy() && 'Save or dismiss unfinished recordings first.',
@@ -425,6 +426,9 @@ async function route(req, res) {
   if (await updatesRoute(req, res, url, { send, body, restart: () => shutdown(RESTART_CODE) })) return;
   if (await schedulesRoute(req, res, url, { send, body })) return;
   if (await profileRoute(req, res, url, { send, body, serveFile })) return;
+  // Packaging (thumbnails, its Codex chat) and the resources it uses (server/packaging.mjs).
+  if (p.startsWith('/api/packaging/') && await packagingRoute(req, res, url, { send, body })) return;
+  if ((p === '/api/resources' || p.startsWith('/api/resources/')) && await resourcesRoute(req, res, url, { send, body })) return;
   if (await learningRoute(req, res, url, { send, body, serveFile })) return;
   // Which agent runs the chats (Settings → Claude): Claude Code or Codex, and what each install reports.
   if (p === '/api/app/engines' && req.method === 'GET') return send(res, 200, await enginesView(url.searchParams.has('refresh'), { models: url.searchParams.has('models'), source: url.searchParams.has('source') }));
@@ -758,6 +762,7 @@ async function route(req, res) {
   // Rename: the name Video Octopus shows (project.json); the folder keeps its name.
   if (action === '/archive') {
     if (chats.get(id)?.busy) return send(res, 409, { error: 'Claude is working in this project: wait for it or stop it first.' });
+    if (packagingBusy(id)) return send(res, 409, { error: 'Codex is working in this project’s Packaging: wait for it or stop it first.' });
     if (exportInfo(id, dir).running || layersRunning(id) || audioRunning(id)) return send(res, 409, { error: 'An export is running for this project.' });
     const arch = join(projectsRoot(), '_archive');
     mkdirSync(arch, { recursive: true });
@@ -769,6 +774,7 @@ async function route(req, res) {
     // On Windows its folder stays locked until the process has exited, so wait for that before moving it.
     const proc = chats.get(id)?.proc;
     chats.get(id)?.kill(); chats.delete(id); stepRuns.delete(id);
+    killPackaging(id);
     await processExited(proc);
     await renameFolder(dir, to);
     return send(res, 200, { archived: to });
@@ -901,6 +907,6 @@ server.listen(PORT, '127.0.0.1', () => {
   startUpdateChecks();
 });
 // Stop everything Video Octopus started. Restart exits with RESTART_CODE, and start.sh / start.cmd start the server again.
-const shutdown = (code) => { for (const c of chats.values()) c.kill(); killAssistant(); killLearning(); killProfileResearch(); stopScheduler(); closeAll(); stopAllExports(); stopAllLayers(); stopAllAudio(); process.exit(Number.isInteger(code) ? code : 0); };
+const shutdown = (code) => { for (const c of chats.values()) c.kill(); killAssistant(); killLearning(); killProfileResearch(); killPackaging(); stopScheduler(); closeAll(); stopAllExports(); stopAllLayers(); stopAllAudio(); process.exit(Number.isInteger(code) ? code : 0); };
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);

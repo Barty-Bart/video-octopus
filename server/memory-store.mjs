@@ -3,6 +3,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { existsSync, mkdirSync, writeFileSync, renameSync, readFileSync, unlinkSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { LearningStore, safeFile } from './learning-store.mjs';
+import { scopeChain, MEMORY_LEVELS } from './scope-chain.mjs';
 const hash = text => createHash('sha256').update(text).digest('hex');
 const fingerprint = text => hash(text.trim().toLowerCase().replace(/\s+/g, ' '));
 const now = () => new Date().toISOString();
@@ -58,13 +59,14 @@ export class MemoryStore extends LearningStore {
     if (chat.startsWith('_learning_')) { const s = this.get('sessions', chat.slice(10)); formatId = s.formatId; }
     else if (chat.startsWith('_brand_')) profileId = this.get('brand_research', chat.slice(7)).profileId;
     else if (['_studio', '_library'].includes(chat)) { /* deliberately global */ }
-    else if (!chat.startsWith('_') && binding.project === chat) {
-      project = chat;
-      const b = this.hasTable('project_context') && parse(this.db.prepare('SELECT data FROM project_context WHERE project=?').get(chat));
+    // A project's chat, or its Packaging chat (<project>.packaging, server/packaging.mjs): the same memories.
+    else if (!chat.startsWith('_') && binding.project && (binding.project === chat || chat === `${binding.project}.packaging`)) {
+      project = binding.project;
+      const b = this.hasTable('project_context') && parse(this.db.prepare('SELECT data FROM project_context WHERE project=?').get(project));
       profileId = b?.profileId; formatId = b?.formatId;
     } else return null;
     if (formatId) profileId = this.get('formats', formatId).profileId;
-    const scopes = ['global', ...(profileId ? [`profile:${profileId}`] : []), ...(formatId ? [`format:${formatId}`] : []), ...(project ? [`project:${project}`] : [])];
+    const scopes = scopeChain({ profileId, formatId, project }, { levels: MEMORY_LEVELS });
     const value = { id: chat, scopes, scope: scopes.at(-1), profileId, formatId, project };
     const existing = this.chat(chat);
     if (existing && JSON.stringify(existing.scopes) !== JSON.stringify(scopes)) fail('Chat memory scope changed. Keep the original binding.');

@@ -18,6 +18,7 @@ import { makeRouter, legacyRoute, parseRoute, channelHref } from './nav.js';
 import { renderSchedules } from './schedules.js';
 import { paintNight, painterFor, frameTime, edgeHTML, wireEdge, renderEdge, drawGhost, drawGuides, makeBackgroundSection } from './look.js';
 import { makePostKit } from './postkit.js';
+import { makePackaging } from './packaging.js';
 import { makeSound } from './sound.js';
 import { renderLibrary, libraryButtons } from './library.js';
 import { makeBlocks } from './blocks.js';
@@ -587,6 +588,7 @@ const ICON = {
 };
 // The project's tabs, with what each one is in plain words (the tooltip and the screen reader's description).
 const TABS = [
+  ['packaging', 'Packaging', 'Thumbnail ideas with Codex: generate, refine, pick the winners. Optional, any time'],
   ['canvas', 'Canvas', 'Your video: layout, camera, screen and the timeline'],
   ['scenes', 'Scenes', 'Claude’s scene-by-scene plan and the scenes it builds; review them and leave notes'],
   ['cut', 'Cut', 'The cut, word by word; fix it by hand'],
@@ -636,6 +638,7 @@ async function openProject(id) {
         <span class="gap"></span><div id="tabTools"></div>
         <button class="btn ghost small icon-l" id="reveal" title="Show the project folder in ${fileManager()}">${ICON.folder}${fileManager(true)}</button></div>
       <div class="tab-body"><div class="jobs" id="jobs"></div>
+        <div class="pane packaging-pane" data-pane="packaging" hidden></div>
         <div class="pane" data-pane="canvas"></div>
         <div class="pane" data-pane="scenes" hidden></div>
         <div class="pane" data-pane="cut" hidden></div>
@@ -695,6 +698,7 @@ async function openProject(id) {
     if (t === 'renders') renderRenders();
     renderJobs();
     if (t === 'post') post.show();
+    if (t === 'packaging') packaging.show();
     renderOtherInspector();
     if (t === 'canvas') canvas.resume(); else canvas.pause();
     if (t === 'scenes') scenes.show(); else scenes.hide();
@@ -702,8 +706,9 @@ async function openProject(id) {
   };
   // Claude folds to a rail: by itself on Scenes (where the list, picture and panel need the room), and ⌘J
   // toggles it; the choice is remembered for Scenes and for the other tabs separately.
-  const foldKey = () => `studio.chat.fold.${tab === 'scenes' ? 'scenes' : 'other'}`;
-  const isFolded = () => { let v = null; try { v = localStorage.getItem(foldKey()); } catch {} return v == null ? tab === 'scenes' : v === '1'; };
+  // Packaging has its own chat (Codex), so the project's chat folds there too by default.
+  const foldKey = () => `studio.chat.fold.${['scenes', 'packaging'].includes(tab) ? tab : 'other'}`;
+  const isFolded = () => { let v = null; try { v = localStorage.getItem(foldKey()); } catch {} return v == null ? ['scenes', 'packaging'].includes(tab) : v === '1'; };
   function applyFold() {
     const f = isFolded();
     el.classList.toggle('folded', f);
@@ -776,6 +781,8 @@ async function openProject(id) {
       cues: { move: (l) => sound?.cues.move(l), remove: (ids) => sound?.cues.remove(ids), duplicate: (ids) => sound?.cues.duplicate(ids) }, muteSfx: (on) => sound?.setMute(on) });
   sound = makeSound({ host: $('#insKit', el), id, getP: () => P, media: () => canvas.media(), history });
   const post = makePostKit({ pane: $('[data-pane=post]', el), id, getP: () => P, empty: (run) => rail.empty('post', '', { run }) });
+  // Packaging (web/packaging.js): thumbnails with Codex; a main thumbnail finishes the rail's Package step.
+  const packaging = makePackaging({ pane: $('[data-pane=packaging]', el), id, makeChat, onChange: () => softRefresh() });
   // Scenes: the production sheet scene by scene, notes, pins and direct edits (web/scenes.js).
   let doneNotes = -1;
   const scenes = makeScenes({
@@ -880,6 +887,7 @@ async function openProject(id) {
     if (tab === 'cut') cutPanel.render(box);
     else if (tab === 'renders') renderExportPanel(box);
     else if (tab === 'post') post.inspector(box);
+    else if (tab === 'packaging') packaging.inspector(box);
   }
 
   // ---------- Export panel (inspector of the Renders tab) ----------
@@ -963,6 +971,7 @@ async function openProject(id) {
     if (s.kind === 'app' && s.action === 'import') { setTab('canvas'); canvas.showImport(); return; }
     if (s.kind === 'app' && s.action === 'open-cut') { setTab('cut'); return; }
     if (s.kind === 'app' && s.action === 'open-scenes') { setTab('scenes'); return; }
+    if (s.kind === 'app' && s.action === 'open-packaging') { setTab('packaging'); return; }
     if (s.id === 'post-kit') { setTab('post'); return; } // the Post tab writes the kit (work/post.json and post.md)
     try { await api(`/api/projects/${encodeURIComponent(id)}/step`, { step: s.id }); }
     catch (e) { toast(e.message); }
@@ -1205,7 +1214,7 @@ async function openProject(id) {
   setTab(pendingRecord !== id && TABS.some(([k]) => k === lastTab) ? lastTab : 'canvas');
   if (pendingRecord === id) { pendingRecord = null; setTimeout(() => $('#recBtn')?.click(), 250); }
   else setTimeout(() => rail.maybeHelp(), 300); // once, on the first project page after this shipped (settings help.stepsIntro)
-  return { teardown: () => { es.close(); chat.destroy(); railRO.disconnect(); rail.destroy(); waveStop?.(); rdCmp?.destroy(); canvas.destroy(); scenes.destroy(); sound.destroy(); post.destroy(); recorder.destroy(); blocks.destroy(); document.removeEventListener('click', closeMenus); document.removeEventListener('keydown', foldKeys); removeEventListener('message', onCutMessage); cutPanel.destroy(); clearBar(); } };
+  return { teardown: () => { es.close(); chat.destroy(); railRO.disconnect(); rail.destroy(); waveStop?.(); rdCmp?.destroy(); canvas.destroy(); scenes.destroy(); sound.destroy(); post.destroy(); packaging.destroy(); recorder.destroy(); blocks.destroy(); document.removeEventListener('click', closeMenus); document.removeEventListener('keydown', foldKeys); removeEventListener('message', onCutMessage); cutPanel.destroy(); clearBar(); } };
 }
 
 // ---------- export receipt: prints out of a slot when an export finishes ----------
@@ -1632,6 +1641,12 @@ function makeChat(root, id, ext = {}, opts = {}) {
       case 'result': add(h(`<div class="divider">${ev.ok ? 'done' : 'stopped'}${ev.seconds ? ` · ${ev.seconds} s` : ''}</div>`), ev); turnOver = true; if (!ev.replay && ev.ok) showChips(); break;
       case 'error': add(h(`<div class="error">${esc(ev.text)}</div>`), ev); break;
       case 'note': add(h(`<div class="note">${esc(ev.text)}</div>`), ev); break;
+      // Packaging: the images Codex made, as they landed on the board (server/packaging.mjs keepImage).
+      case 'images': {
+        const pics = (ev.items || []).slice(0, 6).map((x) => `<img src="/api/packaging/${encodeURIComponent(ev.project)}/item/${encodeURIComponent(x)}" alt="" loading="lazy">`).join('');
+        add(h(`<div class="msg-images"><div class="mi-grid${(ev.items || []).length > 1 ? ' many' : ''}">${pics}</div><small>${esc(ev.label || 'On the board')}</small></div>`), ev);
+        break;
+      }
     }
     // Whatever this event changed around the list (the working line, the quick replies, the composer's step line)
     // has changed its height by now: stay at the bottom in the same moment, not a frame later.

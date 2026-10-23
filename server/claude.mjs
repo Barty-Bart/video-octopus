@@ -74,7 +74,7 @@ const CHAT_DIR = join(LOCAL_DIR, 'chats');
 mkdirSync(CHAT_DIR, { recursive: true });
 
 // What gets saved to the chat log (so the panel can be rebuilt after a restart).
-const KEEP = new Set(['user', 'text', 'tool', 'tool_result', 'permission', 'permission_done', 'question', 'result', 'error', 'note', 'marker', 'refused', 'proposals']);
+const KEEP = new Set(['user', 'text', 'tool', 'tool_result', 'permission', 'permission_done', 'question', 'result', 'error', 'note', 'marker', 'refused', 'proposals', 'images']);
 
 // The tools that change files, and the files one request changes: a Codex patch can touch several (file_paths),
 // Claude Code's and pi's requests one (file_path). Approvals and scheduled runs check every one of them.

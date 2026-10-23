@@ -6,6 +6,7 @@ import { join, dirname } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { safeFile, learningId } from './learning-store.mjs';
 import { FileStore, TEXT_FILES } from './file-store.mjs';
+import { otherFileUses } from './resource-store.mjs';
 const digest=p=>existsSync(p)?createHash('sha256').update(readFileSync(p)).digest('hex'):null;
 export function databaseBackups(studio){const root=safeFile(studio,'.studio/learning-backups');if(!existsSync(root))return [];return readdirSync(root).flatMap(id=>{try{learningId(id);const manifest=safeFile(root,`${id}/manifest.json`),file=safeFile(root,`${id}/studio.sqlite`);if(!existsSync(manifest)||!existsSync(file))return [];return [{id,...JSON.parse(readFileSync(manifest)),bytes:lstatSync(file).size}];}catch{return [];}}).sort((a,b)=>b.created.localeCompare(a.created));}
 export function previewDatabaseRestore(studio,id,projects=[]){
@@ -37,10 +38,14 @@ export function previewDatabaseRestore(studio,id,projects=[]){
 // SQLite blobs. Listed so the creator can restore the file store backup; a restore is not refused for them.
 function missingSkillFiles(studio,db){
   const has=(table)=>db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table);
-  if(!has('versions'))return [];
   const store=new FileStore(studio),blobs=has('learning_blobs'),formats=new Map();
   if(has('formats'))for(const row of db.prepare('SELECT id,data FROM formats').all())formats.set(row.id,JSON.parse(row.data).name);
   const missing=new Map();
+  // Resources and Packaging images (server/resource-store.mjs) are in the same file store.
+  for(const use of otherFileUses(db)){
+    if(!missing.has(use.sha256)&&!store.locate(use.sha256))missing.set(use.sha256,{sha256:use.sha256,file:use.file,format:null,version:null});
+  }
+  if(!has('versions'))return [...missing.values()];
   for(const row of db.prepare('SELECT data FROM versions').all()){
     const v=JSON.parse(row.data);
     for(const f of v.package?.files||[]){

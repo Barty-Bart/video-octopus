@@ -3,6 +3,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { randomUUID, createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, lstatSync, readdirSync, copyFileSync, rmSync } from 'node:fs';
 import { resolve, join, dirname, relative, isAbsolute, basename } from 'node:path';
+import { otherFileUses } from './resource-store.mjs';
 import { FileStore, MAX_SKILL_FILES, MAX_SKILL_FILE_BYTES, TEXT_FILES, KNOWLEDGE_TYPES, cleanFileName, extensionOf, mimeOf, hashFile, formatBytes } from './file-store.mjs';
 
 const id = () => randomUUID();
@@ -783,7 +784,7 @@ export class LearningStore {
       totals: { count: files.length, assets: files.filter((x) => x.kind === 'asset').length, knowledge: files.filter((x) => x.kind === 'knowledge').length,
         bytes: files.reduce((n, x) => n + (x.size || 0), 0), limit: MAX_SKILL_FILES, maxBytes: MAX_SKILL_FILE_BYTES } };
   }
-  // Every hash a saved version uses (assets, knowledge, key frames), with where it is used.
+  // Every hash a saved version uses (assets, knowledge, key frames), a resource or a Packaging image, with where.
   referencedHashes() {
     const used = new Map();
     const formats = new Map(this.list('formats').map((f) => [f.id, f.name]));
@@ -793,6 +794,11 @@ export class LearningStore {
         if (!used.has(f.sha256)) used.set(f.sha256, []);
         used.get(f.sha256).push({ file: f.file, versionId: v.id, number: v.number, format: formats.get(v.formatId) || null });
       }
+    }
+    // Resources and Packaging images (server/resource-store.mjs) share the file store: never "unused" while recorded.
+    for (const use of otherFileUses(this.db)) {
+      if (!used.has(use.sha256)) used.set(use.sha256, []);
+      used.get(use.sha256).push(use);
     }
     return used;
   }
@@ -816,7 +822,7 @@ export class LearningStore {
     if (!Array.isArray(hashes) || !hashes.length || hashes.length > 10000 || hashes.some((x) => typeof x !== 'string' || !/^[a-f0-9]{64}$/.test(x))) fail('Choose unused files to delete.');
     const used = this.referencedHashes();
     const refused = hashes.filter((x) => used.has(x));
-    if (refused.length) fail(`${refused.length === 1 ? 'One file is' : `${refused.length} files are`} still used by a saved skill version, so nothing was deleted.`);
+    if (refused.length) fail(`${refused.length === 1 ? 'One file is' : `${refused.length} files are`} still used by a saved skill version, a resource or a Packaging image, so nothing was deleted.`);
     let deleted = 0, bytes = 0;
     for (const sha256 of new Set(hashes)) {
       const path = this.files.locate(sha256);

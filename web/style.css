@@ -454,6 +454,8 @@ body.in-home main { height: 100%; }
 .center { background: var(--center-bg, var(--bg)); }
 .tabs { display: flex; align-items: center; gap: 10px; padding: 8px 14px; min-height: 48px; flex: none; }
 .tabs .seg { background: var(--seg); }
+/* Phones: six tabs (Packaging first) and the folder button no longer fit one row; the tabs scroll sideways inside it. */
+@media (max-width: 600px) { .tabs { flex-wrap: wrap; } .tabs .tabseg { max-width: 100%; overflow-x: auto; } }
 .tab { height: 28px; padding: 0 12px; border: 0; border-radius: calc(var(--ctl-radius) * 7 / 9); background: transparent; color: var(--muted); font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
 .tab:hover { color: var(--text); }
 .tab.on, .seg button.tab.on { background: var(--tab-on, var(--seg-on, var(--panel))); color: var(--tab-on-ink, var(--seg-on-ink, var(--text))); font-weight: 500; box-shadow: var(--tab-on-shadow, 0 1px 2px rgba(0, 0, 0, 0.08)); }

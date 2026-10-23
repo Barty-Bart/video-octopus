@@ -17,7 +17,10 @@ Users can choose another location. Existing studios stay in place.
 
 - Reviewed scoped memories, revisions, app-owned searchable history and forget exclusions. See [Memories](memories.md).
 - Skill content, content hashes, ownership/selection and retained skill versions.
-- Creator profiles, their versioned brands, uploaded image/font bytes and format definitions.
+- Creator profiles, their versioned brands and format definitions.
+- Resources (photos, logos, shapes, reference thumbnails, fonts, style notes) at All channels, a channel or one
+  video, including brand assets; their bytes live in the file store. See "Packaging and resources" below.
+- Packaging records: thumbnail cards, contact sheets, winners, the main thumbnail and the working title.
 - Shared instruction documents and supported preferences, including retained versions.
 - Brand research sessions, evidence and reviewed approvals.
 - Learning sessions (format conversations), references, review revisions, approvals and the
@@ -241,6 +244,45 @@ has moved, the app reads it from SQLite and moves it on use.
 One active package per profile/format is supported. Named sibling style variants,
 weekly rollups, timed overlays and After Effects export remain later work.
 Faceless workflows use imported/recorded narration; no TTS provider is selected.
+
+## Packaging and resources
+
+**Packaging** is an optional first stage of every format (`package` step, kind `app`, action `open-packaging`;
+done when a main thumbnail is chosen, or skipped). Nothing waits on it. The project's **Packaging** tab is a chat
+with Codex (chat id `<project>.packaging`, always Codex whatever agent runs the project chat, in the project
+folder, read-only sandbox, with the project chat's pinned context and memories) plus a board:
+
+- **Generate** asks for one image with six numbered 16:9 ideas in a 3 × 2 grid (one generation). Codex's
+  `imageGeneration` item's `savedPath` is copied into the file store at once and the sheet is cut into six cards by
+  the known grid (FFmpeg). Resources marked "Use in every thumbnail" that may be sent (see below) go along as
+  `localImage` inputs; "More like this" adds up to two cards.
+- **Refine** sends one card and makes one 1280 × 720 thumbnail (FFmpeg fills the size), a child card.
+- **Board:** star (shortlist), winners (up to 3), one main thumbnail among them, reject, upload old thumbnails.
+- **Working title** fills the Post tab's YouTube title only when it is empty, never overwriting; without a post
+  kit yet it waits in `packaging/PACKAGING.md`.
+- A Codex usage limit (`usageLimitExceeded`) marks the sheet failed with the reset time.
+- Needs Codex signed in with a ChatGPT plan; no API key or other provider is used.
+
+SQLite tables: `packaging_projects` (title, main), `packaging_sheets`, `packaging_items`. The project folder gets
+projections the agents read: `packaging/PACKAGING.md`, `packaging/packaging.json`, `packaging/thumbnails/` (main,
+winners, starred) and `packaging/RESOURCES.md` with `packaging/resources/<level>/` copies.
+
+**Resources** (`resources(id, scope, data)`) store one scope string from the shared ladder
+(`server/scope-chain.mjs`): `global`, `profile:<id>` or `project:<id>`. A video sees All channels, its own channel
+and itself, never another channel's or video's. Levels are data: the Format level exists in the ladder but is
+off for resources; switched on later it needs no table change, and a record at a level that is off shows under the
+nearest broader one. Resources stay live (not pinned): the projections are rewritten when the Packaging tab opens
+and before each Packaging message. A photo must say **who is in it** (me, someone who agreed, someone else, no
+people); "someone else" is never sent to an image model. Edit them in a channel's **Brand** tab (all three levels,
+the channel's videos included) or in the Packaging tab's inspector (this video's chain).
+
+**Brand assets migration (Phase 0).** Older studios kept brand asset bytes in SQLite (`profile_assets`). On first
+open the database is backed up to `.studio/profile-assets-migration-backups/<id>/studio.sqlite`, each blob is
+written to the file store and verified, recorded as a resource at `profile:<id>` with the same id (brand versions
+keep naming it), and only then are the blob rows removed in one transaction. Recorded in `file_store_meta`
+(`profile-assets-migration`); safe to run again and resumes after a crash without a second backup. Until then
+unmoved assets are read from SQLite. An older app opening a migrated studio cannot read the moved assets (restore
+the backup deliberately to downgrade). Storage's unused-files report counts resources and Packaging images as used.
 
 ## Profiles, presets and reusing formats
 

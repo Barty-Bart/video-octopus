@@ -8,6 +8,8 @@ import { sqlSkillState, sqlSelectedSkills } from './skill-db.mjs';
 import { validateSkillPreferences } from './skill-preferences.mjs';
 import { skillsView } from './managed-skills.mjs';
 import { pinnedFormatSkill } from './format-skills.mjs';
+import { scopeChain, MEMORY_LEVELS } from './scope-chain.mjs';
+import { ensureResourceTables, migrateProfileAssets, listResources, addResource, resourceBytes } from './resource-store.mjs';
 const hash=x=>createHash('sha256').update(x).digest('hex');
 const fail=x=>{throw Error(x);};
 const text=(x,max=20000)=>typeof x==='string'&&x.length<=max?x.trim():fail(`Expected text up to ${max} characters.`);
@@ -38,6 +40,9 @@ export class ProfileStore extends LearningStore {
    CREATE TABLE IF NOT EXISTS profile_assets(id TEXT PRIMARY KEY,profile_id TEXT NOT NULL REFERENCES profiles(id),name TEXT NOT NULL,hash TEXT NOT NULL,bytes BLOB NOT NULL);
    CREATE TABLE IF NOT EXISTS project_context(project TEXT PRIMARY KEY,data TEXT NOT NULL);
   `);
+  // Brand assets are resources at profile:<id> with their bytes in the file store (Phase 0, server/resource-store.mjs).
+  ensureResourceTables(this.db);
+  migrateProfileAssets(this);
   if(!this.instructions()){if(existsSync(join(root,'.studio/profile-storage.json')))fail('Canonical instructions are missing. Restore a profile database backup; generated files cannot replace them.');this.migrate();}
   if(!existsSync(safeFile(root,'.studio/profile-storage.json')))putFile(safeFile(root,'.studio/profile-storage.json'),JSON.stringify({storage:'sqlite'}));
   }catch(e){this.close();throw e;}
@@ -71,9 +76,36 @@ export class ProfileStore extends LearningStore {
  }
  commitBrand(profileId,brand,expected,reason){if((this.brand(profileId)?.id||null)!==expected)fail('Brand changed. Reload and review before saving.');const v={id:randomUUID(),profileId,created:stamp(),reason,brand,hash:hash(JSON.stringify(brand))};this.db.prepare('INSERT INTO brand_versions VALUES(?,?,?)').run(v.id,profileId,JSON.stringify(v));this.db.prepare('INSERT INTO brand_heads VALUES(?,?) ON CONFLICT(profile_id) DO UPDATE SET version=excluded.version').run(profileId,v.id);return v;}
  brandHistory(profileId){this.get('profiles',profileId);return this.db.prepare('SELECT data FROM brand_versions WHERE profile_id=? ORDER BY rowid DESC LIMIT 50').all(profileId).map(r=>JSON.parse(r.data));}
- assets(profileId){this.get('profiles',profileId);return this.db.prepare('SELECT id,name,hash,length(bytes) size FROM profile_assets WHERE profile_id=?').all(profileId);}
- asset(profileId,id){learningId(id);const a=this.db.prepare('SELECT * FROM profile_assets WHERE id=? AND profile_id=?').get(id,profileId);if(!a||hash(a.bytes)!==a.hash)fail('Brand asset missing or damaged.');return a;}
- uploadAsset(profileId,name,bytes){this.get('profiles',profileId);name=text(name,180);if(!/\.(png|jpe?g|webp|svg|ttf|otf|woff2?)$/i.test(name)||/[\\/]/.test(name)||bytes.length>20*1024*1024)fail('Choose an image or font up to 20 MB.');if(this.assets(profileId).length>=100)fail('Profile asset limit is 100 files.');const id=randomUUID();this.db.prepare('INSERT INTO profile_assets VALUES(?,?,?,?,?)').run(id,profileId,name,hash(bytes),bytes);return {id,name};}
+ // A channel's brand assets: its file resources (images and fonts), plus any legacy blob row a pending migration has not
+ // moved yet (it retries whenever the store opens).
+ assets(profileId){
+  this.get('profiles',profileId);
+  const moved=listResources(this,[`profile:${profileId}`]).filter(r=>r.hash).map(r=>({id:r.id,name:r.name,hash:r.hash,size:r.size,kind:r.kind}));
+  const ids=new Set(moved.map(a=>a.id));
+  const legacy=this.db.prepare('SELECT id,name,hash,length(bytes) size FROM profile_assets WHERE profile_id=?').all(profileId).filter(a=>!ids.has(a.id));
+  return [...moved,...legacy];
+ }
+ asset(profileId,id){
+  learningId(id);
+  const r=this.db.prepare('SELECT data FROM resources WHERE id=? AND scope=?').get(id,`profile:${profileId}`);
+  if(r){
+   const x=JSON.parse(r.data);
+   if(!x.hash)fail('Brand asset missing or damaged.');
+   let bytes;
+   try{bytes=resourceBytes(this,x);}catch{fail('Brand asset missing or damaged.');}
+   return {id:x.id,profile_id:profileId,name:x.name,hash:x.hash,bytes};
+  }
+  const a=this.db.prepare('SELECT * FROM profile_assets WHERE id=? AND profile_id=?').get(id,profileId);
+  if(!a||hash(a.bytes)!==a.hash)fail('Brand asset missing or damaged.');
+  return a;
+ }
+ uploadAsset(profileId,name,bytes){
+  this.get('profiles',profileId);name=text(name,180);
+  if(!/\.(png|jpe?g|webp|svg|ttf|otf|woff2?)$/i.test(name)||/[\\/]/.test(name)||bytes.length>20*1024*1024)fail('Choose an image or font up to 20 MB.');
+  if(this.assets(profileId).length>=100)fail('Profile asset limit is 100 files.');
+  const r=addResource(this,{scope:`profile:${profileId}`,name,kind:/\.(ttf|otf|woff2?)$/i.test(name)?'font':'image',bytes,source:{via:'brand-upload'}});
+  return {id:r.id,name:r.name};
+ }
  research(profileId,url,direction=''){this.get('profiles',profileId);const r={id:randomUUID(),profileId,url:publicBrandURL(url),direction:text(direction),baseVersion:this.brand(profileId)?.id||null,revision:1,status:'draft',created:stamp()};this.db.prepare('INSERT INTO brand_research VALUES(?,?,?)').run(r.id,profileId,JSON.stringify(r));mkdirSync(join(this.researchDir(r.id),'work'),{recursive:true});return r;}
  researchDir(id){return safeFile(this.root,`.studio/brand-research/${learningId(id)}`);}
  researchGet(id){return this.get('brand_research',id);}
@@ -133,19 +165,24 @@ export class ProfileStore extends LearningStore {
  // The memory scopes a project chat registered (memory-store.mjs register) follow its pinned channel and format.
  // After an upgrade the chat would otherwise fail with "Chat memory scope changed" and lose its memories. The
  // project's own memories keep their scope (project:<id>); the chat gains the new channel's and format's.
+ // The project's Packaging chat (<project>.packaging) shares the project chat's memories and follows the same way.
  rebindProjectMemory(project,bundle){
   if(!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_chats'").get())return null;
-  const row=this.db.prepare('SELECT data FROM memory_chats WHERE id=?').get(project);
-  if(!row)return null;
-  const old=JSON.parse(row.data);
   const formatId=bundle?.formatId||null,profileId=formatId?this.get('formats',formatId).profileId:bundle?.profileId||null;
-  const scopes=['global',...(profileId?[`profile:${profileId}`]:[]),...(formatId?[`format:${formatId}`]:[]),`project:${project}`];
-  if(JSON.stringify(scopes)===JSON.stringify(old.scopes))return null;
-  const next={...old,scopes,scope:scopes.at(-1),profileId:profileId||undefined,formatId:formatId||undefined,project};
-  this.db.prepare('UPDATE memory_chats SET data=? WHERE id=?').run(JSON.stringify(next),project);
-  const cached=safeFile(this.root,`.studio/memory-context/${hash(project).slice(0,32)}/MEMORY.md`);
-  if(existsSync(cached))unlinkSync(cached);
-  return {from:old.scopes,to:scopes};
+  const scopes=scopeChain({profileId,formatId,project},{levels:MEMORY_LEVELS});
+  let result=null;
+  for(const chat of [project,`${project}.packaging`]){
+   const row=this.db.prepare('SELECT data FROM memory_chats WHERE id=?').get(chat);
+   if(!row)continue;
+   const old=JSON.parse(row.data);
+   if(JSON.stringify(scopes)===JSON.stringify(old.scopes))continue;
+   const next={...old,scopes,scope:scopes.at(-1),profileId:profileId||undefined,formatId:formatId||undefined,project};
+   this.db.prepare('UPDATE memory_chats SET data=? WHERE id=?').run(JSON.stringify(next),chat);
+   const cached=safeFile(this.root,`.studio/memory-context/${hash(chat).slice(0,32)}/MEMORY.md`);
+   if(existsSync(cached))unlinkSync(cached);
+   if(chat===project)result={from:old.scopes,to:scopes};
+  }
+  return result;
  }
  // A project whose pin can no longer be used (an upgrade before 0.1.0-beta.10 kept one channel's brand under another
  // channel): keep everything that is still valid and replace only what is not, with the reasons for the creator.

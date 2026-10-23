@@ -13,6 +13,7 @@ import { childEnv, settingsBrief, section } from './settings.mjs';
 import { logUse, setPlanUsage } from './usage.mjs';
 import { activeSkillRoot } from './managed-skills.mjs';
 import { assertNotUpdating } from './maintenance.mjs';
+import { codexImage, isUsageLimitError, usageLimitText } from './images.mjs';
 
 // ---- find Codex and its sign-in ----
 const run = (bin, args, env, ms = 10000) => new Promise((done) => {
@@ -52,10 +53,13 @@ const PROVIDERS = { chatgpt: null, lmstudio: 'lmstudio', ollama: 'ollama' };
 // them by the run's mode. A run's thread starts with them off (thread/start's config overrides, like codex -c): web
 // search disabled, every MCP server in Codex's config disabled by name (config/read lists them), and Codex's apps
 // (connectors), plugins (which bring MCP servers of their own) and browser and computer use off. Should one still turn
-// up in a run, Video Octopus stops the turn (RUN_REFUSED, onNote).
+// up in a run, Video Octopus stops the turn (RUN_REFUSED, onNote). The creator's own Codex hooks and Codex's built-in
+// memories stay out too: they would bring personal context from outside the studio into the thread.
+// The Packaging chat uses the same overrides (isolatedThread), without the run's stop.
 export const runThreadConfig = (mcpServers = []) => ({
   web_search: 'disabled',
   'features.apps': false, 'features.plugins': false, 'features.browser_use': false, 'features.computer_use': false, 'features.in_app_browser': false,
+  'features.hooks': false, 'features.memories': false,
   // A name that can't be a dotted key stays on, and the stop below covers it.
   ...Object.fromEntries(mcpServers.filter((n) => /^[\w-]+$/.test(n)).map((n) => [`mcp_servers.${n}.enabled`, false])),
 });
@@ -156,7 +160,7 @@ export class CodexSession extends ChatSession {
       developerInstructions: [this.currentContext(), settingsBrief(extra,{profileScoped:Boolean(this.profileScoped||this.projectScope?.())})].filter(Boolean).join('\n'),
       ...(c.codexModel ? { model: c.codexModel } : {}),
       ...(provider ? { modelProvider: provider } : {}),
-      ...(this.isRun() ? { config: await this.runConfig(cwd) } : {}),
+      ...(this.isRun() || this.isolatedThread ? { config: await this.runConfig(cwd) } : {}),
     };
   }
 
@@ -202,6 +206,7 @@ export class CodexSession extends ChatSession {
         } else if (it.type === 'mcpToolCall') this.emit({ t: 'tool', id: it.id, name: `${it.server} ${it.tool}`, summary: short(JSON.stringify(it.arguments ?? '')) });
         else if (it.type === 'webSearch') this.emit({ t: 'tool', id: it.id, name: 'WebSearch', summary: short(it.query || it.action?.query || '') });
         else if (it.type === 'imageView') this.emit({ t: 'tool', id: it.id, name: 'View image', summary: file2(it.path) });
+        else if (it.type === 'imageGeneration') this.emit({ t: 'tool', id: it.id, name: 'Image', summary: 'Image generation' });
         break;
       case 'item/completed':
         if (!it) break;
@@ -209,6 +214,7 @@ export class CodexSession extends ChatSession {
         else if (it.type === 'commandExecution') this.emit({ t: 'tool_result', id: it.id, text: String(it.aggregatedOutput || '').slice(0, 1500), error: it.exitCode != null && it.exitCode !== 0 });
         else if (it.type === 'fileChange') this.emit({ t: 'tool_result', id: it.id, text: (it.changes || []).map((x) => `${x.kind?.type || x.kind || 'change'} ${x.path}`).join('\n'), error: it.status === 'failed' });
         else if (it.type === 'mcpToolCall') this.emit({ t: 'tool_result', id: it.id, text: JSON.stringify(it.error || it.result || '').slice(0, 1500), error: Boolean(it.error) });
+        else if (it.type === 'imageGeneration') this.imageDone(it);
         break;
       case 'thread/tokenUsage/updated': {
         // How full the context is: what the last call sent plus what it wrote.
@@ -235,13 +241,30 @@ export class CodexSession extends ChatSession {
         this.turnId = null;
         this.setBusy(false);
         logUse('agent.turn', { ...this.usageScope(), engine: 'codex' });
-        if (t.status === 'failed') this.emit({ t: 'error', text: `Codex: ${t.error?.message || 'the turn failed.'}` });
+        if (t.status === 'failed') this.emit({ t: 'error', text: isUsageLimitError(t.error) ? usageLimitText(null) : `Codex: ${t.error?.message || 'the turn failed.'}` });
         this.emit({ t: 'result', ok: t.status === 'completed', seconds: Math.round((t.durationMs || 0) / 1000) });
+        this.onTurnEnd?.(t);
         break;
       }
-      case 'error': this.emit({ t: 'error', text: `Codex: ${p.error?.message || p.message || 'error'}` }); break;
+      case 'error':
+        if (isUsageLimitError(p.error)) this.onUsageLimit?.(p.error);
+        this.emit({ t: 'error', text: isUsageLimitError(p.error) ? usageLimitText(null) : `Codex: ${p.error?.message || p.message || 'error'}` });
+        break;
       default: break;
     }
+  }
+
+  // An image Codex made (its imageGeneration item, read by images.mjs codexImage). A chat that keeps images (the Packaging
+  // chat, server/packaging.mjs) sets onImage to store it; any other chat only says one was made.
+  imageDone(it) {
+    const image = codexImage(it);
+    if (image.failure?.kind === 'usage-limit') this.onUsageLimit?.(image.failure);
+    this.emit({ t: 'tool_result', id: it.id, text: image.failure ? image.failure.message : 'Image ready.', error: Boolean(image.failure) });
+    if (this.onImage) {
+      // Called now (not later), so work it queues runs before anything the turn's end queues.
+      const kept = (() => { try { return this.onImage(image); } catch (e) { return Promise.reject(e); } })();
+      Promise.resolve(kept).catch((e) => this.emit({ t: 'error', text: `Video Octopus could not keep the image: ${e.message}` }));
+    } else if (image.failure) this.emit({ t: 'error', text: image.failure.message });
   }
 
   // Requests from Codex: approvals become Video Octopus's permission cards (the same shape as Claude Code's, so scheduled
@@ -309,7 +332,9 @@ export class CodexSession extends ChatSession {
     return true;
   }
 
-  async send(text, { echo = true, brief = null } = {}) {
+  // images: absolute paths of pictures to attach to this message (turn/start's localImage input), e.g. a Packaging
+  // card to refine or the creator's photos.
+  async send(text, { echo = true, brief = null, images = [] } = {}) {
     assertNotUpdating();
     this.skillRoot();
     this.lastSend = text;
@@ -321,7 +346,8 @@ export class CodexSession extends ChatSession {
     if (echo) this.emit(userEvent(text, brief));
     this.setBusy(true);
     try {
-      await this.call('turn/start', { threadId: this.threadId, input: [{ type: 'text', text: this.withContextUpdate(text), text_elements: [] }] });
+      const input = [{ type: 'text', text: this.withContextUpdate(text), text_elements: [] }, ...images.map((path) => ({ type: 'localImage', path }))];
+      await this.call('turn/start', { threadId: this.threadId, input });
     } catch (e) { this.setBusy(false); this.emit({ t: 'error', text: `Codex: ${e.message}` }); }
   }
 

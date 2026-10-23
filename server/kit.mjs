@@ -24,7 +24,7 @@ export function kitContext(dir, meta) {
     `The studio library is ${lib}. Media paths stay in place.`,
     soundCatalogContext(),
     `Sound cues: work/sfx.json {v: 1, cues: [{id, t (seconds on the canvas take, before the cut), file (a path in the library such as sfx/whoosh.wav, or in the project with from "project"), from "library"|"project", gain (dB on top of the default level, which puts the sound's loudest part about ${underVoiceDb()} dB under the voice: Settings → Sound, the level for your own renders too), label, by? ("hand" = the creator placed it in Video Octopus)}]}. Video Octopus shows them on the timeline and mixes them under the voice in its Export. A cue you add inside a block you build (the intro) goes with that block's render: Export → Video puts your render in for the block and mixes the cue only then, so list your render's transition sounds here at the moments they play.`,
-    `The post kit is work/post.json (Video Octopus's Post tab; post.md follows it): {word, youtube {title, description, comment}, instagram {caption}, tiktok {caption}, dm {reply, tool}, links [{label, url, checked}], facts [...], notes, edited {field: time}}. Never invent links or prices, and keep fields the creator edited.`,
+    `The post kit is work/post.json (Video Octopus's Post tab; post.md follows it): {word, youtube {title, description, comment}, instagram {caption}, tiktok {caption}, dm {reply, tool}, links [{label, url, checked}], facts [...], notes, edited {field: time}}. Never invent links or prices, and keep fields the creator edited. When youtube.title is empty and packaging/PACKAGING.md names a Title (the creator's choice in Packaging), use that title.`,
   ].filter(Boolean);
 }
 

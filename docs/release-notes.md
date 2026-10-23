@@ -1,3 +1,18 @@
+# v0.1.0-beta.13
+
+- **Packaging (first version).** An optional **Package** stage comes first on each video's rail and never blocks the rest. Its Packaging tab has a Codex chat (on your ChatGPT plan) that knows the video's memories and resources.
+  - **Generate** asks Codex for one image with six thumbnail ideas in a 3 × 2 grid and cuts it into six cards; the reply's lines name them.
+  - **Refine** turns a card into a 1280 × 720 thumbnail.
+  - The board lets you star ideas, pick up to three winners and one main thumbnail (which completes the Package stage), and upload old thumbnails.
+  - A working title fills the Post tab's YouTube title only when it is empty.
+  - Titles and hooks are shown as coming soon.
+- **Resources.** Photos, logos, colours and notes at All channels, Channel or This video, managed in the channel's Brand tab and in Packaging. Each photo says who is in it; photos of someone else are never sent to an image model. Resources are live: new ones reach videos already in progress.
+- **Isolation.** The Packaging chat runs read-only in the video folder with only the studio's context: your own Codex hooks and memories, MCP servers, plugins and web search are switched off for it (scheduled Codex runs now switch off hooks and memories too). Read-only commands don't ask; anything else still does.
+- **Limits.** If Codex's image allowance runs out, Packaging says so and shows when it resets.
+- **Groundwork.** One shared scope ladder (All channels › Channel › Format › Video) for memories and resources; brand assets moved into the file store (backed up first, verified, resumable); Storage and restore count Packaging and resource images as in use.
+
+Verified with 302 unit tests on Node 24.22.1 and 22.22.1 and a fake Codex app-server, plus one real Codex test on a ChatGPT plan (2 generations: a 2048 × 768 sheet cut into six cards, and a refined 1280 × 720 thumbnail; usage meter and `resetsAt` as expected). Not yet verified with a real photo of a person as a likeness reference. Requires Codex signed in with a ChatGPT plan. This is a source update on main; the downloadable tagged prerelease remains separate.
+
 # v0.1.0-beta.12
 
 - **Pinned format skills hold.** A video's pinned copy of its format skill now has its own name (`format-…-v<N>`), and every studio format skill is switched off in pinned project chats and scheduled runs, so a newer approved version can't replace the one a video started with. Existing pinned projects get the renamed copy on their next chat; any older copy is kept aside, never deleted. Verified with a real Claude Code run as well as Codex and pi test adapters.

@@ -247,7 +247,7 @@ test('unused files are reported with their size; delete refuses files a version 
   assert.deepEqual(report.unused.map((x) => x.sha256), [orphan.sha256]);
   assert.equal(report.unusedBytes, Buffer.byteLength('left over from a failed save'));
   assert.deepEqual(report.missing, []);
-  assert.throws(() => store.deleteUnusedFiles([orphan.sha256, used]), /still used by a saved skill version, so nothing was deleted/);
+  assert.throws(() => store.deleteUnusedFiles([orphan.sha256, used]), /still used by a saved skill version, a resource or a Packaging image, so nothing was deleted/);
   assert.ok(store.files.locate(orphan.sha256), 'nothing deleted after a refusal');
   assert.deepEqual(store.deleteUnusedFiles([orphan.sha256]), { deleted: 1, bytes: report.unusedBytes });
   assert.equal(store.files.locate(orphan.sha256), null);
