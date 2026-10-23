@@ -9,6 +9,7 @@ import {
 } from './learning.js';
 import { profileSettings, instructionSettings } from './profiles.js';
 import { renderMemories } from './memory.js';
+import { themeSwitch } from './appearance.js';
 
 const DOTS = '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.5" cy="8" r="1.2"/><circle cx="8" cy="8" r="1.2"/><circle cx="12.5" cy="8" r="1.2"/></svg>';
 const TAB_NAMES = { formats: 'Formats', brand: 'Brand', memories: 'Memories' };
@@ -94,6 +95,7 @@ export async function renderChannel(main, ctx) {
           <h1>${esc(p.name)}</h1>
         </div>
         <div class="ph-actions">
+          <span data-theme-slot></span>
           <button type="button" class="btn primary" data-hub="new"${p.archived ? ' disabled title="Restore the channel to make new videos"' : ''}>New video</button>
           <button type="button" class="btn icon-btn" data-hub="menu" aria-haspopup="menu" aria-expanded="false" aria-label="Options for ${esc(p.name)}">${DOTS}</button>
         </div>
@@ -106,6 +108,7 @@ export async function renderChannel(main, ctx) {
     <div class="hub-body" id="hubBody"></div>
   </div>`));
 
+  main.querySelector('[data-theme-slot]')?.replaceWith(themeSwitch());
   const body = $('#hubBody', main);
   let part = null;
   const newFormat = () => {
@@ -158,7 +161,7 @@ export async function renderChannels(main, { tab, onChannelsChange }) {
     <div class="hub-top">
       <div class="page-head">
         <div class="ph-title"><p class="eyebrow">My style</p><h1>All channels</h1></div>
-        <div class="ph-actions"><button type="button" class="btn primary" data-new-channel>+ New channel</button></div>
+        <div class="ph-actions"><span data-theme-slot></span><button type="button" class="btn primary" data-new-channel>+ New channel</button></div>
       </div>
       <nav class="hub-tabs scroll-row" aria-label="All channels sections">
         ${tabs.map(([key, label, href]) => `<a class="hub-tab${key === tab ? ' on' : ''}" href="${href}"${key === tab ? ' aria-current="page"' : ''}>${label}</a>`).join('')}
@@ -166,6 +169,7 @@ export async function renderChannels(main, { tab, onChannelsChange }) {
     </div>
     <div class="hub-body"><div class="hub-pad" id="chBody"></div></div>
   </div>`));
+  main.querySelector('[data-theme-slot]')?.replaceWith(themeSwitch());
   const body = $('#chBody', main);
   const created = (p) => { location.hash = channelHref(p.id, 'formats'); };
   main.querySelector('[data-new-channel]').onclick = () => newChannelDialog({ onCreated: created });

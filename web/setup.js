@@ -69,7 +69,7 @@ export async function setupPage(ctx, { back = '#/', assistantPanel }) {
       <div id="scanResults" hidden><div id="environmentPicker"></div>
       <section class="su-card" aria-labelledby="suAgents"><div class="su-ch"><h2 id="suAgents">Agents</h2><span class="sub">pick one to run the chats</span></div>
         <ol class="su-list" id="agents"><li class="su-item checking"><div class="su-i"><span class="spin big" aria-hidden="true"></span></div><div class="su-b"><b>Looking for agents…</b></div></li></ol>
-        <p class="sub su-byo">Using another provider (OpenRouter, a gateway)? <a href="#/settings/claude">Settings → Agent &amp; model</a>.</p></section>
+        <p class="sub su-byo">Using another provider (OpenRouter, a gateway)? <a href="#/settings/agent/claude">Settings → Agent &amp; model</a>.</p></section>
       <section class="su-card" aria-labelledby="suTools"><div class="su-ch"><h2 id="suTools">Tools</h2></div><ol class="su-list" id="tools"></ol></section>
       <section class="su-card" aria-labelledby="suMachine"><div class="su-ch"><h2 id="suMachine">Recommendations</h2><span class="sub">optional</span><span class="gap"></span>
         <button type="button" class="btn small" id="machineBtn">Check my machine</button></div>

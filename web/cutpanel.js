@@ -10,7 +10,7 @@
 // selected, a "/" picked, deleted or dragged come back as studio:shot-* and go to the shots controller; the selection
 // section has a "/ New shot here" button.
 import { $, esc, h, api, toast, clock, plural, cutWord } from './ui.js';
-import { onLook, cutLook } from './appearance.js';
+import { onAppearance, cutLook } from './appearance.js';
 
 const KINDS = [['Pause', 'Pauses'], ['Filler', 'Fillers'], ['Retake', 'Retakes'], ['Stutter', 'Stutters']];
 const kindGroup = (k) => (k === 'Sound' ? 'Filler' : k);
@@ -56,7 +56,7 @@ export function makeCutPanel({ id, getP, runLock, shots = null }) {
   // Settings → Appearance's look, for the editor to follow (it opened in the look its address carried).
   // Only once the editor is there (studio:cut-ready sends it then): before, the frame still holds a blank page.
   const sendLook = () => ready && post({ type: 'studio:look', look: cutLook() });
-  const offLook = onLook(sendLook);
+  const offLook = onAppearance(sendLook);
   const sendReview = () => rv && post({ type: 'studio:cut-review', items: rv.items.filter((it) => it.group === 'ask').map((it) => ({ a: it.a, b: it.b, join: it.kind === 'Join', done: Boolean(it.decision) })) });
   function onMessage(m) {
     if (!m || typeof m.type !== 'string') return false;

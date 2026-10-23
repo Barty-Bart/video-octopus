@@ -13,7 +13,7 @@ import { makeTimeline } from './timeline.js';
 import { makeUndo, tokens, lookKey as appearanceKey } from './tlcore.js';
 import { makeScenes, cutMap } from './scenes.js';
 import { makeCompare, previousOf, versionName } from './compare.js';
-import { appPage, homeNav } from './settings.js';
+import { appPage } from './settings.js';
 import { makeRouter, legacyRoute, parseRoute, channelHref } from './nav.js';
 import { renderSchedules } from './schedules.js';
 import { paintNight, painterFor, frameTime, edgeHTML, wireEdge, renderEdge, drawGhost, drawGuides, makeBackgroundSection } from './look.js';
@@ -32,13 +32,12 @@ import { makeZooms } from './zoomsui.js';
 import { makeRail } from './rail.js';
 import * as rec from './recorder.js';
 import { HOTKEY } from './recorder.js';
-import { applyLook, lookProject, onLook, cutLookParams } from './appearance.js';
+import { applyAppearance, onAppearance, cutLookParams, themeSwitch } from './appearance.js';
 import { rememberMessage, reviewLessons } from './memory.js';
-import { projectLearningPanel, newChannelDialog } from './learning.js';
+import { projectLearningPanel } from './learning.js';
 import { renderSkills } from './skills.js';
 import { renderChannel, renderChannels } from './channel.js';
-import { sidebarMarkup, topBarMarkup, pageName, wireShell, updateChannelRows } from './shell.js';
-import { stageExtras } from './stagefx.js';
+import { sidebarMarkup, topBarMarkup, pageName, wireShell, askTip } from './shell.js';
 import { exportLooks, sceneKey, shotsSummary } from './exportshots.js';
 
 const app = $('#app');
@@ -55,7 +54,7 @@ let STATUS = null;
 async function loadStatus(refresh = false) {
   STATUS = await api('/api/status' + (refresh ? '?refresh' : ''));
   setSystem(STATUS); // the ~ in paths and the file manager's name (web/ui.js)
-  applyLook(STATUS.appearance); // Settings → Appearance (web/appearance.js)
+  applyAppearance(STATUS.appearance); // Settings › General › Appearance (web/appearance.js)
   window.STUDIO_ENGINE = STATUS.engine; // the other pages' chats say which agent is answering
   window.STUDIO_AGENT = { codex: 'Codex', pi: 'pi' }[STATUS.engine] || 'Claude';
   const a = agentView(STATUS), chip = $('#claudeChip');
@@ -89,10 +88,13 @@ function agentView(st) {
   return { ok: !missing, chip: `${a.name}${v} · ${a.source}${model}`, note: '',
     sub: `${a.source}${missing ? ': pick a model' : model}${a.engine === 'claude' ? ' · not your Claude plan' : ''}` };
 }
-function usageMarkup(snapshot) {
-  const v = usageView(snapshot, 'claude');
-  const row = (label, value) => value == null ? '' : `<div class="cc-use"><span>${label}</span><i><b style="width:${value}%"></b></i><span>${value}%</span></div>`;
-  return `${row('5h',v.fiveHour)}${row('7d',v.sevenDay)}<p class="sub usage-note">${esc(v.note)}</p>`;
+// What the rail's Ask Claude button says about the agent (its tooltip, and a warning dot when it isn't ready).
+function railAgent(a = null) {
+  if (!STATUS) return null;
+  a = a || agentView(STATUS);
+  const v = usageView(STATUS?.usage, STATUS?.engine || 'claude');
+  const usage = STATUS?.agent?.planUsage ? [v.fiveHour != null ? `5h ${v.fiveHour}%` : '', v.sevenDay != null ? `7d ${v.sevenDay}%` : ''].filter(Boolean).join(' · ') : '';
+  return { ok: a.ok, name: STATUS?.agent?.name + (STATUS?.agent?.version ? ` ${STATUS.agent.version}` : ''), sub: a.sub, usage };
 }
 function showUsage(ev) {
   if (STATUS) STATUS.usage = ev;
@@ -101,7 +103,8 @@ function showUsage(ev) {
   const set = (el, value) => { el.style.width = `${value ?? 0}%`; el.parentElement.hidden = value == null; el.parentElement.previousElementSibling.hidden = value == null; };
   set($('#u5'), v.fiveHour); set($('#u7'), v.sevenDay);
   meter.title = `${engineName(STATUS?.engine)} usage: ${v.note}`;
-  const card = $('#claudeUsage'); if (card) card.innerHTML = usageMarkup(ev);
+  const ask = document.querySelector('.shell-nav [data-open-assistant]');
+  if (ask && STATUS) ask.dataset.tip = askTip(railAgent());
 }
 async function refreshUsage() {
   if (!STATUS || document.hidden) return;
@@ -123,11 +126,11 @@ const router = makeRouter(async (nav) => {
   // Old addresses (#/learning, #/memories, #/storage…) are rewritten in place first: no extra history entry.
   const moved = legacyRoute(location.hash);
   if (moved) history.replaceState(null, '', moved);
-  // Frosted takes the open project's picture (the newest project's on the other pages).
-  const pm = /^#\/p\/(.+)$/.exec(location.hash);
-  lookProject(pm ? decodeURIComponent(pm[1]) : null);
   // Settings, Setup (opens by itself the first time) and the Video Octopus assistant live in settings.js / setup.js.
-  const page = await appPage(location.hash, { app, makeChat, loadStatus, nav, status: () => STATUS });
+  const page = await appPage(location.hash, {
+    app, makeChat, loadStatus, nav, status: () => STATUS, railAgent: () => railAgent(),
+    newVideo: async () => newProjectDialog(null, await api('/api/takes').catch(() => [])),
+  });
   if (page) return page;
   const m = /^#\/p\/(.+)$/.exec(location.hash);
   if (m) return openProject(decodeURIComponent(m[1]));
@@ -169,19 +172,13 @@ async function home(route, nav = null) {
   await loadStatus();
   if (!STATUS.studioOk) return setupScreen();
   const [projects, takes, counts] = await Promise.all([api('/api/projects'), api('/api/takes'), api('/api/app/counts').catch(() => ({}))]);
-  const agent = agentView(STATUS), name = STATUS.agent.name + (STATUS.agent.version ? ` ${STATUS.agent.version}` : '');
+  const agent = agentView(STATUS);
   const claudeNote = agent.note;
-  const u = STATUS.usage;
-  const claudeCard = `<div class="cc">
-      <div class="cc-top"><span class="dot ${agent.ok ? 'ok' : 'bad'}"></span><b>${esc(name)}</b></div>
-      <div class="sub">${esc(agent.sub)}</div>
-      ${STATUS.agent.planUsage ? `<div class="cc-uses" id="claudeUsage">${usageMarkup(u)}</div>` : ''}
-    </div>`;
-  const active = { page: view, channelId: view === 'channel' ? route.id : null };
+  const active = { page: view };
   const channelName = (counts.channels || []).find((c) => c.id === route.id)?.name;
   const el = h(`<div class="home shell${view === 'library' ? ' with-side' : ''}">
     ${topBarMarkup(pageName(active, channelName))}
-    ${sidebarMarkup({ active, counts, projects, takes, settingsLink: homeNav(counts), agentCard: claudeCard })}
+    ${sidebarMarkup({ active, counts, takes, agent: railAgent(agent) })}
     <div class="home-main" id="homeMain"></div>
     ${view === 'library' ? '<aside class="home-rec lib-side" aria-label="Library assistant" id="libSide"></aside>' : ''}
   </div>`);
@@ -190,18 +187,12 @@ async function home(route, nav = null) {
   // New video from a channel page starts in that channel.
   const startVideo = ({ profileId = null, format = null } = {}) => newProjectDialog(null, takes, format, profileId);
   const shell = wireShell(el, {
-    onNewVideo: () => startVideo({ profileId: view === 'channel' ? active.channelId : null }),
-    onAddChannel: () => newChannelDialog({ onCreated: (p) => { location.hash = channelHref(p.id, 'formats'); } }),
+    onNewVideo: () => startVideo({ profileId: view === 'channel' ? route.id : null }),
   });
   // After a channel is renamed, archived or restored the whole page redraws; a new or archived format, or a brand
-  // change, only recounts.
+  // change, only recounts (the channel hub repaints its avatar from the fresh counts).
   const onChannelsChange = () => router();
-  // Returns the fresh counts (the channel hub also repaints its avatar from them after a brand change).
-  const onFormatsChange = async () => {
-    const fresh = await api('/api/app/counts').catch(() => null);
-    if (fresh && nav?.alive?.() !== false) updateChannelRows(el, fresh, active);
-    return fresh;
-  };
+  const onFormatsChange = () => api('/api/app/counts').catch(() => null);
   let page = null;
   if (view === 'projects') renderProjects(main, projects, takes, claudeNote, counts, route.query);
   if (view === 'recordings') renderRecordings(main, takes);
@@ -209,13 +200,10 @@ async function home(route, nav = null) {
   if (view === 'skills') page = await renderSkills(main, { counts });
   if (view === 'library') page = renderLibrary(main, $('#libSide', el));
   if (view === 'channel') {
-    if (route.id !== '_') active.channelId = route.id;
     page = await renderChannel(main, { id: route.id, tab: route.tab, query: route.query, makeChat, startVideo, counts, projects, onChannelsChange, onFormatsChange });
-    // A `_` address was resolved to a real channel: light its sidebar row and name it in the narrow top bar.
+    // A `_` address was resolved to a real channel: name it in the narrow top bar.
     const real = parseRoute(location.hash);
     if (real.page === 'channel' && real.id !== route.id) {
-      active.channelId = real.id;
-      updateChannelRows(el, counts, active);
       const known = (counts.channels || []).find((c) => c.id === real.id);
       if (known) $('.shell-page', el).textContent = known.name;
     }
@@ -254,6 +242,7 @@ function renderProjects(main, projects, takes, claudeNote, counts = {}, query = 
     <div class="home-head">
       <div class="hh-title"><h1>Projects</h1><div class="sub">Pick up where you left off, or start a new video from one of your formats.</div></div>
       <label class="search wide">${HOME_ICON.search}<span class="vh">Search projects</span><input id="q" type="search" placeholder="Search projects" autocomplete="off"></label>
+      <span class="theme-slot" id="themeSlot"></span>
       <button class="btn rec" id="recBtn" title="Make a project and record a take into it"><span class="rec-dot"></span>Record</button>
       <button class="btn primary" id="newBtn">+ New video</button>
     </div>
@@ -267,6 +256,7 @@ function renderProjects(main, projects, takes, claudeNote, counts = {}, query = 
       <div class="seg view-seg" role="group" aria-label="Show projects as"><button data-v="grid" aria-label="Grid" title="Grid">${VIEW_ICON.grid}</button><button data-v="list" aria-label="List" title="List">${VIEW_ICON.list}</button></div></div>
     <div id="grid"></div>
   </div>`));
+  $('#themeSlot', main).replaceWith(themeSwitch());
   $('#newBtn', main).onclick = () => newProjectDialog(null, takes);
   $('#recBtn', main).onclick = () => newProjectDialog('record', takes);
 
@@ -1253,7 +1243,7 @@ function miniWave(cv, video, peaksUrl) {
   // The look's colours (Settings → Appearance), read again when the look changes (here or in another tab).
   const colors = () => { const t = tokens(); col = { wave: t('--tl-wave', '#8e8d88'), played: t('--text', '#1a1a1c'), head: t('--playhead', '#c2410c'), line: t('--line', '#e6e5e1') }; };
   colors();
-  const offLook = onLook(() => { colors(); draw(); });
+  const offLook = onAppearance(() => { colors(); draw(); });
   function draw() {
     const w = cv.clientWidth, hh = cv.clientHeight, dpr = window.devicePixelRatio || 1;
     if (!w || !hh) return;
@@ -1801,7 +1791,6 @@ function makeCanvas(pane, { inspector, tools }, id, getP, hooks = {}) {
   let aoWave = null, aoPeaks = null; // a mic-only take: the note's waveform canvas and the take's peaks
   // The transport's volume and the picture size (Fit, 50 %, 100 % of the export's pixels), kept on this computer.
   let volume = 1, muteAll = false, picZoom = 'fit', stageRO = null, chipKey = '';
-  let stageFx = null; // Control room's title-safe guide and level meters (web/stagefx.js)
   try { const v = JSON.parse(localStorage.getItem('studio.canvas.volume') || 'null'); if (v) { volume = Math.min(1, Math.max(0, Number(v.volume ?? 1))); muteAll = Boolean(v.muted); } } catch {}
   try { const z = localStorage.getItem('studio.canvas.zoom'); if (z === '0.5' || z === '1') picZoom = Number(z); } catch {}
   let saved = []; // layouts saved with "+ Save layout" (the studio's .studio/layouts.json), shown as tiles in every project
@@ -1973,7 +1962,6 @@ function makeCanvas(pane, { inspector, tools }, id, getP, hooks = {}) {
       v.src = media(P.proxies[f]); document.body.append(v); videos.set(f, v);
     }
     master = videos.get(c.cam) || videos.get(c.screen) || videos.get(c.audio);
-    stageFx = stageExtras($('.canvas-wrap', wrap), stage, () => [...videos.values()]);
     aoWave = audioOnly ? $('.ao-wave', wrap) : null;
     const play = $('#play', wrap), time = $('#time', wrap);
     play.onclick = () => toggle();
@@ -3349,7 +3337,6 @@ function makeCanvas(pane, { inspector, tools }, id, getP, hooks = {}) {
 
   function teardownMedia() {
     cancelAnimationFrame(raf);
-    stageFx?.destroy(); stageFx = null;
     for (const v of videos.values()) { v.pause(); v.removeAttribute('src'); v.load(); v.remove(); }
     videos = new Map();
     master = null; aoWave = null; aoPeaks = null;
@@ -3509,7 +3496,7 @@ function makeRecordButton(root, id, getP) {
     if (S.phase !== 'idle') return;
     btn.disabled = true; text.textContent = 'Opening…';
     const P = getP();
-    try { await rec.recordPanel({ id, P, choices: P.recorder, opts, settingsLink: '#/settings/recorder' }); }
+    try { await rec.recordPanel({ id, P, choices: P.recorder, opts, settingsLink: '#/settings/recording/recorder' }); }
     finally { render(); }
   }
   render();
@@ -3557,5 +3544,7 @@ function takeMessage(ev) {
 }
 
 // The look before anything else (the Settings page doesn't load the status itself).
-api('/api/status').then((st) => { setSystem(st); applyLook(st.appearance); }).catch(() => {});
+api('/api/status').then((st) => { setSystem(st); applyAppearance(st.appearance); }).catch(() => {});
+// The editor's top bar: the theme switch (design V2 §3). Home pages put their own in their headers.
+$('#barTheme')?.append(themeSwitch());
 router();

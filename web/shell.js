@@ -1,25 +1,20 @@
-// The app shell (Direction A, artboard 1): the sidebar every non-project, non-Settings page shares.
-// New video · Make (Projects, Recordings) · My style (All channels, one row per channel) · Assets (Library) ·
-// Automation (Skills, Scheduled) · Settings · the agent card. At 980px and narrower it becomes a top bar with a Menu
-// button that opens the same sidebar as a drawer.
-import { $, esc, h } from './ui.js';
-import { channelHref } from './nav.js';
+// The app shell (design V2 §2): the rail every non-project page shares, Settings included.
+// Top to bottom: logo · New video · Projects · Recordings · ─ · Channels · ─ · Tools: Library, Skills, Scheduled ·
+// Ask Claude (⌘J) · Settings · the collapse toggle. Two widths: icons only (68px) or icons and names (232px),
+// settings appearance.sidebar, mirrored in localStorage so the early script in index.html sets <html data-rail>
+// before the first paint. At 980px and narrower it becomes a top bar with a Menu button that opens the rail, with
+// names, as a drawer over a scrim.
+import { $, esc } from './ui.js';
+import { icon } from './icons.js';
+import { TERMS } from './terms.js';
+import { currentAppearance, onAppearance, saveAppearance } from './appearance.js';
 
-const svg = (body) => `<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">${body}</svg>`;
-export const SHELL_ICON = {
-  plus: svg('<path d="M8 3v10M3 8h10"/>'),
-  projects: svg('<rect x="2" y="2" width="5" height="5" rx="1.2"/><rect x="9" y="2" width="5" height="5" rx="1.2"/><rect x="2" y="9" width="5" height="5" rx="1.2"/><rect x="9" y="9" width="5" height="5" rx="1.2"/>'),
-  recordings: svg('<circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="2.3" class="fill"/>'),
-  channels: svg('<rect x="2" y="2.5" width="12" height="3.5" rx="1"/><rect x="2" y="7.25" width="12" height="3.5" rx="1"/><path d="M4 13.5h8"/>'),
-  library: svg('<path d="M2 4.5h4.2l1.4 1.5H14v6.5a1 1 0 01-1 1H3a1 1 0 01-1-1z"/>'),
-  skills: svg('<path d="M8 2l1.6 3.7L13.5 6l-3 2.6.9 3.9L8 10.5 4.6 12.5l.9-3.9-3-2.6 3.9-.3z"/>'),
-  scheduled: svg('<circle cx="8" cy="8.5" r="5.5"/><path d="M8 5.5v3l2 1.5M6 1.5h4"/>'),
-  menu: svg('<path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/>'),
-  close: svg('<path d="M3.5 3.5l9 9M12.5 3.5l-9 9"/>'),
-};
+const RAIL_ICON = 18;
+const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
+export const ASK_KEYS = isMac ? '⌘J' : 'Ctrl J';
 
 // Text on a channel colour: white or near-black, whichever reads better (WCAG contrast). The theme's --text can't be
-// used here: it turns light in the dark looks, while the brand colour stays the same.
+// used here: it turns light in the dark theme, while the brand colour stays the same.
 function luminance(hex) {
   const n = parseInt(hex.slice(1), 16);
   const lin = (c) => { const v = c / 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
@@ -38,42 +33,57 @@ export function channelAvatar(channel, size = '') {
   return `<span class="ch-av${size ? ` ${size}` : ''}${color ? ' branded' : ''}" aria-hidden="true"${style}>${initial}</span>`;
 }
 
-const PAGE_NAMES = { projects: 'Projects', recordings: 'Recordings', library: 'Library', skills: 'Skills', scheduled: 'Scheduled', channels: 'All channels' };
+const PAGE_NAMES = {
+  projects: 'Projects', recordings: 'Recordings', library: 'Library', skills: 'Skills', scheduled: 'Scheduled',
+  channels: `All ${TERMS.channels.toLowerCase()}`, settings: 'Settings',
+};
 
-// active: { page, channelId }. counts: /api/app/counts (with `channels`). settingsLink: homeNav(counts) markup.
-export function sidebarMarkup({ active, counts = {}, projects = [], takes = [], settingsLink = '', agentCard = '' }) {
-  const channels = counts.channels || [];
-  const fresh = takes.filter((t) => !t.used).length;
-  const item = (key, href, label, icon, extra = '') => {
+// The Ask Claude button's tooltip: the agent and, on a Claude plan, its usage (the old sidebar card's contents).
+// agent: { ok, name, sub, usage: '5h 20% · 7d 41%' | '' }.
+export function askTip(agent) {
+  if (!agent) return `Ask Claude (${ASK_KEYS})`;
+  const bits = [agent.name, agent.sub, agent.usage].filter(Boolean).join(' · ');
+  return `Ask Claude (${ASK_KEYS})${bits ? ` — ${bits}` : ''}`;
+}
+
+// active: { page }. counts: /api/app/counts. takes: /api/takes. agent: see askTip. forceIcons: Settings keeps the rail
+// as icons whatever the preference (and hides the toggle, since the preference is a setting on that page).
+export function sidebarMarkup({ active, counts = {}, takes = [], agent = null, forceIcons = false }) {
+  const freshTakes = takes.filter((t) => !t.used).length;
+  const dot = (title, kind = '') => `<span class="nav-dot${kind ? ` ${kind}` : ''}" title="${esc(title)}"><span class="vh">${esc(title)}</span></span>`;
+  const item = (key, href, label, name, extra = '') => {
     const on = active.page === key;
-    return `<a class="nav-i${on ? ' on' : ''}" href="${href}"${on ? ' aria-current="page"' : ''}>${icon}<span class="ni-t">${esc(label)}</span>${extra}</a>`;
+    return `<a class="nav-i${on ? ' on' : ''}" href="${href}" data-tip="${esc(label)}"${on ? ' aria-current="page"' : ''}>`
+      + `${icon(name, RAIL_ICON)}<span class="ni-t">${esc(label)}</span>${extra}</a>`;
   };
-  const count = (n, title = '') => (n ? `<span class="n"${title ? ` title="${esc(title)}"` : ''}>${n}</span>` : '');
-  const group = (id, label, body, tools = '') => `<div class="nav-g" role="group" aria-labelledby="ng-${id}">
-      <div class="nav-gh"><span class="nav-gl" id="ng-${id}">${label}</span>${tools}</div>${body}</div>`;
-  const channelRow = (c) => {
-    const on = active.page === 'channel' && active.channelId === c.id;
-    const pending = c.pendingMemories ? `<span class="nav-dot" title="${c.pendingMemories} memor${c.pendingMemories === 1 ? 'y' : 'ies'} to review"><span class="vh">${c.pendingMemories} to review</span></span>` : '';
-    return `<a class="nav-i ch-row${on ? ' on' : ''}" href="${channelHref(c.id)}"${on ? ' aria-current="page"' : ''}>${channelAvatar(c)}<span class="ni-t">${esc(c.name)}</span>${pending}<span class="n" title="${c.formats} format${c.formats === 1 ? '' : 's'}">${c.formats}</span></a>`;
-  };
-  const recordingsExtra = fresh
-    ? `<span class="pill accent" title="${fresh} take${fresh === 1 ? '' : 's'} not in a project yet">${fresh} new</span>`
-    : count(takes.length);
-  return `<nav class="side-nav shell-nav" id="shellNav" aria-label="Video Octopus">
+  const recordingsDot = freshTakes
+    ? dot(`${freshTakes} new take${freshTakes === 1 ? '' : 's'} not in a project yet`) : '';
+  const libraryDot = counts.inbox ? dot(`${counts.inbox} waiting in the inbox`) : '';
+  const skillsDot = counts.skillUpdates > 0
+    ? dot(`${counts.skillUpdates} core update${counts.skillUpdates === 1 ? '' : 's'} to review`) : '';
+  const settingsDot = counts.update ? dot('A new version of Video Octopus is ready (Settings › General › Updates)') : '';
+  const askWarn = agent && !agent.ok ? dot(`${agent.name || 'The agent'}: ${agent.sub || 'needs attention'}`, 'warn') : '';
+  const channelsOn = active.page === 'channels' || active.page === 'channel';
+  const expanded = !forceIcons && currentAppearance().sidebar !== 'icons';
+  return `<nav class="side-nav shell-nav${forceIcons ? ' force-icons' : ''}" id="shellNav" aria-label="Video Octopus">
       <div class="shell-nav-top">
-        <a class="brand" href="#/"><span class="logo" aria-hidden="true"><i></i></span>Video Octopus</a>
-        <button type="button" class="btn icon-btn shell-close" data-shell-close aria-label="Close menu">${SHELL_ICON.close}</button>
+        <a class="brand" href="#/" aria-label="Video Octopus, all projects"><span class="logo" aria-hidden="true"><i></i></span><span class="ni-t brand-t">Video Octopus</span></a>
+        <button type="button" class="btn icon-btn shell-close" data-shell-close aria-label="Close menu">${icon('close')}</button>
       </div>
-      <button type="button" class="btn primary wide shell-new" data-shell-new>${SHELL_ICON.plus}<span>New video</span></button>
-      ${group('make', 'Make', item('projects', '#/', 'Projects', SHELL_ICON.projects, count(projects.length)) + item('recordings', '#/recordings', 'Recordings', SHELL_ICON.recordings, recordingsExtra))}
-      ${group('style', 'My style', item('channels', '#/channels', 'All channels', SHELL_ICON.channels) + `<div data-channel-rows>${channels.map(channelRow).join('')}</div>`,
-        `<button type="button" class="nav-add" data-shell-add aria-label="Add a channel" title="Add a channel">${SHELL_ICON.plus}</button>`)}
-      ${group('assets', 'Assets', item('library', '#/library', 'Library', SHELL_ICON.library, count(counts.inbox, counts.inbox ? `${counts.inbox} waiting in the inbox` : '')))}
-      ${group('auto', 'Automation', item('skills', '#/skills', 'Skills', SHELL_ICON.skills, counts.skillUpdates > 0 ? `<span class="nav-dot" title="${counts.skillUpdates} core update${counts.skillUpdates === 1 ? '' : 's'} to review"><span class="vh">Updates to review</span></span>` : '')
-        + item('scheduled', '#/scheduled', 'Scheduled', SHELL_ICON.scheduled, count(counts.schedules)))}
+      <button type="button" class="nav-i shell-new" data-shell-new data-tip="New video">${icon('plus', RAIL_ICON)}<span class="ni-t">New video</span></button>
+      ${item('projects', '#/', 'Projects', 'projects')}
+      ${item('recordings', '#/recordings', 'Recordings', 'recordings', recordingsDot)}
+      <hr class="nav-sep">
+      <a class="nav-i${channelsOn ? ' on' : ''}" href="#/channels" data-tip="${esc(TERMS.channels)}"${channelsOn ? ' aria-current="page"' : ''}>${icon('layers', RAIL_ICON)}<span class="ni-t">${esc(TERMS.channels)}</span></a>
+      <hr class="nav-sep">
+      <div class="nav-gl" aria-hidden="true">Tools</div>
+      ${item('library', '#/library', 'Library', 'library', libraryDot)}
+      ${item('skills', '#/skills', 'Skills', 'skills', skillsDot)}
+      ${item('scheduled', '#/scheduled', 'Scheduled', 'scheduled')}
       <span class="gap"></span>
-      ${settingsLink}
-      ${agentCard}
+      <button type="button" class="nav-i ask" data-open-assistant data-tip="${esc(askTip(agent))}" data-tip-always>${icon('claude', RAIL_ICON)}<span class="ni-t">Ask Claude</span><kbd class="ni-k">${ASK_KEYS}</kbd>${askWarn}</button>
+      ${item('settings', '#/settings', 'Settings', 'settings', settingsDot)}
+      <button type="button" class="nav-i shell-toggle" data-shell-toggle aria-expanded="${expanded}" aria-label="${expanded ? 'Collapse sidebar' : 'Expand sidebar'}" data-tip="Expand sidebar">${icon('sidebar', RAIL_ICON)}<span class="ni-t">Collapse</span></button>
     </nav>`;
 }
 
@@ -82,16 +92,41 @@ export function topBarMarkup(pageName) {
   return `<header class="shell-top">
       <a class="brand" href="#/" aria-label="Video Octopus, all projects"><span class="logo" aria-hidden="true"><i></i></span></a>
       <span class="shell-page">${esc(pageName)}</span>
-      <button type="button" class="btn shell-menu" data-shell-menu aria-expanded="false" aria-controls="shellNav">${SHELL_ICON.menu}<span>Menu</span></button>
+      <button type="button" class="btn shell-menu" data-shell-menu aria-expanded="false" aria-controls="shellNav">${icon('menu')}<span>Menu</span></button>
     </header>
     <div class="shell-scrim" data-shell-scrim hidden></div>`;
 }
-export const pageName = (active, channelName) => (active.page === 'channel' ? channelName || 'Channel' : PAGE_NAMES[active.page] || 'Projects');
+export const pageName = (active, channelName) => (active.page === 'channel' ? channelName || TERMS.channel : PAGE_NAMES[active.page] || 'Projects');
 
-// The drawer: Menu opens it over a scrim, focus moves in; Esc, the scrim, Close or following a link closes it and
-// focus returns to Menu. Returns { teardown }.
-export function wireShell(el, { onNewVideo, onAddChannel }) {
+// The rail's tooltips: with icons only, every item names itself on hover and keyboard focus; Ask Claude always shows
+// its agent and usage. One floating label on <body>, so the rail's own scrolling never clips it.
+let tipEl = null;
+function showTip(target) {
+  const nav = target.closest('.shell-nav');
+  const iconsOnly = nav?.classList.contains('force-icons') || document.documentElement.dataset.rail === 'icons';
+  if (!target.hasAttribute('data-tip-always') && !iconsOnly) return hideTip();
+  if (innerWidth <= 980) return hideTip(); // the drawer always shows names
+  if (!tipEl) {
+    tipEl = document.createElement('div');
+    tipEl.className = 'rail-tip';
+    tipEl.setAttribute('role', 'tooltip');
+    tipEl.id = 'railTip';
+    document.body.append(tipEl);
+  }
+  tipEl.textContent = target.dataset.tip;
+  tipEl.hidden = false;
+  const r = target.getBoundingClientRect();
+  tipEl.style.left = `${Math.round(r.right + 10)}px`;
+  tipEl.style.top = `${Math.round(r.top + r.height / 2)}px`;
+}
+function hideTip() { if (tipEl) tipEl.hidden = true; }
+
+// The drawer and the rail's controls: Menu opens the drawer over a scrim, focus moves in; Esc, the scrim, Close or
+// following a link closes it and focus returns to Menu. The foot toggle switches icons ⇄ icons and names and saves it.
+// Returns { teardown }.
+export function wireShell(el, { onNewVideo }) {
   const nav = $('#shellNav', el), menu = $('[data-shell-menu]', el), scrim = $('[data-shell-scrim]', el);
+  const toggle = $('[data-shell-toggle]', el);
   const isOpen = () => el.classList.contains('drawer-open');
   const open = () => {
     el.classList.add('drawer-open');
@@ -110,17 +145,34 @@ export function wireShell(el, { onNewVideo, onAddChannel }) {
   menu.onclick = () => (isOpen() ? close() : open());
   scrim.onclick = () => close();
   $('[data-shell-close]', el).onclick = () => close();
-  nav.addEventListener('click', (e) => { if (e.target.closest('a[href]')) close(false); });
+  nav.addEventListener('click', (e) => {
+    hideTip();
+    if (e.target.closest('a[href]') || e.target.closest('[data-open-assistant]')) close(false);
+  });
   $('[data-shell-new]', el).onclick = () => { close(false); onNewVideo(); };
-  $('[data-shell-add]', el).onclick = () => { close(false); onAddChannel(); };
+  const paintToggle = () => {
+    const expanded = currentAppearance().sidebar !== 'icons';
+    toggle.setAttribute('aria-expanded', String(expanded));
+    toggle.setAttribute('aria-label', expanded ? 'Collapse sidebar' : 'Expand sidebar');
+  };
+  toggle.onclick = () => {
+    hideTip();
+    saveAppearance({ sidebar: currentAppearance().sidebar === 'icons' ? 'labels' : 'icons' });
+  };
+  const offAppearance = onAppearance(paintToggle);
+  const over = (e) => { const t = e.target.closest?.('[data-tip]'); if (t) showTip(t); };
+  const out = (e) => { if (!e.relatedTarget || !nav.contains(e.relatedTarget)) hideTip(); };
+  nav.addEventListener('pointerover', over);
+  nav.addEventListener('focusin', over);
+  nav.addEventListener('pointerleave', hideTip);
+  nav.addEventListener('focusout', out);
+  nav.addEventListener('scroll', hideTip, { passive: true });
   document.addEventListener('keydown', key);
-  return { teardown: () => document.removeEventListener('keydown', key) };
-}
-
-// Redraws the channel rows (after a format is made or archived) without touching the rest of the page.
-export function updateChannelRows(el, counts, active) {
-  const box = $('[data-channel-rows]', el);
-  if (!box) return;
-  const fresh = h(sidebarMarkup({ active, counts }));
-  box.replaceWith($('[data-channel-rows]', fresh));
+  return {
+    teardown: () => {
+      document.removeEventListener('keydown', key);
+      offAppearance();
+      hideTip();
+    },
+  };
 }

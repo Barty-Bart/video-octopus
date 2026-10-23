@@ -195,11 +195,6 @@
 .vf-workflow-warning p { margin: 0 0 6px; }
 .vf-workflow-warning ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; overflow-wrap: anywhere; }
 
-/* Keep the studio's floating "Ask Claude" button clear of the conversation composer, as beside other side panels. */
-@media (min-width: 981px) {
-  body:has(.vf3.talking .vf3-chat):not(:has(#modal:not([hidden]))) .ask-claude { right: calc(460px + 24px); }
-}
-
 /* ---- Files tab (skill assets and knowledge) and the Storage page's skill files ---- */
 .vf-files { display: grid; gap: 10px; }
 .vf-files-bar { display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap; }

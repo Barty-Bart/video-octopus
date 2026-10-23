@@ -5,7 +5,8 @@ import { esc, h, api, toast, ago, plural, confirmBox } from './ui.js';
 
 const S = {}; // what the page last heard, so a redraw (the toggle's save) doesn't lose an update's or a sync's result
 
-export function updatesSection(V, save, { row, group, toggle }) {
+// advanced: a box at the bottom of Settings › General (its Advanced section) for the optional starter files.
+export function updatesSection(V, save, { row, group, toggle, advanced = null }) {
   const wrap = h('<div class="upd"></div>');
   wrap.append(group('Video Octopus', row('This copy', '', h('<div class="found"><span class="sub">Looking…</span></div>'))));
   const load = () => api('/api/app/updates').then((u) => { S.u = u; draw(); }).catch((e) => wrap.replaceChildren(h(`<div class="notice">${esc(e.message)}</div>`)));
@@ -246,7 +247,14 @@ export function updatesSection(V, save, { row, group, toggle }) {
     });
     const login = group('Start', row('Open Video Octopus when I log in', L.on && !L.here ? `${hint} <b>It starts another copy of Video Octopus now</b>: switch it off and on to point it at this one.` : hint, sw));
 
-    wrap.replaceChildren(group('Video Octopus', ...parts), preferences, skillGroup, starter, login);
+    if (advanced) {
+      advanced.querySelector('[data-starter]')?.remove();
+      starter.dataset.starter = '';
+      advanced.prepend(starter);
+      wrap.replaceChildren(group('Video Octopus', ...parts), preferences, skillGroup, login);
+    } else {
+      wrap.replaceChildren(group('Video Octopus', ...parts), preferences, skillGroup, starter, login);
+    }
   };
   load();
   return wrap;
@@ -314,10 +322,11 @@ function comparisonView(comparison, close) {
 let badgeRevision = 0;
 export function setUpdateBadge(nav, count) {
   badgeRevision++;
-  nav.querySelectorAll('a[href="#/settings/updates"]').forEach(a => {
-    const existing = a.querySelector('.n');
+  // The rail's Settings item and the General group in Settings' list.
+  nav.querySelectorAll('.shell-nav a[href="#/settings"], .set-nav a[href="#/settings/general"]').forEach(a => {
+    const existing = a.querySelector('.nav-dot');
     if (!(count > 0)) { existing?.remove(); return; }
-    if (!existing) a.append(h('<span class="n wait" title="An app update is available">New</span>'));
+    if (!existing) a.append(h('<span class="nav-dot" title="An app update is available"><span class="vh">An app update is available</span></span>'));
   });
 }
 export function markUpdateBadge(nav) {

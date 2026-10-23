@@ -1,5 +1,6 @@
 // The Settings page's data: one section per row (Claude, Transcription, Rendering, Recording, Sound, Folders,
-// Appearance, Look). Appearance is how Video Octopus itself looks (web/looks.css); Look is the video's own look.
+// Appearance, Look). Appearance is how Video Octopus itself looks (theme, accent, sidebar: web/appearance.js); Look is
+// the video's own look.
 // Non-secret values go in local/settings.json next to the app's other settings; API keys live in the system's key
 // store (keychain.mjs: the Keychain on a Mac, DPAPI on Windows) and reach Claude Code and the skills only as
 // environment variables.
@@ -38,8 +39,18 @@ export const KEYS = {
 
 // faster-whisper models, biggest first (their repos, sizes, makers and licences: server/hfmodels.mjs, from Hugging Face).
 export const MODELS = Object.keys(FAMILIES.whisper.models);
-// Video Octopus's looks (Settings → Appearance, web/looks.css). Edit Bay is today's look and the default.
-export const LOOKS = ['editbay', 'night', 'paper', 'frost', 'swiss', 'clay', 'atelier', 'control', 'cinema', 'split'];
+// Settings → General → Appearance (design V2, 23 Oct 2026): Light, Dark or Match system, one of four accents, and the
+// sidebar as icons only or icons and names. These replaced ten "looks"; THEME_OF_LOOK maps each old look to its theme
+// (web/index.html's early script and web/appearance.js map an old browser cache the same way).
+export const THEMES = ['light', 'dark', 'system'];
+export const ACCENTS = ['orange', 'blue', 'green', 'violet'];
+export const SIDEBARS = ['icons', 'labels'];
+export const THEME_OF_LOOK = {
+  editbay: 'system',
+  paper: 'light', swiss: 'light', clay: 'light', atelier: 'light',
+  night: 'dark', frost: 'dark', control: 'dark', cinema: 'dark', split: 'dark',
+};
+export const OLD_LOOKS = Object.keys(THEME_OF_LOOK);
 export const LANGS = { auto: 'Detect', en: 'English', de: 'German', es: 'Spanish', fr: 'French', it: 'Italian', nl: 'Dutch', pl: 'Polish', pt: 'Portuguese' };
 
 const SECTIONS = {
@@ -59,7 +70,8 @@ const SECTIONS = {
   recorder: { screen: 'screen', camera: 'default', mic: 'default', target: 'replace', countdown: 3 },
   sound: { claude: true, epidemic: false, library: '', fxDb: -18 },
   look: { background: 'night-desk', pip: 'rounded', colors: [], fonts: '' },
-  appearance: { look: 'editbay', calm: false },
+  // migratedFrom: the old look's id after the one-time migration, until the creator dismisses the note ('' after).
+  appearance: { theme: 'system', accent: 'orange', sidebar: 'labels', migratedFrom: '' },
   editing: { trimHighlight: false, trimLens: false },
   // Settings → Rendering → Object separation: the SAM 2.1 model the object-separation skill uses; auto = the one
   // Setup recommends for this computer (server/sam2.mjs).
@@ -71,7 +83,43 @@ const SECTIONS = {
   // "How a video gets made here" dialog on the first project page (web/rail.js); 'dismissed' after Got it or Start.
   help: { stepsIntro: '' },
 };
-export const section = (name, s = settings()) => (name === 'recorder' ? recorderSection(s) : { ...SECTIONS[name], ...(s[name] || {}) });
+export const section = (name, s = settings()) => {
+  if (name === 'recorder') return recorderSection(s);
+  if (name === 'appearance') return appearanceSection(s);
+  return { ...SECTIONS[name], ...(s[name] || {}) };
+};
+
+// The appearance a settings file had before the themes: { look, calm } → { theme, migratedFrom }. Pure, for tests.
+// Returns null when there is nothing to migrate (no old keys). A missing or unknown look counts as Edit Bay, the old
+// default, which becomes Match system.
+export function migrateAppearance(stored) {
+  const a = stored && typeof stored === 'object' ? stored : {};
+  if (!('look' in a) && !('calm' in a)) return null;
+  const look = OLD_LOOKS.includes(a.look) ? a.look : 'editbay';
+  const next = { ...a };
+  delete next.look;
+  delete next.calm;
+  if (!THEMES.includes(next.theme)) next.theme = THEME_OF_LOOK[look];
+  next.migratedFrom = look;
+  return next;
+}
+
+// Settings → Appearance, migrated once: a file that still has `look` gets the theme written in its place (and the old
+// keys removed) the first time it is read, so the change happens server side for every page and browser.
+export function appearanceSection(s = settings()) {
+  let stored = s.appearance && typeof s.appearance === 'object' ? s.appearance : {};
+  const migrated = migrateAppearance(stored);
+  if (migrated) {
+    try { saveSettings({ appearance: migrated }); } catch {}
+    stored = migrated;
+  }
+  const out = { ...SECTIONS.appearance };
+  if (THEMES.includes(stored.theme)) out.theme = stored.theme;
+  if (ACCENTS.includes(stored.accent)) out.accent = stored.accent;
+  if (SIDEBARS.includes(stored.sidebar)) out.sidebar = stored.sidebar;
+  if (OLD_LOOKS.includes(stored.migratedFrom)) out.migratedFrom = stored.migratedFrom;
+  return out;
+}
 
 // The recorder's choices, only the keys it has. Older settings files kept the screen, camera and mic under
 // recorder.browser, next to keys of an earlier recorder (engine, display, camera, mic, mode): the recorder.browser
@@ -100,7 +148,7 @@ const RULES = {
   recorder: { screen: ['screen', 'none'], camera: 'str', mic: 'str', target: ['replace', 'layer'], countdown: [0, 10] },
   sound: { claude: 'bool', epidemic: 'bool', library: 'str', fxDb: [-40, 0] },
   look: { background: ['night-desk', 'stars', 'led'], pip: ['rounded', 'circle', 'frame'], colors: 'colors', fonts: 'str' },
-  appearance: { look: LOOKS, calm: 'bool' },
+  appearance: { theme: THEMES, accent: ACCENTS, sidebar: SIDEBARS, migratedFrom: ['', ...OLD_LOOKS] },
   editing: { trimHighlight: 'bool', trimLens: 'bool' },
   objsep: { model: ['auto', ...SAM2_SIZES] },
   setup: { done: 'bool', agent: ['', 'claude', 'codex', 'pi', 'lmstudio', 'ollama'] },
@@ -144,7 +192,9 @@ export function saveSection(name, patch = {}) {
   }
   const rules = RULES[name];
   if (!rules) throw new Error('Unknown section.');
-  const next = name === 'recorder' ? recorderSection() : { ...(settings()[name] || {}) };
+  const next = name === 'recorder' ? recorderSection()
+    : name === 'appearance' ? appearanceSection()
+      : { ...(settings()[name] || {}) };
   for (const [k, v] of Object.entries(patch)) {
     if (!(k in rules)) throw new Error(`Unknown setting: ${k}`);
     next[k] = clean(rules[k], v);

@@ -40,7 +40,7 @@ export function tokens(el = document.documentElement) {
   return (n, d) => canvasColor(s.getPropertyValue(n).trim() || d);
 }
 // Which look the page is in (Settings → Appearance): a canvas redraws with new colours when it changes.
-export const lookKey = () => { const d = document.documentElement.dataset; return `${d.look || ''}${'calm' in d ? '+' : ''}`; };
+export const lookKey = () => { const d = document.documentElement.dataset; return `${d.theme || ''}/${d.accent || ''}`; }; // Settings › Appearance
 const LS = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch {} return null; };
 const SNAP_PX = 8, EDGE_PX = 6, DRAG_PX = 3;
 const cmd = (e) => (isMac ? e.metaKey : e.ctrlKey);

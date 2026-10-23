@@ -315,12 +315,14 @@ copy a format to reuse its complete approved package. Source media stay in place
 
 ## Brand profiles, instructions and New video
 
-Since the Direction A shell (23 Oct 2026) a profile is shown as a **channel** under **My style** in the
-sidebar. Each channel's hub (`#/channel/<id>`) has **Formats**, **Brand** and **Memories** tabs;
+Since the Direction A shell (23 Oct 2026) a profile is shown as a **channel**; the design V2 rail links to
+**Channels** (`#/channels`). Each channel's hub (`#/channel/<id>`) has **Formats**, **Brand** and **Memories** tabs;
 **All channels** (`#/channels`) lists every channel, including archived ones, and holds the shared
 **Instructions** and the Everything memories. Old addresses (`#/learning`, `#/memories`,
 `#/settings/brand`, `#/settings/instructions`, `#/storage`, `#/dashboard`) redirect through
-`legacyRoute()` in `web/nav.js`. Storage & backups and Usage are Settings sections.
+`legacyRoute()` in `web/nav.js`. Settings has six groups (`#/settings/general|agent|recording|editing|export|storage`);
+the old one-section addresses (`#/settings/claude`, `#/settings/usage`…) land on their group, at the section.
+Storage & backups and Usage are sections of Settings › Storage.
 
 The channel's **Brand** tab owns identity, audience, voice, colours, fonts, guidance and uploaded
 brand assets. A profile can have several learned formats. Each format can select

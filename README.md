@@ -45,7 +45,7 @@ Motion-graphics infrastructure is built in, but a specialized motion-design skil
 Have these ready:
 
 - Git (and repository access for private copies).
-- Node.js **22.16 or newer on Node 22, or Node 24 or newer** (Node 24 LTS recommended). Node 23 is unsupported: its built-in SQLite lacks the full-text search (FTS5) that memories use. The launchers check the version and FTS5 before opening the app. Setup and Settings → Updates warn, without blocking, when Node is older than its line's latest security release (22.23.4 or 24.22.1 as of October 2026).
+- Node.js **22.16 or newer on Node 22, or Node 24 or newer** (Node 24 LTS recommended). Node 23 is unsupported: its built-in SQLite lacks the full-text search (FTS5) that memories use. The launchers check the version and FTS5 before opening the app. Setup and Settings → General → Updates warn, without blocking, when Node is older than its line's latest security release (22.23.4 or 24.22.1 as of October 2026).
 - Chrome or Edge for the browser UI and recording.
 - For AI work, a separately installed agent and a usable model/provider. You can enter the editor without one.
 
@@ -133,11 +133,11 @@ All three agents receive validated options. New videos pin the chosen profile's 
 
 ### Keep custom workflows separate
 
-Add independent skills under `<studio>/skills/custom/<unique-name>/SKILL.md`, then **Settings → Updates → Refresh skills**. Use a distinct name, such as `my-channel-intro`, including in its frontmatter. The GitHub installer also uses this area and reserves core and existing personal names, even when disabled or inactive. App updates never fetch newer versions of external skill repositories automatically.
+Add independent skills under `<studio>/skills/custom/<unique-name>/SKILL.md`, then **Settings → General → Updates → Refresh skills**. Use a distinct name, such as `my-channel-intro`, including in its frontmatter. The GitHub installer also uses this area and reserves core and existing personal names, even when disabled or inactive. App updates never fetch newer versions of external skill repositories automatically.
 
 For a deeper change to a core workflow:
 
-1. Select **Make a custom version…** in Settings → Updates. It copies the core into your editable `skills/overrides/<stable-id>/` folder and selects that copy.
+1. Select **Make a custom version…** in Settings → General → Updates. It copies the core into your editable `skills/overrides/<stable-id>/` folder and selects that copy.
 2. Edit the displayed source folder, then **Refresh skills**. Avoid editing the generated `.claude/skills/` copies. Direct edits there are preserved, but conflicting edits to both copies require manual reconciliation.
 3. Later, **Compare with core** shows differences. **Keep my version** acknowledges the available update without merging it. **Use latest core** selects the current core while retaining your custom source. **Use my custom version** selects the saved fork again.
 
@@ -150,7 +150,7 @@ A saved fork records its original core version separately from the latest availa
 For an installation made with `git clone`:
 
 1. Finish active agent work, uploads, exports and setup downloads. Save or dismiss unfinished recordings.
-2. Open **Settings → Updates → Check for updates → Update app and skills**.
+2. Open **Settings → General → Updates → Check for updates → Update app and skills**.
 3. The supervised launcher pulls a fast-forward app update and restarts. Startup activates matching core skills before new agent work. Other launch methods show manual restart guidance. No conversation prompt or paid operation is automatically replayed.
 4. Review any notices about custom versions, new requirements or conflicting names.
 
@@ -215,7 +215,7 @@ Other limitations: layer exports do not preserve every MP4 transition or animate
 
 ## Distribution status
 
-No top-level application licence has been selected. [Asset provenance](docs/asset-provenance.md) records the synthetic appearance previews and bundled font notices under `web/fonts/`; third-party models, dependencies and optional skills have separate terms. Do not infer that the whole application or every included asset has the same licence.
+No top-level application licence has been selected. [Asset provenance](docs/asset-provenance.md) records the bundled Geist font notice under `web/fonts/`; third-party models, dependencies and optional skills have separate terms. Do not infer that the whole application or every included asset has the same licence.
 
 Automatic publishing, a managed cloud rendering service and a complete packaged installer are not shipped features.
 

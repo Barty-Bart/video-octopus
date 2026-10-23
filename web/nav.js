@@ -17,13 +17,25 @@ export function makeRouter(open, { onError = (e) => console.error(e) } = {}) {
   };
 }
 
-// Direction A routes (23 Oct 2026). Old addresses keep working: the router asks `legacyRoute` first and, when it
+// Direction A routes (23 Oct 2026) and the V2 Settings groups. Old addresses keep working: the router asks `legacyRoute` first and, when it
 // returns a new address, replaces the old one in place (no extra history entry) before drawing the page.
 // `_` as a channel id means "work it out on the page": from the format, session, chat or scope in the query, else the
 // remembered channel, else the first one.
 const withQuery = (base, query) => {
   const text = query.toString();
   return text ? `${base}?${text}` : base;
+};
+
+// Settings in six groups (design V2 §8): #/settings/<group>[/<section>]. The old one-section-per-page addresses
+// (#/settings/claude…) land on their group, scrolled to the section.
+export const SETTINGS_GROUPS = ['general', 'agent', 'recording', 'editing', 'export', 'storage'];
+export const SETTINGS_SECTION_GROUP = {
+  appearance: 'general', updates: 'general',
+  claude: 'agent',
+  recorder: 'recording', transcribe: 'recording',
+  editing: 'editing', sound: 'editing', look: 'editing',
+  render: 'export',
+  folders: 'storage', storage: 'storage', usage: 'storage',
 };
 
 export function legacyRoute(hash) {
@@ -43,10 +55,14 @@ export function legacyRoute(hash) {
     if (!query.has('chat') && scope.startsWith('profile:')) return `#/channel/${encodeURIComponent(scope.slice('profile:'.length))}/memories`;
     return withQuery('#/channel/_/memories', query);
   }
-  if (path === '#/storage') return '#/settings/storage';
-  if (path === '#/dashboard') return '#/settings/usage';
+  if (path === '#/storage') return '#/settings/storage/storage';
+  if (path === '#/dashboard') return '#/settings/storage/usage';
   if (path === '#/settings/brand') return '#/channel/_/brand';
   if (path === '#/settings/instructions') return '#/channels/instructions';
+  const old = /^#\/settings\/([a-z]+)$/.exec(path);
+  if (old && !SETTINGS_GROUPS.includes(old[1]) && SETTINGS_SECTION_GROUP[old[1]]) {
+    return withQuery(`#/settings/${SETTINGS_SECTION_GROUP[old[1]]}/${old[1]}`, query);
+  }
   return null;
 }
 

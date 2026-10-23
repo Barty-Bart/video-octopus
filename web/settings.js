@@ -1,18 +1,23 @@
 import { TERMS } from './terms.js';
-// Settings (#/settings/<section>), the Video Octopus assistant (a side panel here and on Setup, a drawer on Home) and
-// the routing for the app-level pages. Design brief 2, §5–6: one section per row in a left list; API keys show
-// as "•••• set ✓ · Replace · Test · Remove" and never come back to the page.
+// Settings (#/settings/<group>[/<section>]), the Video Octopus assistant (a side panel on Setup, a drawer elsewhere)
+// and the routing for the app-level pages. Design V2 §8: six groups in the shell, each a page of plain rows (label and
+// one line on the left, the control on the right); API keys show as "•••• set ✓ · Replace · Test · Remove" and never
+// come back to the page.
 import { $, esc, h, api, toast, tilde, ENGINES } from './ui.js';
 import { setupPage, studioCreator } from './setup.js';
 import { renderDashboard } from './dashboard.js';
 import { renderDatabaseRecovery } from './learning.js';
-import { channelHref } from './nav.js';
-import { LOOKS, applyLook } from './appearance.js';
+import { channelHref, SETTINGS_SECTION_GROUP } from './nav.js';
+import { currentAppearance, saveAppearance } from './appearance.js';
+import { OLD_LOOK_NAMES } from './theme-map.js';
+import { sidebarMarkup, topBarMarkup, wireShell } from './shell.js';
+import { icon } from './icons.js';
 import { updatesSection, markUpdateBadge } from './updates.js';
 import { support, browserName } from './recorder.js';
+import { usageView } from './plan-usage.js';
 
-let CTX = null;          // { app, makeChat, loadStatus } from app.js
-let backTo = '#/';       // where "Back" goes: the last page that wasn't Settings or Setup
+let CTX = null;          // { app, makeChat, loadStatus, status, railAgent, newVideo } from app.js
+let askAvailable = false; // the Ask Claude drawer and ⌘J: every page but a project's (it has its own chat) and Setup
 
 // Called by app.js's router for every route; returns a page ({ teardown }) or null for the app's own pages.
 export async function appPage(hash, ctx) {
@@ -21,12 +26,11 @@ export async function appPage(hash, ctx) {
   // The project you're in: outside projects, the drawer's "This project" is this one.
   const pm = /^#\/p\/([^/?]+)/.exec(hash);
   if (pm) rememberProject(decodeURIComponent(pm[1]));
-  const show = !(hash.startsWith('#/p/') || hash === '#/setup');
-  askButton(show);
+  askAvailable = !(hash.startsWith('#/p/') || hash === '#/setup');
   // The drawer opens again on a page where it was left open (each page remembers on its own).
   page = pageKey(hash);
-  if (show && drawerWasOpen(page)) setTimeout(() => { if (page === pageKey(location.hash)) openDrawer(); }, 0);
-  if (hash.startsWith('#/settings')) return settingsPage(hash.split('/')[2] || 'claude');
+  if (askAvailable && drawerWasOpen(page)) setTimeout(() => { if (page === pageKey(location.hash)) openDrawer(); }, 0);
+  if (hash.startsWith('#/settings')) return settingsPage(hash);
   if (hash === '#/setup') return setupPage(ctx, { back: backTo, assistantPanel });
   // Channel pages (#/channel…, #/channels…) stay behind this gate, like Home (Direction A decision 6).
   if (!hash.startsWith('#/p/') && !hash.startsWith('#/recordings') && !hash.startsWith('#/skills')) {
@@ -34,35 +38,24 @@ export async function appPage(hash, ctx) {
     const st = await api('/api/app/setup').catch(() => null);
     let skipped = false;
     try { skipped = sessionStorage.getItem('studio.setupSkipped') === '1'; } catch {}
-    if (st?.needed && !skipped) { history.replaceState(null, '', '#/setup'); askButton(false); return setupPage(ctx, { back: '#/', assistantPanel }); }
+    if (st?.needed && !skipped) { history.replaceState(null, '', '#/setup'); askAvailable = false; return setupPage(ctx, { back: '#/', assistantPanel }); }
   }
   backTo = hash || '#/';
   return null;
 }
+let backTo = '#/';       // where Setup's "Back" goes: the last page that wasn't Settings or Setup
 
-// The sidebar entry Home adds under Skills. (The Video Octopus assistant is the Ask Claude button now, bottom right.)
-// counts.update: new commits for Video Octopus on GitHub (the quiet check), shown as "New" and opening Settings → Updates.
-export const homeNav = (counts = {}) => counts.update
-  ? `<a class="nav-i" href="#/settings/updates">${ICON.gear}<span>Settings</span><span class="n wait" title="A new version of Video Octopus is ready (Settings → Updates)">New</span></a>`
-  : `<a class="nav-i" href="#/settings">${ICON.gear}<span>Settings</span></a>`;
-
-// One Claude button, bottom right on Home, Recordings, Library, Skills and Settings: the Video Octopus assistant, for the
-// whole studio, or the last project's own chat (the drawer's switch). Inside a project its own chat takes over (its rail
-// and ⌘J).
-let askEl = null;
-function askButton(show) {
-  if (!askEl) {
-    askEl = h(`<button type="button" class="ask-claude" data-open-assistant aria-label="Ask Claude about the whole studio">${ICON.claude}<span>Ask Claude</span><span class="ac-scope">· Video Octopus</span></button>`);
-    document.body.append(askEl);
-  }
-  askEl.hidden = !show;
-  askScope(lastProject() ? { name: 'this project' } : null);
-}
+// Ask Claude: the rail's button (any [data-open-assistant]) and ⌘J / Ctrl J open the Video Octopus assistant drawer
+// from the right, for the whole studio or the last project's own chat (the drawer's switch). Inside a project its own
+// chat takes over (its rail and ⌘J).
 document.addEventListener('click', (e) => { if (e.target.closest?.('[data-open-assistant]')) { e.preventDefault(); openDrawer(); } });
+document.addEventListener('keydown', (e) => {
+  if (!askAvailable || !(e.metaKey || e.ctrlKey) || (e.key !== 'j' && e.key !== 'J')) return;
+  e.preventDefault();
+  if (drawer) closeDrawer(); else openDrawer();
+});
 
 const ICON = {
-  gear: '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v1.8M8 12.4v1.8M1.8 8h1.8M12.4 8h1.8M3.6 3.6l1.3 1.3M11.1 11.1l1.3 1.3M3.6 12.4l1.3-1.3M11.1 4.9l1.3-1.3"/></svg>',
-  assistant: '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/><path d="M5.5 7h.01M8 7h.01M10.5 7h.01" stroke-width="1.8" stroke-linecap="round"/></svg>',
   back: '<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M8.5 3L4.5 7l4 4"/></svg>',
   claude: '<svg class="ic-claude" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5v13M1.5 8h13M3.4 3.4l9.2 9.2M12.6 3.4l-9.2 9.2"/></svg>',
   send: '<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M7 12V2M3 6l4-4 4 4"/></svg>',
@@ -70,77 +63,81 @@ const ICON = {
   check: '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 6.2l2.4 2.4 4.6-5"/></svg>',
 };
 
-// [id, label, line in the list, what the page is about, icon]
-const SECTIONS = [
-  ['claude', 'Agent & model', 'Claude Code, Codex or pi; permissions'],
-  ['transcribe', 'Transcription', 'On this computer or a cloud service'],
-  ['render', 'Rendering', 'This computer, output defaults'],
-  ['recorder', 'Recording', 'Camera, mic, screen, takes'],
-  ['editing', 'Editing', 'Trimming at a cut, telling Claude'],
-  ['sound', 'Sound', 'Sources, voice vs effects'],
-  ['appearance', 'Appearance', 'How Video Octopus looks'],
-  ['look', 'Video defaults', 'Starting background and framing'],
-  ['folders', 'Folders', 'Studio, media and local database'],
-  ['storage', 'Storage & backups', 'Database backups and skill files'],
-  ['usage', 'Usage', 'What you’ve made, from a local log'],
-  ['updates', 'Updates', 'New versions, starter files, log-in'],
+// The six groups: [id, label, line in the list, its sections in page order].
+const GROUPS = [
+  ['general', 'General', 'Theme, updates, start-up', ['appearance', 'updates']],
+  ['agent', 'Agent', 'Claude Code, Codex or pi', ['claude', 'planusage']],
+  ['recording', 'Recording', 'Camera, mic, screen, transcription', ['recorder', 'transcribe']],
+  ['editing', 'Editing & sound', 'Cuts, effects, video defaults', ['editing', 'sound', 'look']],
+  ['export', 'Export', 'Rendering and output', ['render']],
+  ['storage', 'Storage', 'Folders, backups, usage', ['folders', 'storage', 'usage']],
 ];
-const ABOUT = {
-  claude: 'The agent behind every chat (Claude Code, Codex or pi), how much it may do without asking, and the model.',
-  transcribe: 'Where your speech becomes words: on this computer or with a cloud service.',
-  render: 'How videos are rendered, and the defaults for new exports.',
-  recorder: 'Your camera, microphone and screen for Record, and where takes go.',
-  editing: 'How trimming feels in the Cut tab, and how your changes reach Claude.',
-  sound: 'Where sound effects come from, and how they sit under your voice.',
-  folders: 'The studio is the home for your local database, projects and media. Skills are managed in the app; you do not need to arrange their folders.',
-  appearance: 'How Video Octopus looks. Your videos keep their own look, under Look.',
-  look: 'Starting background and framing for your videos. Each channel’s Brand tab provides colours and fonts; its formats provide approved format guidance. Existing edits remain under your control.',
-  storage: 'Back up and restore the local database, and look after the skill file store.',
-  usage: 'What you’ve made with Video Octopus, counted from your own folders and a usage log that stays on this computer.',
-  updates: 'New versions of Video Octopus, the starter files in your studio, and opening Video Octopus when you log in.',
+// Each section: its heading and one line about it.
+const SECTIONS = {
+  appearance: ['Appearance', 'How Video Octopus looks. Your videos keep their own look, under Editing & sound › Video defaults.'],
+  updates: ['Updates', 'New versions of Video Octopus, your skills and preferences, and opening Video Octopus when you log in.'],
+  claude: ['Agent & model', 'The agent behind every chat (Claude Code, Codex or pi), how much it may do without asking, and the model.'],
+  planusage: ['Plan usage', 'What your Claude plan has used, as Claude Code last reported it.'],
+  recorder: ['Recorder', 'Your camera, microphone and screen for Record, and where takes go.'],
+  transcribe: ['Transcription', 'Where your speech becomes words: on this computer or with a cloud service.'],
+  editing: ['Editing', 'How trimming feels in the Cut tab, and how your changes reach Claude.'],
+  sound: ['Sound', 'Where sound effects come from, and how they sit under your voice.'],
+  look: ['Video defaults', `Starting background and framing for your videos. Each ${TERMS.channel.toLowerCase()}’s Brand tab provides colours and fonts; its formats provide approved format guidance. Existing edits remain under your control.`],
+  render: ['Rendering', 'How videos are rendered, and the defaults for new exports.'],
+  folders: ['Folders', 'The studio is the home for your local database, projects and media. Skills are managed in the app; you do not need to arrange their folders.'],
+  storage: ['Storage & backups', 'Back up and restore the local database, and look after the skill file store.'],
+  usage: ['Usage', 'What you’ve made with Video Octopus, counted from your own folders and a usage log that stays on this computer.'],
 };
-// More words the settings search finds a section by.
-const FIND = { appearance: `theme dark light mode colours colors style ${LOOKS.map((l) => l[1]).join(' ')}`, render: 'object separation sam cut out rotoscope mask model' };
-const SEC_ICON = {
-  claude: '<path d="M8 1.8v12.4M1.8 8h12.4M3.6 3.6l8.8 8.8M12.4 3.6l-8.8 8.8"/>',
-  transcribe: '<path d="M2.5 4h11M2.5 7h11M2.5 10h7M2.5 13h5"/>',
-  render: '<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M6.5 6.2v3.6L9.6 8z"/>',
-  recorder: '<circle cx="8" cy="8" r="5.6"/><circle cx="8" cy="8" r="2.2"/>',
-  editing: '<circle cx="4.5" cy="11.5" r="2"/><circle cx="11.5" cy="11.5" r="2"/><path d="M5.8 10l6-7.5M10.2 10l-6-7.5"/>',
-  sound: '<path d="M2.5 6v4h2.5L8.5 13V3L5 6z"/><path d="M11 5.5a3.5 3.5 0 010 5M12.8 3.8a6 6 0 010 8.4"/>',
-  folders: '<path d="M2 4.5h4.2l1.4 1.5H14v6.5a1 1 0 01-1 1H3a1 1 0 01-1-1z"/>',
-  appearance: '<circle cx="8" cy="8" r="5.8"/><path d="M8 2.2v11.6A5.8 5.8 0 018 2.2z" fill="currentColor" stroke="none"/>',
-  look: '<rect x="2.2" y="3" width="11.6" height="10" rx="1.5"/><path d="M2.6 11.4l3.4-3.4 2.6 2.6 1.8-1.8 3.2 3.2"/><circle cx="10.6" cy="6.1" r="1"/>',
-  storage: '<ellipse cx="8" cy="4" rx="5.5" ry="2"/><path d="M2.5 4v8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2V4M2.5 8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2"/>',
-  usage: '<path d="M2.5 13.5h11"/><rect x="3" y="8" width="2.4" height="4" rx=".6"/><rect x="6.8" y="4.5" width="2.4" height="7.5" rx=".6"/><rect x="10.6" y="6.5" width="2.4" height="5.5" rx=".6"/>',
-  updates: '<path d="M13 8a5 5 0 01-8.6 3.5M3 8a5 5 0 018.6-3.5"/><path d="M11.8 2.2v2.6H9.2M4.2 13.8v-2.6h2.6"/>',
+// More words the settings search finds a section by: its rows' labels and what people call them.
+const FIND = {
+  appearance: 'theme dark light mode match system colours colors accent orange blue green violet sidebar icons names rail look looks',
+  updates: 'version git github update restart starter files log in login startup autostart open when i log in skills preferences',
+  claude: 'claude code codex pi permissions ask before changes file edits auto full access model opus sonnet haiku fable api key ollama lm studio provider clean chats',
+  planusage: 'usage limits 5 hours 7 days plan',
+  recorder: 'camera microphone mic screen countdown take where takes are saved recordings folder',
+  transcribe: 'whisper mlx faster-whisper model language words spell deepgram assemblyai openai elevenlabs cloud',
+  editing: 'trim cut highlight fine-trim pop-up lens save changes',
+  sound: 'effects sfx epidemic library folder voice mix db',
+  look: 'background night desk stars led picture-in-picture pip frame formats brand',
+  render: 'parallel jobs size 1080p 4k codec h.264 hevc prores object separation sam cut out rotoscope mask model',
+  folders: 'studio folder projects folder library folder new studio skills learning database',
+  storage: 'backup restore database sqlite skill files disk',
+  usage: 'dashboard statistics stats made videos hours',
 };
-const secIcon = (k) => `<span class="sec-ic" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 16 16">${SEC_ICON[k] || ''}</svg></span>`;
+const groupOf = (section) => GROUPS.find((g) => g[3].includes(section));
 
 // ---------- the Settings page ----------
-async function settingsPage(sec) {
-  if (!SECTIONS.some((s) => s[0] === sec)) sec = 'claude';
+let settingsQuery = ''; // the search, kept while moving between groups
+async function settingsPage(hash) {
+  const [, , groupId, sectionId] = hash.split('?')[0].split('/');
+  const G = GROUPS.find((g) => g[0] === groupId) || (SETTINGS_SECTION_GROUP[groupId] && groupOf(groupId)) || GROUPS[0];
+  const [id, label, , sections] = G;
   document.body.classList.add('in-home', 'in-app-page');
-  document.title = `Settings · Video Octopus`;
-  let V = await api('/api/app/settings');
-  const el = h(`<div class="app-page">
-    <nav class="side-nav set-nav" aria-label="Settings sections">
-      <a class="brand" href="#/"><span class="logo" aria-hidden="true"><i></i></span>Video Octopus</a>
-      <a class="nav-i back" href="${esc(backTo)}">${ICON.back}<span>Back</span></a>
-      <label class="search set-search"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><circle cx="6" cy="6" r="4.2"/><path d="M9.2 9.2l3 3"/></svg><span class="vh">Search settings</span><input id="setQ" type="search" placeholder="Search settings" autocomplete="off"></label>
-      <div class="set-h">Settings</div>
-      ${SECTIONS.map(([k, label, sub]) => `<a class="nav-i set-i${k === sec ? ' on' : ''}" href="#/settings/${k}" data-find="${esc(`${label} ${sub} ${ABOUT[k] || ''} ${FIND[k] || ''}`.toLowerCase())}"${k === sec ? ' aria-current="page"' : ''}>${secIcon(k)}<span class="set-t"><span>${label}</span><small>${sub}</small></span></a>`).join('')}
-      <span class="gap"></span>
-      <a class="btn small wide" href="#/setup">Run setup again</a>
-    </nav>
-    <div class="set-main"><div class="set-wrap" id="setBody"></div></div>
+  document.title = `${label} · Settings · Video Octopus`;
+  const [V0, counts, takes] = await Promise.all([
+    api('/api/app/settings'),
+    api('/api/app/counts').catch(() => ({})),
+    api('/api/takes').catch(() => []),
+    CTX.status?.() ? null : CTX.loadStatus?.().catch(() => null),
+  ]);
+  let V = V0;
+  const findText = (g) => [g[1], g[2], ...g[3].flatMap((k) => [...(SECTIONS[k] || []), FIND[k] || ''])].join(' ').toLowerCase();
+  const el = h(`<div class="home shell settings-shell">
+    ${topBarMarkup('Settings')}
+    ${sidebarMarkup({ active: { page: 'settings' }, counts, takes, agent: CTX.railAgent?.(), forceIcons: true })}
+    <div class="home-main set-sheet">
+      <nav class="set-nav" aria-label="Settings groups">
+        <h1>Settings</h1>
+        <label class="search set-search">${icon('search', 14)}<span class="vh">Search settings</span><input id="setQ" type="search" placeholder="Search settings" autocomplete="off"></label>
+        ${GROUPS.map((g) => `<a class="set-i${g[0] === id ? ' on' : ''}" href="#/settings/${g[0]}" data-find="${esc(findText(g))}"${g[0] === id ? ' aria-current="page"' : ''}><span>${esc(g[1])}</span><small>${esc(g[2])}</small></a>`).join('')}
+        <p class="set-none sub" hidden>Nothing matches. Try another word.</p>
+      </nav>
+      <div class="set-main"><div class="set-wrap" id="setBody"></div></div>
+    </div>
   </div>`);
   CTX.app.replaceChildren(el);
+  const shell = wireShell(el, { onNewVideo: () => CTX.newVideo?.() });
   markUpdateBadge(el);
-  // Search: narrow the list to the sections that mention it; Enter opens the first.
-  const q = $('#setQ', el);
-  q.oninput = () => { const t = q.value.trim().toLowerCase(); el.querySelectorAll('.set-i').forEach((a) => { a.hidden = Boolean(t) && !a.dataset.find.includes(t); }); };
-  q.onkeydown = (e) => { if (e.key === 'Enter') { const a = [...el.querySelectorAll('.set-i')].find((x) => !x.hidden); if (a) location.hash = a.getAttribute('href'); } };
 
   const body = $('#setBody', el);
   const save = async (section, values, quiet) => {
@@ -150,15 +147,93 @@ async function settingsPage(sec) {
       return true;
     } catch (e) { toast(e.message); return false; }
   };
-  let sectionNode;
+
+  // Search: the groups whose rows mention it stay in the list (Enter opens the first); on this page, the rows that
+  // don't are hidden, and a section with none left too.
+  const q = $('#setQ', el);
+  const filter = () => {
+    const t = q.value.trim().toLowerCase();
+    settingsQuery = q.value;
+    let shown = 0;
+    for (const a of el.querySelectorAll('.set-i')) {
+      a.hidden = Boolean(t) && !a.dataset.find.includes(t);
+      if (!a.hidden) shown++;
+    }
+    $('.set-none', el).hidden = shown > 0;
+    for (const sec of body.querySelectorAll('.set-sec')) {
+      const head = sec.querySelector(':scope > .set-sec-h')?.textContent.toLowerCase() || '';
+      const headHit = !t || head.includes(t) || (FIND[sec.dataset.section] || '').includes(t);
+      let rowsShown = 0;
+      for (const r of sec.querySelectorAll('.set-row')) {
+        r.hidden = Boolean(t) && !headHit && !r.textContent.toLowerCase().includes(t);
+        if (!r.hidden) rowsShown++;
+      }
+      sec.hidden = Boolean(t) && !headHit && rowsShown === 0;
+    }
+  };
+  q.value = settingsQuery;
+  q.oninput = filter;
+  q.onkeydown = (e) => {
+    if (e.key !== 'Enter') return;
+    const a = [...el.querySelectorAll('.set-i')].find((x) => !x.hidden);
+    if (a) location.hash = a.getAttribute('href');
+  };
+
+  let parts = [];
   const draw = () => {
-    sectionNode?.teardown?.();
-    sectionNode=DRAW[sec](V, save, draw);
-    const [, label] = SECTIONS.find((s) => s[0] === sec);
-    body.replaceChildren(h(`<div class="set-head">${secIcon(sec).replace('sec-ic', 'sec-ic big')}<div class="sh-t"><h1>${label}</h1><span class="sub">${esc(ABOUT[sec] || '')}</span></div><span class="set-saved" id="saved" aria-live="polite"></span></div>`), sectionNode);
+    for (const p of parts) p?.teardown?.();
+    const wrap = h(`<div class="set-page"><div class="set-head"><h2>${esc(label)}</h2><span class="set-saved" id="saved" aria-live="polite"></span></div></div>`);
+    // General's rarely used options: the optional starter files and Setup again, in Advanced at the bottom.
+    const advanced = id === 'general'
+      ? h(`<details class="set-adv"><summary>Advanced</summary><div class="set-adv-body"></div></details>`) : null;
+    parts = [];
+    for (const k of sections) {
+      const node = DRAW[k](V, save, draw, { advanced: advanced && $('.set-adv-body', advanced) });
+      if (!node) continue;
+      parts.push(node);
+      const [title, about] = SECTIONS[k];
+      const sec = h(`<section class="set-sec" id="set-${k}" data-section="${k}" aria-labelledby="set-${k}-h"><h3 class="set-sec-h" id="set-${k}-h">${esc(title)}</h3>${about ? `<p class="set-about sub">${esc(about)}</p>` : ''}</section>`);
+      sec.append(node);
+      // A group titled like its section ("Recorder" in Recorder) needs no second heading.
+      for (const h4 of sec.querySelectorAll('.set-group > h4')) if (h4.textContent.trim() === title) h4.remove();
+      wrap.append(sec);
+    }
+    if (advanced) {
+      $('.set-adv-body', advanced).append(group('Setup', row('Run setup again', 'The first-time steps: your studio folder, the agent, transcription and the optional extras.', h('<a class="btn small" href="#/setup">Run setup again</a>'))));
+      wrap.append(advanced);
+    }
+    body.replaceChildren(wrap);
+    if (settingsQuery) filter();
   };
   draw();
-  return { teardown: () => {sectionNode?.teardown?.();document.body.classList.remove('in-home', 'in-app-page');} };
+  // An address with a section (#/settings/storage/usage, or an old #/settings/usage) opens scrolled to it, and stays
+  // there while the sections above finish loading (Updates, Storage and Usage load their own data), until the
+  // creator scrolls or clicks.
+  let stopJump = () => {};
+  if (sectionId) {
+    let stopped = false;
+    const jump = () => { if (!stopped) document.getElementById(`set-${sectionId}`)?.scrollIntoView({ block: 'start' }); };
+    const ro = new ResizeObserver(jump);
+    const main = $('.set-main', el);
+    stopJump = () => {
+      stopped = true;
+      ro.disconnect();
+      for (const t of ['wheel', 'pointerdown', 'keydown', 'touchstart']) main.removeEventListener(t, stopJump);
+    };
+    for (const t of ['wheel', 'pointerdown', 'keydown', 'touchstart']) main.addEventListener(t, stopJump, { passive: true });
+    ro.observe(body);
+    // Timers too: a page in a background tab gets no resize notifications until it is shown.
+    for (const ms of [0, 400, 1200]) setTimeout(jump, ms);
+    setTimeout(stopJump, 4000);
+  }
+  return {
+    teardown: () => {
+      stopJump();
+      for (const p of parts) p?.teardown?.();
+      shell.teardown();
+      document.body.classList.remove('in-home', 'in-app-page');
+    },
+  };
 }
 
 function flash(body) {
@@ -174,7 +249,7 @@ const row = (label, hint, control, cls = '') => {
   $('.set-c', r).append(...[].concat(control));
   return r;
 };
-const group = (title, ...rows) => { const g = h(`<section class="set-group">${title ? `<h2>${title}</h2>` : ''}</section>`); g.append(...rows.filter(Boolean)); return g; };
+const group = (title, ...rows) => { const g = h(`<div class="set-group">${title ? `<h4>${title}</h4>` : ''}</div>`); g.append(...rows.filter(Boolean)); return g; };
 const frag = (...nodes) => { const f = document.createDocumentFragment(); f.append(...nodes.filter(Boolean)); return f; };
 
 function seg(options, value, onPick, { disabled = {} } = {}) {
@@ -576,36 +651,51 @@ const DRAW = {
     );
   },
 
-  // Settings → Appearance: ten looks for Video Octopus itself. A pick shows at once on every page
-  // (web/appearance.js) and is saved; there's no Save button. Paper Desk's card has its calmer option.
+  // Settings › General › Appearance (design V2 §1): Light, Dark or Match system, an accent and the sidebar's width. A
+  // pick shows at once on every page (web/appearance.js) and is saved; there's no Save button. After the one-time
+  // move from the old looks, a note says which theme the old look became, until OK.
   appearance(V, save, redraw) {
-    const a = { look: 'editbay', calm: false, ...(V.values.appearance || {}) };
+    const a = { ...currentAppearance(), ...(V.values.appearance || {}) };
     const pick = async (patch) => {
-      const prev = { ...a }, next = { ...a, ...patch };
-      applyLook(next);
-      if (await save('appearance', next)) redraw(); else applyLook(prev);
+      if (!(await saveAppearance(patch))) return;
+      V.values.appearance = { ...a, ...patch };
+      redraw();
+      flash(document.getElementById('setBody'));
     };
-    const grid = h(`<div class="lk-grid" role="radiogroup" aria-label="Video Octopus look"></div>`);
-    for (const [id, name, tag, one] of LOOKS) {
-      const on = id === a.look;
-      const card = h(`<div class="lk-card${on ? ' on' : ''}">
-        <button type="button" class="lk-pick" role="radio" aria-checked="${on}">
-          <span class="lk-th"><img src="/looks/${id}.jpg" alt="" loading="lazy" draggable="false">${on ? `<i class="lk-ck" aria-hidden="true">${ICON.check}</i>` : ''}</span>
-          <span class="lk-top"><b>${esc(name)}</b>${id === 'editbay' ? '<em class="lk-def">Default</em>' : ''}<span class="lk-tag${tag === 'Dark' ? ' dark' : ''}">${tag}</span></span>
-          <span class="lk-one">${esc(one)}</span></button></div>`);
-      $('.lk-pick', card).onclick = () => { if (!on) pick({ look: id }); };
-      // Paper Desk, chosen: "Bold outlines" (off = the calmer version: thinner lines, fewer hard shadows).
-      if (id === 'paper' && on) { const c = h(`<div class="lk-calm"></div>`); c.append(toggle(!a.calm, (bold) => pick({ calm: !bold }), 'Bold outlines')); card.append(c); }
-      grid.append(card);
+    const THEME_NAMES = { light: 'Light', dark: 'Dark', system: 'Match system' };
+    const rows = [];
+    if (a.migratedFrom) {
+      const note = h(`<div class="set-note" role="status"><span>Looks are now Light, Dark or Match system. You were using ${esc(OLD_LOOK_NAMES[a.migratedFrom] || 'Edit Bay')}, so we picked ${esc(THEME_NAMES[a.theme])}.</span><button type="button" class="btn small">OK</button></div>`);
+      $('button', note).onclick = async () => {
+        if (await save('appearance', { migratedFrom: '' }, true)) { V.values.appearance = { ...a, migratedFrom: '' }; redraw(); }
+      };
+      rows.push(note);
     }
-    const [, name, tag, one] = LOOKS.find((l) => l[0] === a.look) || LOOKS[0];
-    const now = h(`<div class="lk-now"><div><b>${esc(name)}</b> <span class="sub">· ${tag.toLowerCase()} · ${esc(one.charAt(0).toLowerCase() + one.slice(1))}</span></div><span class="gap"></span>
-      ${a.look !== 'editbay' ? '<button type="button" class="btn small">Back to Edit Bay</button>' : ''}</div>`);
-    const back = $('button', now);
-    if (back) back.onclick = () => pick({ look: 'editbay', calm: false });
-    const g = group('', h(`<div class="lk-h"><b>Video Octopus look</b><span class="sub">Pick one: it changes every page at once. The layout stays the same.</span></div>`), grid, now);
-    g.classList.add('lk-group');
-    return frag(g, h(`<p class="lk-note">Changes how Video Octopus looks. Your videos keep their own look (<a href="#/settings/look">Settings → Look</a>).</p>`));
+    rows.push(row('Theme', 'Match system follows your computer’s light or dark setting.',
+      seg(Object.entries(THEME_NAMES), a.theme, (x) => pick({ theme: x }))));
+    const ACCENTS = [['orange', 'Orange'], ['blue', 'Blue'], ['green', 'Green'], ['violet', 'Violet']];
+    const swatches = h(`<div class="accent-pick" role="radiogroup" aria-label="Accent"></div>`);
+    for (const [k, name] of ACCENTS) {
+      const b = h(`<button type="button" role="radio" class="accent-sw" data-accent-swatch="${k}" aria-checked="${k === a.accent}" aria-label="${name}" title="${name}"></button>`);
+      b.onclick = () => { if (k !== a.accent) pick({ accent: k }); };
+      swatches.append(b);
+    }
+    rows.push(row('Accent', 'Marks the next step, recording and anything new.', swatches));
+    rows.push(row('Sidebar', 'Icons only, or icons with names. The toggle at the foot of the sidebar switches it too.',
+      seg([['icons', 'Icons'], ['labels', 'Icons and names']], a.sidebar, (x) => pick({ sidebar: x }))));
+    return group('', ...rows);
+  },
+
+  // Settings › Agent › Plan usage: the 5-hour and 7-day meters the sidebar card used to show (Claude plan only).
+  planusage() {
+    const st = CTX.status?.();
+    if (!st?.agent?.planUsage) return null;
+    const v = usageView(st.usage, st.engine || 'claude');
+    const meter = (value) => (value == null ? h('<span class="sub">Not reported yet</span>')
+      : h(`<div class="usage-meter"><i><b style="width:${value}%"></b></i><span class="mono">${value}%</span></div>`));
+    return group('',
+      row('Last 5 hours', '', meter(v.fiveHour)),
+      row('Last 7 days', esc(v.note), meter(v.sevenDay)));
   },
 
   look(V, save, redraw) {
@@ -642,8 +732,7 @@ const DRAW = {
   },
 };
 // Settings → Updates lives in updates.js (it loads its own data from /api/app/updates).
-DRAW.updates = (V, save) => updatesSection(V, save, { row, group, toggle });
-FIND.updates = 'version git github update restart starter log in login startup autostart open when i log in';
+DRAW.updates = (V, save, redraw, { advanced } = {}) => updatesSection(V, save, { row, group, toggle, advanced });
 
 // Settings → Storage & backups and Usage (Direction A): the former Storage and Dashboard pages. Brand and
 // Instructions moved to each channel's Brand tab and All channels › Instructions (web/channel.js).
@@ -657,8 +746,6 @@ DRAW.usage = () => {
   renderDashboard(box, { recordingsDir: tilde(CTX.status?.()?.recordingsDir || ''), embedded: true });
   return box;
 };
-FIND.storage = 'backup restore database sqlite skill files disk';
-FIND.usage = 'dashboard statistics stats made videos hours';
 
 // ---------- the Video Octopus assistant: an app-level chat (id "_studio"), same Claude Code login, own session ----------
 // `id` another chat instead: the drawer's "This project" shows a project's own chat (the same conversation as inside
@@ -708,12 +795,6 @@ async function drawerProject() {
   const ok = (Array.isArray(list) ? list : []).filter((p) => p.app);
   return ok.find((p) => p.id === lastProject()) || ok.sort((a, b) => b.updated - a.updated)[0] || null;
 }
-function askScope(project) {
-  const on = project && drawerScope() === 'project';
-  if (!askEl) return;
-  $('.ac-scope', askEl).textContent = on ? '· This project' : '· Video Octopus';
-  askEl.setAttribute('aria-label', on ? `Ask Claude about ${project.name}` : 'Ask Claude about the whole studio');
-}
 async function openDrawer() {
   if (drawer) return drawer.panel?.focus();
   rememberDrawer(true);
@@ -746,7 +827,6 @@ function mountDrawer(scope) {
     : assistantPanel({ closable: true, onClose: close, title: 'Claude', scope: sw ? '' : 'Whole studio', scopeEl: sw, hint: 'I look after the whole studio: settings, projects, the library and its inbox, scheduled runs, formats, keys and setup. Try “turn on the trim lens”, “sweep my projects into the library every Sunday” or “what’s waiting in the library inbox?”' });
   d.wrap.setAttribute('aria-label', p ? `Claude · ${p.name}` : 'Video Octopus assistant');
   d.wrap.replaceChildren(d.panel.el);
-  askScope(d.project);
   setTimeout(() => d.panel?.focus(), 30);
 }
 // Closed by the creator (✕ or Esc): this page remembers it. A page change closes it without that.

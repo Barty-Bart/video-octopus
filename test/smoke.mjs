@@ -329,15 +329,18 @@ try {
     return 'none';
   });
 
-  await check('Appearance: Edit Bay by default, a look saves and reaches /api/status, a bad one is refused', async () => {
-    must((await api('/api/status')).json?.appearance?.look === 'editbay', 'the default look is not Edit Bay');
-    const r = await api('/api/app/settings', { section: 'appearance', values: { look: 'paper', calm: true } });
-    must(r.status === 200 && r.json?.values?.appearance?.look === 'paper' && r.json.values.appearance.calm === true, `save failed: ${r.text.slice(0, 120)}`);
-    must((await api('/api/status')).json?.appearance?.look === 'paper', 'the status page does not carry the look');
-    must((await api('/api/app/settings', { section: 'appearance', values: { look: 'neon' } })).status === 400, 'an unknown look was accepted');
-    for (const f of ['/looks.css', '/appearance.js', '/looks/editbay.jpg', '/looks/split.jpg']) must((await fetch(BASE + f)).ok, `${f} is not served`);
-    await api('/api/app/settings', { section: 'appearance', values: { look: 'editbay', calm: false } });
-    return 'paper + calm saved, then back to Edit Bay';
+  await check('Appearance: Match system by default, a theme and accent save and reach /api/status, a bad one is refused', async () => {
+    const first = (await api('/api/status')).json?.appearance;
+    must(first?.theme === 'system' && first.accent === 'orange' && first.sidebar === 'labels', `the default appearance is ${JSON.stringify(first)}`);
+    const r = await api('/api/app/settings', { section: 'appearance', values: { theme: 'dark', accent: 'violet', sidebar: 'icons' } });
+    must(r.status === 200 && r.json?.values?.appearance?.theme === 'dark' && r.json.values.appearance.accent === 'violet', `save failed: ${r.text.slice(0, 120)}`);
+    must((await api('/api/status')).json?.appearance?.theme === 'dark', 'the status page does not carry the theme');
+    must((await api('/api/app/settings', { section: 'appearance', values: { theme: 'sepia' } })).status === 400, 'an unknown theme was accepted');
+    must((await api('/api/app/settings', { section: 'appearance', values: { look: 'night' } })).status === 400, 'an old look was accepted');
+    for (const f of ['/appearance.js', '/theme-map.js', '/icons.js']) must((await fetch(BASE + f)).ok, `${f} is not served`);
+    must(!(await fetch(BASE + '/looks.css')).ok, 'looks.css is still served');
+    await api('/api/app/settings', { section: 'appearance', values: { theme: 'system', accent: 'orange', sidebar: 'labels' } });
+    return 'dark + violet + icons saved, then back to the defaults';
   });
 
   await check('Settings → Updates: version, starter files up to date, log-in switch, restart, check off = no badge', async () => {

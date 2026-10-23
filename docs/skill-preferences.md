@@ -46,7 +46,7 @@ Use `schema: 1`. `presentation` and `skills` are optional partial objects; missi
 
 The new-studio template contains empty `presentation` and `skills` objects. A missing document uses defaults. The preference reader itself creates nothing. Use Instructions to accept lasting changes; direct file edits need explicit import. Preserve unrelated options and notes.
 
-An invalid file produces a visible diagnostic in Settings → Updates and in the assistant context. The assistant should explain it and help repair/clarify it before preference-dependent edits. The fallback defaults shown alongside an error are **not** a valid reading of that file. Unrelated chat and repair work remain available.
+An invalid file produces a visible diagnostic in Settings → General → Updates and in the assistant context. The assistant should explain it and help repair/clarify it before preference-dependent edits. The fallback defaults shown alongside an error are **not** a valid reading of that file. Unrelated chat and repair work remain available.
 
 ## Global presentation options
 

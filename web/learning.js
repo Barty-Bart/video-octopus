@@ -441,7 +441,7 @@ export async function renderLearning(root, { makeChat, startVideo, channelId, ba
         <label class="learn-check vf-toggle"><input type="checkbox" data-show-archived${showArchived ? ' checked' : ''}>Show archived formats</label>
         <details class="vf-how"><summary>How formats work</summary>
           <p><b>A format</b> is a repeatable kind of video for this channel. Its <b>skill</b> is the guide you teach it by talking to it, reviewed and saved as versions.</p>
-          <p>Saving a new version affects only future videos; existing videos keep the version they started with. The channel's <a href="${channelHref(p.id, 'brand')}">Brand tab</a> holds identity and voice; <a href="#/settings/look">Video defaults</a> hold starting appearance.</p>
+          <p>Saving a new version affects only future videos; existing videos keep the version they started with. The channel's <a href="${channelHref(p.id, 'brand')}">Brand tab</a> holds identity and voice; <a href="#/settings/editing/look">Video defaults</a> hold starting appearance.</p>
         </details>
       </div>
     </section>`;

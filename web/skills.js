@@ -58,7 +58,7 @@ export async function renderSkills(root, { counts = {} } = {}) {
         <button type="button" class="btn icon-btn" data-a="more" aria-haspopup="menu" aria-expanded="false" aria-label="More skill actions">${DOTS}</button>
       </div>
     </div>
-    ${counts.skillUpdates > 0 ? `<a class="sk-update" href="#/settings/updates"><b>${counts.skillUpdates} core update${counts.skillUpdates === 1 ? '' : 's'} to review</b><span>Review</span></a>` : ''}
+    ${counts.skillUpdates > 0 ? `<a class="sk-update" href="#/settings/general/updates"><b>${counts.skillUpdates} core update${counts.skillUpdates === 1 ? '' : 's'} to review</b><span>Review</span></a>` : ''}
     <p class="learn-error" data-error hidden></p>
     <div class="sk-tools">
       <div class="seg sk-filter scroll-row" role="group" aria-label="Show skills" data-filters></div>
@@ -187,7 +187,7 @@ export async function renderSkills(root, { counts = {} } = {}) {
   const moreItems = () => [
     { label: 'Refresh / import file edits', run: async () => { await api(`${E}/skills`, { action: 'refresh', revision: data.revision }); await load(); } },
     { label: 'Rebuild agent files', run: async () => { await api(`${E}/skills`, { action: 'regenerate', revision: data.revision }); toast('Agent files rebuilt.'); await load(); } },
-    { label: 'Update & compatibility review', href: '#/settings/updates' },
+    { label: 'Update & compatibility review', href: '#/settings/general/updates' },
     '-',
     { label: 'Skill database history', run: historyDialog },
   ];
