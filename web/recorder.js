@@ -525,7 +525,10 @@ export const panelIsOpen = () => Boolean(panelOpen);
 export const startFromPanel = () => panelOpen?.start();
 export const closePanel = () => panelOpen?.close();
 
-// choices: what Settings → Recording remembers ({ screen, camera, mic, target, countdown }, P.recorder);
+// choices: what the panel starts with (P.recorder, server/browser-recorder.mjs recorderChoices): { screen, camera, mic,
+// target, countdown } and preset: the screen and camera come from the style's setup (web/rec-preset.js: a faceless style
+// starts with the camera off, a camera-only one with no screen), or from the last take recorded with this style; the
+// line over the sources says which. A change here is remembered for the style when the take starts.
 // P: the project; opts.target/label: a block, or 'replace' / 'layer' (the editor's Media section).
 export async function recordPanel({ id, P, choices, opts = {}, settingsLink }) {
   if (S.phase !== 'idle') return toast('A take is still recording or saving.');
@@ -574,8 +577,10 @@ export async function recordPanel({ id, P, choices, opts = {}, settingsLink }) {
       </section>
       <aside class="rp-side" aria-label="Setup">
         <div class="rp-card"><h3>Sources</h3>
-          <div class="rp-f"><span id="scrL">Screen</span><div class="rp-scr" role="group" aria-labelledby="scrL"><span class="rp-scr-name" id="scrName"></span>
-            <button type="button" class="btn small" id="scrPick">Pick a screen…</button><button type="button" class="btn ghost small" id="scrNone">No screen</button></div></div>
+          ${presetLine(ch.preset)}
+          <div class="rp-f"><span id="scrL">Screen</span><div class="rp-scr"><div class="seg rp-onoff" id="scrOnOff" role="radiogroup" aria-labelledby="scrL">
+            <button type="button" role="radio" id="scrOn">On</button><button type="button" role="radio" id="scrNone">Off</button></div>
+            <button type="button" class="btn small" id="scrPick">Choose window…</button><span class="rp-scr-name" id="scrName"></span></div></div>
           <label class="rp-f"><span>Camera</span><select class="field" id="rCamera"><option value="none">No camera</option></select></label>
           <label class="rp-f"><span>Microphone</span><select class="field" id="rMic"><option value="none">No microphone</option></select></label>
         </div>
@@ -624,9 +629,12 @@ export async function recordPanel({ id, P, choices, opts = {}, settingsLink }) {
     pvS.srcObject = d.screen; pvC.srcObject = d.cam;
     frame.classList.toggle('live', Boolean(d.screen));
     camBox.classList.toggle('live', Boolean(d.cam));
-    $('#scrName', page).textContent = sel.display === 'none' ? 'No screen (camera or mic only)' : d.screen ? label(d.screen) || 'Picked screen' : 'The browser asks which screen or window when you start, or pick it now.';
-    $('#scrPick', page).textContent = d.screen ? 'Pick another…' : 'Pick a screen…';
-    $('#scrNone', page).hidden = sel.display === 'none';
+    // Screen: On / Off. On: what's picked, or that the browser asks when you start; Choose window… only then.
+    const on = sel.display !== 'none';
+    for (const [b, yes] of [[$('#scrOn', page), on], [$('#scrNone', page), !on]]) { b.classList.toggle('on', yes); b.setAttribute('aria-checked', String(yes)); }
+    $('#scrName', page).textContent = !on ? 'Not recorded: camera or mic only.' : d.screen ? `Recording ${label(d.screen) || 'the picked screen'}` : 'The browser asks which screen or window when you press Start.';
+    $('#scrPick', page).hidden = !on;
+    $('#scrPick', page).textContent = d.screen ? 'Choose another…' : 'Choose window…';
     camBox.hidden = sel.camera === 'none';
     $('#meter', page).hidden = sel.mic === 'none';
     if (sel.mic === 'none') $('#micHint', page).textContent = 'No microphone: the take will have no sound.';
@@ -727,6 +735,7 @@ export async function recordPanel({ id, P, choices, opts = {}, settingsLink }) {
     return Boolean(d.screen);
   }
   $('#scrPick', page).onclick = () => screen();
+  $('#scrOn', page).onclick = () => { sel.display = 'screen'; show(); };
   $('#scrNone', page).onclick = () => { stopStream(d.screen); d.screen = null; sel.display = 'none'; if (permFor === 'screen') perm(''); show(); };
   $('#rCamera', page).onchange = (e) => { sel.camera = e.target.value; perm(''); stopStream(d.cam); d.cam = null; show(); if (sel.camera !== 'none') openDevs('cam'); };
   $('#micSugUse', page).onclick = () => { const m = $('#rMic', page); m.value = $('#micSug', page).dataset.id; m.onchange({ target: m }); };
@@ -782,6 +791,13 @@ export async function recordPanel({ id, P, choices, opts = {}, settingsLink }) {
   show();
   if (!sup.ok) return;
   await openDevs();
+}
+
+// "Set up for Faceless explainer: screen and voice, no camera." over the sources (or what was last used with the style).
+export function presetLine(p) {
+  if (!p) return '';
+  const who = p.style ? `<b>${esc(p.style)}</b>` : 'this video’s setup';
+  return `<p class="sub rp-preset" id="rPreset">${p.remembered ? `As you last recorded with ${who}.` : `Set up for ${who}: ${esc(p.words || '')}.`} Change anything and the next take with this style starts the same way.</p>`;
 }
 
 // ---------- what the panel's choices record ----------

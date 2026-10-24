@@ -376,8 +376,15 @@ function allowed(req) {
   return hostOk && originOk && writeOk && (!site || site === 'same-origin' || site === 'none');
 }
 
+// The video's style for the record panel's remembered sources (browser-recorder.mjs recorderChoices): its style's id and
+// name, or its setup when it has no style.
+function styleOf(id, ctx = withProjectChannels([{ id }])[0]) {
+  return ctx?.formatId ? { key: `style:${String(ctx.formatId).replace(/[^\w.-]/g, '_').slice(0, 80)}`, name: ctx.formatName || null } : null;
+}
+
 function projectView(id, dir) {
   const meta = projectMeta(dir) || {};
+  const pinned = withProjectChannels([{ id }])[0];
   const r = roles(dir);
   // A sound file (mic-only take) plays as it is, so it is its own playback copy.
   const proxies = Object.fromEntries(r.files.map((f) => [f, isAudio(f) ? `source/${f}` : existsSync(join(dir, proxyName(f))) ? proxyName(f) : null]));
@@ -386,7 +393,7 @@ function projectView(id, dir) {
   return {
     id, name: meta.name || id, nameSource: meta.nameSource === 'auto' ? 'auto' : 'manual', autoNamedBy: meta.autoNamedBy || null,
     // The style and format it uses (its pinned setup), for the editor's style picker.
-    context: (({ profileId, profileName, formatId, formatName }) => ({ profileId, profileName, formatId, formatName }))(withProjectChannels([{ id }])[0]),
+    context: (({ profileId, profileName, formatId, formatName }) => ({ profileId, profileName, formatId, formatName }))(pinned),
     learning: projectLearning(id,meta), type: formatId(meta.type), shortStyle: meta.shortStyle || null, app: Boolean(projectMeta(dir)),
     path: dir, layout: normalize(meta.layout, meta.type),
     // The steps with their words, each done step's line, and the newest step finished since the page last looked.
@@ -394,7 +401,7 @@ function projectView(id, dir) {
     running: busy ? stepRuns.get(id)?.step || null : null, // the step Claude is working on (the dock on the message box)
     runningAt: busy ? stepRuns.get(id)?.at || null : null, // when it started (the dock shows how long it has run)
     cut: cutPlan(dir), busy, renders: listRenders(dir),
-    export: exportInfo(id, dir), recorder: recorderChoices(id), recUnfinished: unfinishedTakes(id), scenes: scenesSummary(dir), kit: kitSummary(dir, meta), editing: section('editing'),
+    export: exportInfo(id, dir), recorder: recorderChoices(id, styleOf(id, pinned)), recUnfinished: unfinishedTakes(id), scenes: scenesSummary(dir), kit: kitSummary(dir, meta), editing: section('editing'),
     brandColors: profilePalette(id) ?? section('look').colors, // Settings → Look → Brand (and the Brand kit): the canvas's border picker offers them
     blocks: blocksSummary(dir), prepare: prepareState(id, dir, busy),
     layerExports: listLayerExports(dir), // Layers and Timeline file exports (server/export-layers.mjs)
@@ -682,7 +689,7 @@ async function route(req, res) {
   // Export → Layers / Timeline file (server/export-layers.mjs; reads its own body, the canvas PNGs are large).
   if (await layersRoute(req, res, { id, dir, action, send, body, emit: exportEmit(id) })) return;
   // The built-in recorder's chunks (raw bodies, so this comes before the JSON body), finish and recovery.
-  if (await recRoute(req, res, { id, action, url, send, body, emit: (ev) => broadcast(id, ev), receiveTake: takeArrived })) return;
+  if (await recRoute(req, res, { id, action, url, send, body, emit: (ev) => broadcast(id, ev), receiveTake: takeArrived, style: () => styleOf(id) })) return;
   // The chat panel's Model and Effort pickers (server/agent-choices.mjs): GET what they show, POST { model?, effort? }
   // ('studio' = follow Settings again). Checked against an allow-list or a strict pattern; Claude Code and pi restart
   // their process once idle so the next message uses it, Codex sends it with the next turn.

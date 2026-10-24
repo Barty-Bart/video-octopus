@@ -1901,6 +1901,8 @@ button.style-card:hover { border-color: var(--line-2); box-shadow: 0 2px 8px -4p
 .rp-frame.cam-only > #pvScreen, .rp-frame.nothing > #pvScreen { display: none; }
 .rp-frame.cam-only .rp-wait { display: none; }
 .rp-scr { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rp-onoff button { min-width: 52px; height: 30px; }
+.rp-preset { margin: 0 0 10px; font-size: 12.5px; }
 .rp-scr-name { flex: 1 1 100%; color: var(--muted); font-size: 12.5px; overflow-wrap: anywhere; }
 .rp-switch { margin-left: 8px; color: var(--accent); font-size: 12px; text-decoration: none; }
 .rp-switch:hover { text-decoration: underline; }
