@@ -40,6 +40,8 @@ import * as rec from './recorder.js';
 import { HOTKEY } from './recorder.js';
 import { icon } from './icons.js';
 import { makeMediaActions, popMenu, addLayerMenu, currentCard, otherRows, removedRows, wireReorder, itemName, actionToast } from './media.js';
+import { waiting, settled, clearChat, onAttention, pending, canOfferNotifications, offerNotifications, notificationsOn, soundOn, setSound } from './attention.js';
+import { agentPickers } from './agent-pickers.js';
 import { applyAppearance, onAppearance, cutLookParams, themeSwitch } from './appearance.js';
 import { rememberMessage, reviewLessons } from './memory.js';
 import { projectLearningPanel } from './learning.js';
@@ -444,8 +446,9 @@ async function openProject(id) {
     <section class="col chat" aria-label="Claude">
       <div class="chat-rail"><button class="chat-open" id="chatOpen" aria-label="Open Claude (⌘J)" title="Open Claude (⌘J)">${ICON.claude}<i class="chat-dot" hidden></i></button><span class="chat-rail-l">Claude · ⌘J</span></div>
       <div class="chat-head">${ICON.claude}<span class="title">${esc(window.STUDIO_AGENT || 'Claude')}</span><span id="sessionInfo"></span>
-        <label class="mode" title="How much Claude may do without asking"><span class="vh">Permission mode</span><select id="mode">${modes.map(([k, v]) => `<option value="${k}"${STATUS.permissionMode === k ? ' selected' : ''}>${v}</option>`).join('')}</select></label>
         <button class="btn ghost small chat-fold" id="chatFold" aria-label="Fold Claude away (⌘J)" title="Fold Claude away (⌘J)">«</button></div>
+      <div class="chat-ctl" id="chatCtl" role="group" aria-label="How the agent works">
+        <label class="mode" title="How much Claude may do without asking (every chat)"><span class="vh">Permission mode</span><select id="mode">${modes.map(([k, v]) => `<option value="${k}"${STATUS.permissionMode === k ? ' selected' : ''}>${v}</option>`).join('')}</select></label></div>
       <div class="msgs" id="msgs"><div class="empty-chat" id="emptyChat"><b>Chat with Claude about this video.</b><br>The step that’s next waits just above the message box.</div></div>
       <div class="working" id="working" hidden><span class="spin"></span><span id="workText">Working…</span></div>
       <div class="dock" id="dock" role="group" aria-label="The next step"></div>
@@ -633,6 +636,9 @@ async function openProject(id) {
   document.addEventListener('keydown', foldKeys);
   $('#reveal', el).onclick = () => api(`/api/projects/${encodeURIComponent(id)}/reveal`, {});
   $('#mode', el).onchange = async (e) => { await api('/api/settings', { permissionMode: e.target.value }); toast('Applies from your next message.'); };
+  // Model and effort for this video's chat (web/agent-pickers.js, server/agent-choices.mjs), next to the mode.
+  const pickers = agentPickers(id);
+  $('#chatCtl', el).append(pickers.el);
 
   // One undo stack for this project's timeline edits (blocks, sound cues, scene keys and timing): ⌘Z / ⇧⌘Z.
   const history = makeUndo({ toast });
@@ -684,7 +690,28 @@ async function openProject(id) {
     return out;
   };
   // A finished step's one-line marker in the log is drawn by the rail (it has Show me); `rail` exists by the first event.
-  const chat = makeChat(el, id, blocks, { chips, doneMarker: (ev) => rail.marker(ev), proposals });
+  const chat = makeChat(el, id, blocks, { chips, doneMarker: (ev) => rail.marker(ev), proposals, unfold: () => setFold(false) });
+  // Waiting for you (web/attention.js): a badge in the top bar while this video's chat or its Packaging chat waits for
+  // an answer; it opens the chat (or Packaging) at the card.
+  const waitBadge = h('<button type="button" class="wait-badge" id="waitBadge" hidden><i aria-hidden="true"></i><span>Waiting for you</span></button>');
+  $('#barActions').prepend(waitBadge);
+  const mine = [id, `${id}.packaging`];
+  const paintBadge = () => {
+    const list = pending(mine);
+    waitBadge.hidden = !list.length;
+    if (!list.length) return;
+    const a = list[0];
+    waitBadge.title = `${a.kind === 'question' ? 'A question' : 'A permission request'} is waiting: ${a.text || ''}`;
+    $('span', waitBadge).textContent = list.length > 1 ? `${list.length} waiting for you` : 'Waiting for you';
+  };
+  waitBadge.onclick = () => {
+    const a = pending(mine)[0];
+    if (!a) return;
+    if (a.chat !== id && tab !== 'packaging') setTab('packaging');
+    a.focus?.();
+  };
+  const offBadge = onAttention(paintBadge);
+  paintBadge();
   let sound = null; // the kit's Sound section (web/sound.js): cues on the timeline, heard while playing
   const canvas = makeCanvas($('[data-pane=canvas]', el), { inspector: $('#insCanvas', el), tools: $('#tabTools', el) }, id, () => P,
     { openScene: (sid) => { setTab('scenes'); scenes.selectScene(sid); }, openCut: (t) => openCutAt(t), blocks, history, shots, zooms,
@@ -1208,7 +1235,7 @@ async function openProject(id) {
       return true;
     },
   };
-  return { teardown: () => { if (projectPage?.id === id) projectPage = null; es.close(); picker.destroy(); chat.destroy(); railRO.disconnect(); rail.destroy(); waveStop?.(); rdCmp?.destroy(); canvas.destroy(); scenes.destroy(); sound.destroy(); post.destroy(); packaging.destroy(); recorder.destroy(); blocks.destroy(); document.removeEventListener('click', closeMenus); document.removeEventListener('keydown', foldKeys); removeEventListener('message', onCutMessage); cutPanel.destroy(); clearBar(); } };
+  return { teardown: () => { if (projectPage?.id === id) projectPage = null; es.close(); picker.destroy(); chat.destroy(); offBadge(); waitBadge.remove(); pickers.destroy(); railRO.disconnect(); rail.destroy(); waveStop?.(); rdCmp?.destroy(); canvas.destroy(); scenes.destroy(); sound.destroy(); post.destroy(); packaging.destroy(); recorder.destroy(); blocks.destroy(); document.removeEventListener('click', closeMenus); document.removeEventListener('keydown', foldKeys); removeEventListener('message', onCutMessage); cutPanel.destroy(); clearBar(); } };
 }
 
 // ---------- export receipt: prints out of a slot when an export finishes ----------
@@ -1309,6 +1336,50 @@ function makeChat(root, id, ext = {}, opts = {}) {
   const tools = new Map();
   const cards = new Map();
   let busy = false;
+  // Waiting for an answer: a banner over the messages with Allow / Deny right there, and the tab's title, the editor's
+  // top bar badge, a desktop notification and an optional sound (web/attention.js). Cleared when it's answered or
+  // withdrawn, when the turn ends, and on a new session.
+  const waits = new Map(); // request id -> the permission or question event
+  const waitBar = h('<div class="wait-banner" role="alert" aria-live="assertive" hidden></div>');
+  msgs.before(waitBar);
+  const focusCard = (rid) => {
+    opts.unfold?.();
+    const c = cards.get(rid);
+    if (!c) return;
+    setTimeout(() => {
+      c.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+      c.classList.remove('flash'); void c.offsetWidth; c.classList.add('flash');
+      c.querySelector('button')?.focus({ preventScroll: true });
+    }, 60);
+  };
+  const askLine = (ev) => (ev.t === 'question' ? ev.questions?.[0]?.question || '' : `Wants to use ${ev.tool}${ev.summary ? `: ${ev.summary}` : ''}`);
+  function wait(ev) {
+    waits.set(ev.id, ev);
+    waiting({ chat: id, id: ev.id, kind: ev.t, text: askLine(ev), focus: () => focusCard(ev.id) }, { fresh: !ev.replay });
+    paintWait();
+  }
+  function unwait(rid) { if (!waits.delete(rid)) return; settled(id, rid); paintWait(); }
+  function unwaitAll() { if (!waits.size) return; waits.clear(); clearChat(id); paintWait(); }
+  function paintWait() {
+    const list = [...waits.values()];
+    waitBar.hidden = !list.length;
+    root.classList?.toggle('is-waiting', list.length > 0);
+    if (!list.length) { waitBar.replaceChildren(); return; }
+    const ev = list[0], who = window.STUDIO_AGENT || 'Claude';
+    const offer = canOfferNotifications();
+    waitBar.innerHTML = `<span class="wb-dot" aria-hidden="true"></span>
+      <div class="wb-t"><b>${esc(ev.t === 'question' ? `${who} has a question for you` : `${who} is waiting for you`)}</b><small>${esc(askLine(ev))}</small>${list.length > 1 ? `<small>and ${list.length - 1} more after this</small>` : ''}</div>
+      <div class="wb-acts">${ev.t === 'permission' ? `<button type="button" class="btn primary small" data-w="1">Allow</button>${ev.always ? `<button type="button" class="btn small" data-w="always" title="${esc(`Don't ask again for ${ev.always} until this session ends`)}">Always for ${esc(ev.always)}</button>` : ''}<button type="button" class="btn small" data-w="0">Deny</button>` : ''}<button type="button" class="btn ghost small" data-w="show">${ev.t === 'question' ? 'Answer' : 'Details'}</button></div>
+      <div class="wb-more">${offer ? '<button type="button" class="wb-link" data-w="notify">Notify me on the desktop next time</button>' : notificationsOn() ? '<span>Desktop notifications on</span>' : ''}<button type="button" class="wb-link" data-w="sound" aria-pressed="${soundOn()}">Sound: ${soundOn() ? 'on' : 'off'}</button></div>`;
+    waitBar.querySelectorAll('[data-w]').forEach((b) => (b.onclick = async () => {
+      const w = b.dataset.w;
+      if (w === 'show') return focusCard(ev.id);
+      if (w === 'notify') { const ok = await offerNotifications(); toast(ok ? 'You’ll get a desktop notification when an agent waits for you.' : 'No desktop notifications: the title and this waitBar still show it.'); return paintWait(); }
+      if (w === 'sound') { setSound(!soundOn()); return paintWait(); }
+      waitBar.querySelectorAll('[data-w]').forEach((x) => (x.disabled = true));
+      answer(ev.id, { allow: w !== '0', always: w === 'always' }, cards.get(ev.id));
+    }));
+  }
   // Following new messages: while the list is at its bottom it stays there, also when its height changes under it (the
   // working line, the quick replies, the composer's step line, the chat unfolding) or a message grows (a card answered,
   // a tool's output). Scrolled up, nothing moves: a "↓ New message" pill says something came and takes you down.
@@ -1504,7 +1575,8 @@ function makeChat(root, id, ext = {}, opts = {}) {
   }
   function answer(cardId, payload, card) {
     api(`${base}/answer`, { id: cardId, ...payload })
-      .catch((e) => { toast(e.message); closeCard(card, 'No longer waiting'); });
+      .then(() => unwait(cardId))
+      .catch((e) => { toast(e.message); closeCard(card, 'No longer waiting'); unwait(cardId); });
   }
   function closeCard(card, label) {
     if (!card) return;
@@ -1534,13 +1606,13 @@ function makeChat(root, id, ext = {}, opts = {}) {
     if (ev.t === 'usage') { if (!ev.replay && ev.engine === STATUS?.engine) showUsage(ev); return; }
     switch (ev.t) {
       case 'local-down': localDown(ev); break;
-      case 'busy': setBusy(ev.busy); if (!ev.busy) flushHeld(); break;
+      case 'busy': setBusy(ev.busy); if (!ev.busy) { flushHeld(); unwaitAll(); } break;
       case 'status': $('#workText', root).textContent = ev.text; break;
       case 'session': $('#sessionInfo', root).textContent = ev.model ? `· ${ev.model.replace(/^claude-/, '')}` : ''; break;
       case 'context': showContext(ev); break;
       case 'reset': {
         // A new session, or an earlier one continued: redraw from what the server sends next.
-        tools.clear(); cards.clear(); closeMenu(); clearChips(); setTitle(''); showContext(null);
+        tools.clear(); cards.clear(); closeMenu(); clearChips(); setTitle(''); showContext(null); unwaitAll();
         pinned = true; caughtUp(); undoOffer = null;
         msgs.replaceChildren(h(`<div class="empty-chat" id="emptyChat">New session.<br><span class="sub">${id === '_studio' ? 'Same Claude, a fresh conversation.' : 'The project’s files, notes and WORKLOG are its memory.'}</span></div>`));
         break;
@@ -1604,7 +1676,7 @@ function makeChat(root, id, ext = {}, opts = {}) {
           <div class="row"><button class="btn primary small" data-a="1">Allow</button>${ev.always ? `<button class="btn small" data-a="always" title="Don't ask again for ${esc(ev.always)} until this session ends">Always for ${esc(ev.always)}</button>` : ''}<button class="btn small" data-a="0">Deny</button></div></div>`), ev);
         cards.set(ev.id, card);
         if (ev.expired) closeCard(card, 'Not answered');
-        else card.querySelectorAll('[data-a]').forEach((b) => (b.onclick = () => answer(ev.id, { allow: b.dataset.a !== '0', always: b.dataset.a === 'always' }, card)));
+        else { card.querySelectorAll('[data-a]').forEach((b) => (b.onclick = () => answer(ev.id, { allow: b.dataset.a !== '0', always: b.dataset.a === 'always' }, card))); wait(ev); }
         break;
       }
       case 'question': {
@@ -1629,9 +1701,10 @@ function makeChat(root, id, ext = {}, opts = {}) {
         });
         if (ev.questions.some((q) => q.multiSelect)) { const r = h(`<div class="row"><button class="btn primary small">Send answers</button></div>`); r.firstChild.onclick = submit; card.append(r); }
         if (ev.expired) closeCard(card, 'Not answered');
+        else wait(ev);
         break;
       }
-      case 'permission_done': closeCard(cards.get(ev.id), ev.outcome === 'always' ? `Allowed · and ${ev.always || 'this'} from now on, this session` : { allowed: 'Allowed', denied: 'Denied', answered: 'Answered', withdrawn: 'No longer needed' }[ev.outcome] || ev.outcome); break;
+      case 'permission_done': unwait(ev.id); closeCard(cards.get(ev.id), ev.outcome === 'always' ? `Allowed · and ${ev.always || 'this'} from now on, this session` : { allowed: 'Allowed', denied: 'Denied', answered: 'Answered', withdrawn: 'No longer needed' }[ev.outcome] || ev.outcome); break;
       case 'result': add(h(`<div class="divider">${ev.ok ? 'done' : 'stopped'}${ev.seconds ? ` · ${ev.seconds} s` : ''}</div>`), ev); turnOver = true; if (!ev.replay && ev.ok) showChips(); break;
       case 'error': add(h(`<div class="error">${esc(ev.text)}</div>`), ev); break;
       case 'note': add(h(`<div class="note">${esc(ev.text)}</div>`), ev); break;
@@ -1650,7 +1723,7 @@ function makeChat(root, id, ext = {}, opts = {}) {
   return { handle, send: (text) => send(text), sendSkill: (name) => send(`/${name} for this project`), note: (text) => handle({ t: 'note', text }), reveal,
     paintProposals: () => { for (const n of [...propBlocks]) paintProposal(n); },
     setStep: (name) => { if (name === stepName) return; stepName = name; paintComposer(); },
-    destroy: () => { follow.disconnect(); grown.disconnect(); } };
+    destroy: () => { follow.disconnect(); grown.disconnect(); clearChat(id); } };
 }
 
 // A message Video Octopus wrote for Claude, as one line: "▶ Clean up · started 14:32", and "What Video Octopus asked Claude" to

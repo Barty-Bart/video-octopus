@@ -94,7 +94,7 @@ const SECTIONS = {
 const FIND = {
   appearance: 'theme dark light mode match system colours colors accent orange blue green violet sidebar icons names rail look looks',
   updates: 'version git github update restart starter files log in login startup autostart open when i log in skills preferences',
-  claude: 'claude code codex pi permissions ask before changes file edits auto full access model opus sonnet haiku fable api key ollama lm studio provider clean chats',
+  claude: 'claude code codex pi permissions ask before changes file edits auto full access model opus sonnet haiku fable effort reasoning thinking api key ollama lm studio provider clean chats',
   planusage: 'usage limits 5 hours 7 days plan',
   recorder: 'camera microphone mic screen countdown take where takes are saved recordings folder',
   transcribe: 'whisper mlx faster-whisper model language words spell deepgram assemblyai openai elevenlabs cloud',
@@ -344,6 +344,9 @@ function keyField(V, name, { placeholder, site, onChange } = {}) {
 }
 
 // Settings → Agent & model → Model, for Claude Code on the Claude plan.
+// The studio-wide effort default each video's chat starts from (the chat panel's picker can change it per video).
+const EFFORT_WORDS = { low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max', minimal: 'Minimal', off: 'Off', ultra: 'Ultra' };
+const effortPick = (V, key, own, v, save) => select([['', own], ...((V.efforts || {})[key] || []).map((e) => [e, EFFORT_WORDS[e] || e])], v || '', (x) => save('claude', { [`${key}${key === 'pi' ? 'Thinking' : 'Effort'}`]: x }));
 const MODEL_PICKS = [['', "Claude Code's default"], ['opus', 'Opus'], ['opus[1m]', 'Opus · 1M context (uses usage credits)'], ['sonnet', 'Sonnet'], ['sonnet[1m]', 'Sonnet · 1M context (uses usage credits)'], ['claude-fable-5-1', 'Fable'], ['haiku', 'Haiku']];
 const MODES = [['manual', 'Ask before changes'], ['acceptEdits', 'File edits OK'], ['auto', 'Auto (safe steps)'], ['bypassPermissions', 'Full access']];
 
@@ -467,16 +470,18 @@ const DRAW = {
             row('Context window', 'How many tokens the model takes, for the context meter and compacting.', text(String(v.piContext || 128000), (n) => save('claude', { piContext: Number(n) || 128000 }), { mono: true })),
           ] : [row('Model', vision, pick)])),
         group('Defaults for every chat',
-          row('Permission mode', 'How much the agent may do without asking. The Video Octopus assistant always asks.', select(MODES, v.permissionMode, (m) => save('claude', { permissionMode: m })))));
+          row('Permission mode', 'How much the agent may do without asking. The Video Octopus assistant always asks.', select(MODES, v.permissionMode, (m) => save('claude', { permissionMode: m }))),
+          row('Thinking', 'How hard pi thinks before it answers (pi --thinking). Each video’s chat can pick its own next to the permission mode.', effortPick(V, 'pi', "pi's default", v.piThinking, save))));
     }
     if (codex) {
       return frag(engineGroup,
         group('', row('Codex', 'Video Octopus runs the Codex installed on this computer, with its own sign-in. It never asks for, reads or stores that login.', cxCard)),
         group('Model',
           row('Model source', v.codexProvider === 'chatgpt' ? 'Your ChatGPT plan, the way Codex signed in.' : `A model on this computer, through ${v.codexProvider === 'lmstudio' ? 'LM Studio (start its server and load a model first)' : 'Ollama (start it and pull a model first)'}. Local models are slower and weaker at long jobs like Clean up; pick a large one.`, source),
-          row('Model', 'Leave empty for the default, or type a model name.', cxModel)),
+          row('Model', 'Leave empty for the default, or type a model name. Each video’s chat can pick its own next to the permission mode.', cxModel)),
         group('Defaults for every chat',
-          row('Permission mode', 'How much the agent may do without asking. The Video Octopus assistant always asks.', select(MODES, v.permissionMode, (m) => save('claude', { permissionMode: m })))));
+          row('Permission mode', 'How much the agent may do without asking. The Video Octopus assistant always asks.', select(MODES, v.permissionMode, (m) => save('claude', { permissionMode: m }))),
+          ...(v.codexProvider === 'chatgpt' || !v.codexProvider ? [row('Reasoning effort', 'How hard Codex reasons before it answers (its reasoning effort). Each video’s chat can pick its own.', effortPick(V, 'codex', "Codex's default", v.codexEffort, save))] : [])));
     }
     // Claude Code's model source (server/claude-source.mjs): the plan as it is, or a model in Ollama, LM Studio or at
     // another provider that speaks Anthropic's Messages API. The plan-only rows (model alias, API key) hide meanwhile.
@@ -494,7 +499,8 @@ const DRAW = {
       ccSourceGroup(V, v, save, redraw),
       group('Defaults for every chat',
         row('Permission mode', 'How much Claude may do without asking. The Video Octopus assistant always asks.', select(MODES, v.permissionMode, (m) => save('claude', { permissionMode: m }))),
-        row('Model', 'Which Claude model the chats use. The 1M-context ones hold five times more of a long edit, but on a Claude plan they draw from usage credits, billed on top of the plan.', [modelPick, model, list]),
+        row('Model', 'Which Claude model the chats use. The 1M-context ones hold five times more of a long edit, but on a Claude plan they draw from usage credits, billed on top of the plan. Each video’s chat can pick its own next to the permission mode.', [modelPick, model, list]),
+        row('Effort', 'How hard Claude thinks before it answers (claude --effort). Higher is slower and uses more of the plan.', effortPick(V, 'claude', "Claude Code's default", v.claudeEffort, save)),
         (v.ccSource || 'plan') === 'plan'
           ? row('Clean chats', 'Only your studio\'s own skills and settings in Video Octopus\'s chats: no connected apps (claude.ai connectors and MCP servers), no plugins or their hooks, no Claude Code extras. Every chat starts about 30–40k tokens lighter. Turn off to use a connected app (Figma, Notion…) from a Video Octopus chat.', toggle(v.lean !== false, (on) => save('claude', { lean: on })))
           : row('Clean chats', 'Always on with another model source: Claude Code would otherwise send every connected app\'s tools to that model.', h('<span class="sub">On</span>'))),

@@ -192,6 +192,7 @@ export function saveSection(name, patch = {}) {
     if ('permissionMode' in patch) { if (!modes.includes(patch.permissionMode)) throw new Error('Unknown permission mode.'); top.permissionMode = patch.permissionMode; }
     if ('model' in patch) { if (patch.model && !validModel('claude', patch.model)) throw new Error('Bad model name.'); top.model = patch.model; }
     if ('codexModel' in patch && patch.codexModel && !validModel('codex', String(patch.codexModel).trim())) throw new Error('Bad model name.');
+    if ('piModel' in patch && patch.piModel && !validModel('pi', String(patch.piModel).trim())) throw new Error('Bad model name.');
     delete patch.permissionMode; delete patch.model;
   }
   if (name === 'folders') return saveFolders(patch);
@@ -458,6 +459,8 @@ export async function settingsView() {
       folders: { studio: s.studio, projectsDir: s.projectsDir, libraryDir: s.libraryDir || 'library', recordingsDir: s.recordingsDir },
       setup: section('setup', s), updates: section('updates', s), storage: section('storage', s),
     },
+    // The effort levels each agent's CLI takes (server/agent-choices.mjs), for Settings › Agent & model's defaults.
+    efforts: EFFORTS,
     keys: await keyStatus(), keyStore: KEY_STORE,
     keyInfo: Object.fromEntries(Object.entries(KEYS).map(([k, v]) => [k, { label: v.label, test: Boolean(v.test) }])),
     providers: PROVIDERS, models: MODELS, langs: LANGS,

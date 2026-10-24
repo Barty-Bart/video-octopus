@@ -3,6 +3,7 @@ import { TERMS } from './terms.js';
 // previews; sounds waiting for approval; "New style from samples"; the Library's own Claude in a side
 // panel. Also the pieces projects use: the style picker, "Save to library" on renders, and audio previews.
 import { $, esc, h, api, toast, ago, tilde, fileManager } from './ui.js';
+import { waiting, settled, clearChat } from './attention.js';
 
 export const libUrl = (rel) => `/api/library/file?f=${encodeURIComponent(rel)}`;
 const freeUrl = (rel) => `/api/library/free-file?f=${encodeURIComponent(rel)}`;
@@ -170,7 +171,7 @@ function makeMiniChat(box, onFiles) {
   function handle(ev) {
     switch (ev.t) {
       case 'files': onFiles(); break;
-      case 'busy': setBusy(ev.busy); break;
+      case 'busy': setBusy(ev.busy); if (!ev.busy) clearChat('_library'); break;
       case 'user': add(h(`<div class="msg-user">${esc(ev.text.length > 400 ? ev.text.slice(0, 400) + '…' : ev.text)}</div>`)); break;
       case 'text': add(h(`<div class="msg-ai">${mdLite(ev.text)}</div>`)); break;
       case 'tool': { const n = add(h(`<div class="tool"><b>${esc(ev.name)}</b> ${esc(ev.summary)}</div>`)); tools.set(ev.id, n); n.onclick = () => n.querySelector('pre')?.toggleAttribute('hidden'); break; }
@@ -180,7 +181,10 @@ function makeMiniChat(box, onFiles) {
           <div class="row"><button class="btn primary small" data-a="1">Allow</button><button class="btn small" data-a="0">Deny</button></div></div>`));
         cards.set(ev.id, card);
         if (ev.expired) closeCard(card, 'Not answered');
-        else card.querySelectorAll('[data-a]').forEach((b) => (b.onclick = () => answer(ev.id, { allow: b.dataset.a === '1' }, card)));
+        else {
+          card.querySelectorAll('[data-a]').forEach((b) => (b.onclick = () => answer(ev.id, { allow: b.dataset.a === '1' }, card)));
+          waiting({ chat: '_library', id: ev.id, text: `Wants to use ${ev.tool}${ev.summary ? `: ${ev.summary}` : ''}`, focus: () => card.scrollIntoView({ block: 'center' }) }, { fresh: !ev.replay });
+        }
         break;
       }
       case 'question': {
@@ -195,7 +199,7 @@ function makeMiniChat(box, onFiles) {
         if (ev.expired) closeCard(card, 'Not answered');
         break;
       }
-      case 'permission_done': closeCard(cards.get(ev.id), { allowed: 'Allowed', denied: 'Denied', answered: 'Answered', withdrawn: 'No longer needed' }[ev.outcome] || ev.outcome); break;
+      case 'permission_done': settled('_library', ev.id); closeCard(cards.get(ev.id), { allowed: 'Allowed', denied: 'Denied', answered: 'Answered', withdrawn: 'No longer needed' }[ev.outcome] || ev.outcome); break;
       case 'result': add(h(`<div class="divider">${ev.ok ? 'done' : 'stopped'}${ev.seconds ? ` · ${ev.seconds} s` : ''}</div>`)); if (!ev.replay) onFiles(); break;
       case 'error': add(h(`<div class="error">${esc(ev.text)}</div>`)); break;
       case 'note': add(h(`<div class="note">${esc(ev.text)}</div>`)); break;

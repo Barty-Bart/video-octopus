@@ -42,6 +42,10 @@ import { shotsRoute, readShotsAndZooms, shotsContext, onShotNotes } from './shot
 import { recRoute, unfinishedTakes, recorderChoices, recorderBusy } from './browser-recorder.mjs';
 import { mediaRoute } from './media.mjs';
 import { trashRoute, binEntry } from './trash.mjs';
+import { agentChoice, setAgentChoice, choiceView, codexModels } from './agent-choices.mjs';
+import { ccSource } from './claude-source.mjs';
+import { codexSource } from './codex.mjs';
+import { piModels } from './pi.mjs';
 import { binName } from './os-trash.mjs';
 import { logUse, usageFromFiles, cutSaved, dashboard, backfill, catchUpUsage, getPlanUsage } from './usage.mjs';
 import { schedulesRoute, startScheduler, stopScheduler, readSchedules, schedulesBusy } from './schedules.mjs';
@@ -101,6 +105,8 @@ function chatFor(id) {
     chat.cwd = () => (chat.projectScope() || chat.engine === 'pi') ? projectDir(id) || settings().studio : settings().studio;
     // Auto mode: a change outside this project's folder asks first (server/outside-hook.mjs; Claude Code only).
     chat.guard = () => projectDir(id);
+    // The chat panel's Model and Effort for this video (server/agent-choices.mjs), over the studio default.
+    chat.agentChoice = () => agentChoice(id, chat.engine);
     chat.listeners.add((ev) => broadcast(id, ev));
     chat.listeners.add((ev) => { if (ev.t === 'busy' && !ev.busy) stepRuns.delete(id); });
     // AI naming (server/naming.mjs): only the agent's own reply can name an automatically named video.
@@ -233,6 +239,20 @@ function addLayers(dir, files) {
   const layout = normalize(meta.layout, meta.type);
   layout.layers = [...layout.layers, ...newLayers(layout, pics, dims)].slice(-8);
   saveProjectMeta(dir, { layout });
+}
+
+// What the Model and Effort pickers need to know about the agent: its model source, and the models it lists (Codex's
+// own cache; pi's --list-models, at most every five minutes since it runs pi).
+let piList = { at: 0, list: [] };
+async function choiceContext(engine) {
+  const c = section('claude');
+  if (engine === 'claude') return { source: ccSource().id };
+  if (engine === 'codex') return { local: codexSource(c) !== 'chatgpt', models: codexModels() };
+  const endpoint = c.piSource === 'endpoint';
+  if (!endpoint && Date.now() - piList.at > 300000) {
+    try { piList = { at: Date.now(), list: (await piModels()).map((m) => ({ id: `${m.provider}/${m.model}`, label: `${m.provider} · ${m.model}` })) }; } catch {}
+  }
+  return { endpoint, models: endpoint ? [] : piList.list };
 }
 
 // Why the project's media can't be moved or switched right now (the Media section, server/media.mjs), or null.
@@ -663,6 +683,21 @@ async function route(req, res) {
   if (await layersRoute(req, res, { id, dir, action, send, body, emit: exportEmit(id) })) return;
   // The built-in recorder's chunks (raw bodies, so this comes before the JSON body), finish and recovery.
   if (await recRoute(req, res, { id, action, url, send, body, emit: (ev) => broadcast(id, ev), receiveTake: takeArrived })) return;
+  // The chat panel's Model and Effort pickers (server/agent-choices.mjs): GET what they show, POST { model?, effort? }
+  // ('studio' = follow Settings again). Checked against an allow-list or a strict pattern; Claude Code and pi restart
+  // their process once idle so the next message uses it, Codex sends it with the next turn.
+  if (action === '/agent-choice') {
+    const engine = engineName();
+    try {
+      if (req.method === 'POST') {
+        const b = await body(req);
+        setAgentChoice(id, engine, { ...('model' in b ? { model: b.model } : {}), ...('effort' in b ? { effort: b.effort } : {}) });
+        const c = chats.get(id);
+        if (c && c.engine === engine && engine !== 'codex') restartWhenIdle(c);
+      }
+      return send(res, 200, choiceView(id, engine, await choiceContext(engine)));
+    } catch (e) { return send(res, 400, { error: e.message }); }
+  }
   // The Media section (server/media.mjs): list, use an older take, add as a layer, remove to the trash, Delete recording
   // (this video and Recordings, to the computer's Bin: trash.mjs binEntry), Undo.
   if (await mediaRoute(req, res, { dir, action, send, body, emit: (ev) => broadcast(id, ev), busy: () => mediaBusy(id, dir),

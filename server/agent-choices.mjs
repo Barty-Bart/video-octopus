@@ -112,3 +112,40 @@ export function codexModels(home = process.env.CODEX_HOME || join(homedir(), '.c
     .map((m) => ({ id: m.slug, label: String(m.display_name || m.slug).slice(0, 60),
       efforts: (m.supported_reasoning_levels || []).map((x) => x?.effort || x).filter((e) => validEffort('codex', e)) }));
 }
+
+// ---- what the chat panel's pickers show ----
+const AGENT = { claude: 'Claude Code', codex: 'Codex', pi: 'pi' };
+const EFFORT_LABEL = { claude: 'Effort', codex: 'Reasoning', pi: 'Thinking' };
+// ctx: { source (Claude Code's model source), local (Codex on LM Studio or Ollama), endpoint (pi on an endpoint),
+// models: [{ id, label, efforts? }] (Codex's cache, pi's list) }. Options are [value, label]; 'studio' follows Settings.
+export function choiceView(id, engine, { source = 'plan', local = false, endpoint = false, models = [] } = {}) {
+  const def = studioChoice(engine), now = agentChoice(id, engine);
+  const own = (id && state().projects?.[id]?.agentChoice?.[engine]) || {};
+  const agent = AGENT[engine];
+  const list = engine === 'claude' ? CLAUDE_MODELS : models.map((m) => [m.id, m.label || m.id]);
+  const name = (m) => list.find(([k]) => k === m)?.[1] || m;
+  const modelOff = engine === 'claude' && source !== 'plan' ? 'The model comes from the model source in Settings › Agent & model.'
+    : engine === 'pi' && endpoint ? 'The endpoint’s model is set in Settings › Agent & model.'
+      : engine === 'codex' && local ? 'The local model is set in Settings › Agent & model.' : '';
+  const modelOpts = modelOff ? [] : [
+    ['studio', def.model ? `Default · ${name(def.model)}` : 'Default'],
+    ...(def.model ? [['', `${agent}’s own default`]] : []),
+    ...list,
+    ...(now.model && !list.some(([k]) => k === now.model) ? [[now.model, now.model]] : []),
+  ];
+  // Codex: the efforts the picked model lists (all of them when unknown); none for a local model.
+  const known = engine === 'codex' ? models.find((m) => m.id === now.model)?.efforts : null;
+  const efforts = engine === 'codex' && local ? [] : known?.length ? EFFORTS[engine].filter((e) => known.includes(e)) : EFFORTS[engine];
+  const effortOpts = efforts.length ? [
+    ['studio', def.effort ? `Default · ${EFFORT_WORDS[def.effort]}` : 'Default'],
+    ...(def.effort ? [['', `${agent}’s own default`]] : []),
+    ...efforts.map((e) => [e, EFFORT_WORDS[e]]),
+  ] : [];
+  return {
+    engine, agent, effortLabel: EFFORT_LABEL[engine], now,
+    model: 'model' in own ? own.model : 'studio', effort: 'effort' in own ? own.effort : 'studio',
+    models: modelOpts, efforts: effortOpts, modelNote: modelOff,
+    // Claude Code and pi take them when the chat's process starts: it restarts once it's idle.
+    applies: engine === 'codex' ? 'Applies from your next message.' : 'Applies from your next message (the chat reopens with it).',
+  };
+}

@@ -16,6 +16,7 @@ import { childEnv, settingsBrief, section } from './settings.mjs';
 import { logUse } from './usage.mjs';
 import { activeSkillRoot } from './managed-skills.mjs';
 import { assertNotUpdating } from './maintenance.mjs';
+import { piArgs } from './agent-choices.mjs';
 
 const EXTENSION = join(APP_DIR, 'core', 'pi', 'octopus-extension.js');
 const run = (bin, args, env, ms = 15000) => new Promise((done) => {
@@ -91,7 +92,9 @@ export class PiSession extends ChatSession {
     const saved = st.engine === 'pi' && !otherSource && st.sessionId && existsSync(st.sessionId) ? st.sessionId : null;
     if (otherSource) this.emit({ t: 'note', text: 'pi now uses another model source, so this is a fresh chat.' });
     const skills = skillRoot ? ['--skill', skillRoot] : [];
-    const model = endpoint ? ['--provider', 'studio', '--model', c.piModel] : c.piModel ? ['--model', c.piModel] : [];
+    // --model and --thinking (pi --help): the chat's pick (server/agent-choices.mjs); an endpoint's model is Settings' own.
+    const pick = this.choice();
+    const model = endpoint ? ['--provider', 'studio', '--model', c.piModel, ...piArgs({ effort: pick.effort })] : piArgs(pick);
     // The appended system prompt (~40 KB for a project) goes as a file: Windows caps the command line at 32,767
     // characters (agent-prompt.mjs). pi's --append-system-prompt reads a file when it is given an existing path, and
     // reads it again when it reloads, so the file stays until the process ends.
@@ -146,9 +149,9 @@ export class PiSession extends ChatSession {
     });
     const state0 = await this.call('get_state');
     this.started = true;
-    if (state0?.sessionFile) setProjectState(this.id, { sessionId: state0.sessionFile, engine: 'pi', source: this.source, model: state0?.model?.id || c.piModel || null });
+    if (state0?.sessionFile) setProjectState(this.id, { sessionId: state0.sessionFile, engine: 'pi', source: this.source, model: state0?.model?.id || pick.model || c.piModel || null });
     if (state0?.model?.contextWindow) this.ctx = { ...(this.ctx || {}), window: state0.model.contextWindow };
-    this.emit({ t: 'session', id: state0?.sessionId || '', model: state0?.model?.id || c.piModel || 'pi' });
+    this.emit({ t: 'session', id: state0?.sessionId || '', model: state0?.model?.id || pick.model || c.piModel || 'pi' });
   }
 
   // One JSONL record: a reply to our command, a session event, or an extension UI request.

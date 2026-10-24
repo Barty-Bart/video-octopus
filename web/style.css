@@ -1019,6 +1019,33 @@ body.rs-ns, body.rs-ns * { cursor: ns-resize !important; user-select: none; }
 .chat-dot { position: absolute; top: -3px; right: -3px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); border: 2px solid var(--panel); }
 .chat-rail-l { writing-mode: vertical-rl; transform: rotate(180deg); font-size: 11px; color: var(--muted); }
 .chat-fold { padding: 0 7px; margin-left: 2px; }
+.chat-head .chat-fold { margin-left: auto; }
+
+/* the row under the chat's head: permission mode, model and effort (web/agent-pickers.js) */
+.chat-ctl { flex: none; display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 12px 6px 14px; border-bottom: 1px solid var(--line-3); }
+.chat-ctl .mode { margin-left: 0; min-width: 0; }
+.chat-ctl .mode select { max-width: 160px; }
+.agent-picks { display: contents; }
+
+/* waiting for you (web/attention.js): the banner over the messages, the top bar's badge, the card it points at */
+.wait-banner { flex: none; margin: 8px 10px 0; padding: 10px 12px; border-radius: var(--r-m); border: 1px solid var(--accent); background: var(--accent-soft);
+  display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 10px; align-items: start; }
+.wait-banner[hidden] { display: none; }
+.wb-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); margin-top: 4px; animation: wb-pulse 1.4s ease-in-out infinite; }
+@keyframes wb-pulse { 50% { opacity: 0.35; } }
+.wb-t { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
+.wb-t b { color: var(--accent-text); }
+.wb-t small { color: var(--text-2); overflow-wrap: anywhere; }
+.wb-acts, .wb-more { grid-column: 2; display: flex; flex-wrap: wrap; gap: 6px; }
+.wb-more { gap: 12px; font-size: 11px; color: var(--muted); }
+.wb-link { border: 0; background: none; padding: 0; font: inherit; color: var(--accent-text); text-decoration: underline; cursor: pointer; }
+.wait-badge { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--accent);
+  background: var(--accent-soft); color: var(--accent-text); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.wait-badge[hidden] { display: none; }
+.wait-badge i { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: wb-pulse 1.4s ease-in-out infinite; }
+.ask.flash { animation: msg-flash 1.6s ease-out; }
+.project.is-waiting.folded .chat-open { box-shadow: 0 0 0 2px var(--accent); }
+@media (prefers-reduced-motion: reduce) { .wb-dot, .wait-badge i { animation: none; } }
 @media (max-width: 980px) {
   .project.folded { grid-template-columns: 1fr; }
   .project.folded .chat-rail { flex-direction: row; padding: 8px 12px; }
