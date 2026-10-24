@@ -1,3 +1,12 @@
+# Unreleased
+
+- **Every brand kit has a colour.** A kit uses its brand's first colour; a kit without brand colours gets its own colour from a palette of twelve, picked when the kit is made, different from the other kits' where possible. Kits made before this update get one the first time the studio opens. Change it on the kit's **Brand** tab under **Kit colour** (twelve swatches or any colour). The kit colour is only for covers, dots and avatars: it is never added to the brand or to videos.
+- **Style covers that look like covers.** A style's card shows a picture when the studio has one: the main thumbnail from Packaging of a video made with the style, else a frame of that video, else a key frame of an example the style studied. Otherwise the cover is drawn in the kit colour, with the style's initial and a 16:9 or 9:16 frame showing a presenter (on-camera setups) or a waveform with captions (faceless). No brand styles get a colour of their own. The style page's cover matches.
+- **Filled dots.** The brand kits bar, the cards' kit chips and the editor's style picker show each kit's colour; No brand has no dot.
+- **A tidier My styles page.** Cards are a little smaller, with room between them; **New style** is as tall as a card; Studio instructions and Memories for everything are two quiet rows under "Shared by every style".
+
+Verified with 388 unit tests on Node 24.22.1 and 22.22.1 (one failure, also on beta.19: a Packaging test whose "resets at" message reads "resets on <day>" when the reset is after midnight), the format-skill and learning runtimes, and a disposable browser run (My styles at 1440, 760 and 375 px in light and dark, a kit's Brand tab with the colour picker, the style page and the editor's style picker; no console errors, no sideways scroll).
+
 # v0.1.0-beta.19
 
 - **Room for the stages.** The editor's top bar shows the logo alone, a narrower name and style picker (hover either for the whole name), and the plan-usage meter as two small bars (hover for the numbers). The Light/Dark switch moved to the bar's **⋯** menu (Settings › General › Theme still has Match system). With a long style name and the meter showing, the whole bar (segments and ▾) fits at 1440 px; at 1280 px only the segments go; at 1100 px the ▾ go too (Alt+↓ or a long press still opens a stage's steps); the one-button stage menu remains for 760 px and below.

@@ -319,9 +319,24 @@ Since **Flat 3** (24 Oct 2026) the UI has one level of styles: a **style** is a 
 "Faceless reel") and a **brand kit** is a profile (brand, research, assets, people & places and memories at
 `profile:<id>`), shared by every style that uses it (`format.profileId`). Nothing is migrated: existing profiles are
 kits, existing formats are styles. The rail links to **My styles** (`#/styles`): a brand kits bar, one flat card per
-style (cover in the kit's brand colour, Short/Long badge, kit chip, description, skill version, videos, changes to
+style (cover, Short/Long badge, kit chip, description, skill version, videos, changes to
 review; most recently used first; archived behind Show archived), **New style**, and the shared **Studio
-instructions** (`#/styles/instructions`) and **Memories for everything** (`#/styles/memories`). A style's page
+instructions** (`#/styles/instructions`) and **Memories for everything** (`#/styles/memories`).
+
+**Kit colours** (0.1.0-beta.20, `web/kit-colors.js`): every kit shows a colour, its approved brand's first colour,
+else the kit colour saved on the profile row (`color`, `#rrggbb`). A new kit gets the first colour of a 12-colour
+palette that no other kit shows (cycling by kit count when all are taken); kits made before this version get one
+once, when a store opens (`LearningStore.backfillKitColors`: creation order, kits without brand colours first, no
+revision change, nothing written when every kit has one). The creator changes it on the kit's Brand tab (**Kit
+colour**: the palette or any colour), `POST /api/learning/profiles/<id>/color { expected, color }` (validated,
+revisioned, refused for No brand; no format skill rebuild). It is display only: never part of a brand version,
+BRAND.md or a project's pinned context. No brand styles take a palette colour derived from the style id.
+**Covers**: a card shows a picture only when the studio already has one (`GET /api/learning/formats/<id>/cover?
+projects=<newest video ids>`, `server/style-covers.mjs`, 204 when none): the main Packaging thumbnail of one of the
+style's videos, else a frame of such a video (the home screen's cached poster frame), else a key frame of an example
+the style studied (a saved version's, then a conversation's extracted frames). Otherwise the cover is drawn in the
+kit colour: a soft tone, the style's initial, and a 16:9 or 9:16 frame with a presenter (on-camera setups) or a
+waveform and captions (faceless). Nothing new is stored for covers. A style's page
 (`#/style/<formatId>/skill|examples|brand|people|memories`) has one tab row; the Skill tab's side column opens Files,
 Insights, History and Videos as panels (`?panel=files|insights|history|videos`) and **Talk to this style** opens the
 format conversation. Brand kits are listed at `#/styles/kits` and each has `#/styles/kit/<profileId>/brand|people|

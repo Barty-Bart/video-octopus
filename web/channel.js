@@ -17,19 +17,50 @@ import { profileSettings, instructionSettings } from './profiles.js';
 import { renderMemories } from './memory.js';
 import { mountResources } from './resources.js';
 import { themeSwitch } from './appearance.js';
-import { styleEntries, setupShape, kitColor, COLOR } from './style-list.js';
+import { styleEntries, setupShape, kitColor, initialOf, COLOR } from './style-list.js';
+import { idColor } from './kit-colors.js';
+import { icon } from './icons.js';
 
 const E = '/api/learning';
 const DOTS = '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.5" cy="8" r="1.2"/><circle cx="8" cy="8" r="1.2"/><circle cx="12.5" cy="8" r="1.2"/></svg>';
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const list = (names) => (names.length <= 2 ? names.join(' and ') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`);
 
-// A cover in the kit's brand colour (a data colour, allowed inline), with white text unless that fails 4.5:1
-// (avatarInk). No kit: the quiet surface and the theme's text.
+// A cover in the kit colour (a data colour, allowed inline), with white text unless that fails 4.5:1 (avatarInk), and a
+// chip background that reads on it. Every kit has a colour (web/kit-colors.js); without one (No brand) the caller
+// passes a colour derived from the style's id.
 function coverStyle(color) {
-  return COLOR.test(color || '') ? ` style="--kit:${color};--kit-ink:${avatarInk(color)}"` : '';
+  if (!COLOR.test(color || '')) return '';
+  const ink = avatarInk(color);
+  const chip = ink === '#ffffff' ? 'rgb(0 0 0 / 0.24)' : 'rgb(255 255 255 / 0.42)';
+  return ` style="--kit:${color};--kit-ink:${ink};--kit-chip:${chip}"`;
 }
-const kitDot = (color) => `<i class="kit-dot${COLOR.test(color || '') ? '' : ' none'}" aria-hidden="true"${COLOR.test(color || '') ? ` style="background:${color}"` : ''}></i>`;
+// A filled dot in the kit colour. No brand has no kit, so no dot.
+const kitDot = (color) => (COLOR.test(color || '') ? `<i class="kit-dot" aria-hidden="true" style="background:${color}"></i>` : '');
+
+// The drawn part of a cover: the style's initial, large and quiet, and a frame in its orientation showing how it is
+// made: a presenter (on camera) or a waveform with captions (faceless). currentColor is the cover's ink.
+const ART = {
+  'wide-camera': '<svg viewBox="0 0 160 90"><circle cx="80" cy="37" r="13.5"/><path d="M47 90c0-21 14.5-31 33-31s33 10 33 31z"/><circle cx="14" cy="13" r="3.5" class="o6"/><rect x="22" y="10.5" width="20" height="5" rx="2.5" class="o4"/></svg>',
+  'tall-camera': '<svg viewBox="0 0 90 160"><circle cx="45" cy="60" r="15"/><path d="M12 160v-32c0-21 14-34 33-34s33 13 33 34v32z"/><rect x="17" y="122" width="56" height="8" rx="4" class="cap"/><rect x="27" y="134" width="36" height="6" rx="3" class="cap o7"/></svg>',
+  'wide-voice': '<svg viewBox="0 0 160 90"><g class="wave">' + [6, 14, 24, 16, 30, 20, 34, 22, 12, 26, 18, 8].map((h, i) => `<rect x="${31 + i * 9}" y="${36 - h / 2}" width="4.5" height="${h}" rx="2.25"/>`).join('') + '</g><rect x="38" y="64" width="84" height="7" rx="3.5"/><rect x="54" y="75" width="52" height="6" rx="3" class="o6"/></svg>',
+  'tall-voice': '<svg viewBox="0 0 90 160"><g class="wave">' + [8, 18, 28, 16, 34, 22, 12].map((h, i) => `<rect x="${17 + i * 8.5}" y="${66 - h / 2}" width="4.5" height="${h}" rx="2.25"/>`).join('') + '</g><rect x="14" y="110" width="62" height="8" rx="4"/><rect x="24" y="122" width="42" height="6" rx="3" class="o6"/></svg>',
+};
+const coverArt = (e) => `<span class="stc-art" aria-hidden="true"><b class="stc-mono">${esc(e.initial || initialOf(e.name))}</b><span class="stc-frame ${e.tall ? 'tall' : 'wide'}">${ART[`${e.tall ? 'tall' : 'wide'}-${e.camera === false ? 'voice' : 'camera'}`]}</span></span>`;
+
+// The cover picture, when the studio has one (server/style-covers.mjs: a video's main thumbnail or frame, else a key
+// frame of an example). It is laid over the drawn cover once it loads; a style with none keeps the drawn cover.
+const coverPic = (e) => (e.coverVideos?.length || e.studied
+  ? `<img class="stc-pic" alt="" loading="lazy" decoding="async" src="${E}/formats/${encodeURIComponent(e.id)}/cover?${new URLSearchParams({ projects: e.coverVideos.join(','), v: String(e.lastUsed || 0) })}">`
+  : '');
+function wireCovers(root) {
+  for (const img of root.querySelectorAll('img.stc-pic')) {
+    const done = () => img.closest('.stc-cover')?.classList.add('has-pic');
+    if (img.complete && img.naturalWidth) done();
+    img.addEventListener('load', done, { once: true });
+    img.addEventListener('error', () => img.remove(), { once: true });
+  }
+}
 
 // Changes waiting in the newest draft of each style (sessions in review), for the cards' accent line.
 async function draftCounts(sessions) {
@@ -52,14 +83,15 @@ async function loadStyles(formatInfo, projects) {
   return { profiles: profiles.profiles, formats: profiles.formats, versions: profiles.versions, sessions: learning.sessions, projects: rows, drafts, formatInfo };
 }
 
-// One style card (board Flat 3): cover in the kit colour with the frame rising from the bottom, the kind badge and
-// the kit chip, then name, description and meta.
+// One style card (board Flat 3): the cover (its picture, else drawn in the kit colour), the kind badge and the kit
+// chip, then name, description and meta.
 function styleCard(e, query = '') {
   return `<a class="stc${e.archived ? ' archived' : ''}" href="${styleHref(e.id, 'skill')}${query}">
-    <span class="stc-cover${e.kitColor ? '' : ' no-kit'}"${coverStyle(e.kitColor)}>
-      <span class="stc-frame ${e.tall ? 'tall' : 'wide'}" aria-hidden="true"></span>
+    <span class="stc-cover${e.unbranded ? ' unbranded' : ''}"${coverStyle(e.kitColor || e.coverColor || idColor(e.id))}>
+      ${coverArt(e)}
+      ${coverPic(e)}
       <span class="stc-chip stc-badge">${esc(e.badge)}</span>
-      <span class="stc-chip stc-kit">${kitDot(e.kitColor)}${esc(e.kitName)}</span>
+      <span class="stc-chip stc-kit" title="Brand kit: ${esc(e.kitName)}">${kitDot(e.kitColor)}<span>${esc(e.kitName)}</span></span>
       ${e.archived ? '<span class="stc-chip stc-arch">Archived</span>' : ''}
     </span>
     <span class="stc-t">
@@ -70,8 +102,13 @@ function styleCard(e, query = '') {
   </a>`;
 }
 const newCard = (first = false) => `<button type="button" class="stc stc-new" data-new-style>
-    <span class="stc-cover"><b>${first ? 'Create your first style' : '+ New style'}</b><span>${first ? 'One kind of video you make, like “Faceless reel”' : 'One kind of video, from examples or a link'}</span></span>
+    <span class="stc-cover"><span class="stc-new-ic" aria-hidden="true">${icon('plus', 20)}</span><b>${first ? 'Create your first style' : 'New style'}</b><span>${first ? 'One kind of video you make, like “Faceless reel”' : 'One kind of video, from examples or a link'}</span></span>
   </button>`;
+// Styles that studied an example (a saved version, or a conversation with references) may have a key frame to show.
+const studiedFormats = (data) => new Set([
+  ...data.formats.filter((f) => f.activeVersion).map((f) => f.id),
+  ...data.sessions.filter((x) => x.references?.length).map((x) => x.formatId),
+]);
 
 // ---------- My styles (#/styles) ----------
 // ctx: { tab: 'styles' | 'instructions' | 'memories', query, counts, projects, formatInfo, onChannelsChange }.
@@ -104,7 +141,8 @@ export async function renderStyles(main, { tab, query, counts = {}, projects = n
   const kits = realKits(data.profiles);
   let showArchived = false;
   const draw = () => {
-    const all = styleEntries(data, { archived: true });
+    const studied = studiedFormats(data);
+    const all = styleEntries(data, { archived: true }).map((e) => ({ ...e, studied: studied.has(e.id) }));
     const shown = all.filter((e) => showArchived || !e.archived);
     const archivedCount = all.filter((e) => e.archived).length;
     const pendingGlobal = counts.waiting?.memories || 0;
@@ -121,11 +159,15 @@ export async function renderStyles(main, { tab, query, counts = {}, projects = n
         ${newCard(!all.length)}
       </div>
       ${archivedCount ? `<label class="learn-check sty-archived"><input type="checkbox" data-archived${showArchived ? ' checked' : ''}> Show archived (${archivedCount})</label>` : ''}
-      <section class="sty-tiles2" aria-label="Shared by all styles">
-        <a class="sty-tile2" href="#/styles/instructions"><span><b>Studio instructions</b><span class="sty-meta">Shared by every style</span></span></a>
-        <a class="sty-tile2" href="#/styles/memories"><span><b>Memories for everything</b><span class="sty-meta">Preferences for every style</span></span>${pendingGlobal ? `<span class="pill accent">${pendingGlobal} to review</span>` : ''}</a>
+      <section class="sty-shared" aria-labelledby="styShared">
+        <h2 id="styShared">Shared by every style</h2>
+        <div class="sty-shared-rows">
+          <a class="sty-link" href="#/styles/instructions"><span class="sty-link-ic">${icon('instructions', 18)}</span><span class="sty-link-t"><b>Studio instructions</b><span class="sty-meta">How your agent works on every video</span></span>${icon('forward', 16)}</a>
+          <a class="sty-link" href="#/styles/memories"><span class="sty-link-ic">${icon('memory', 18)}</span><span class="sty-link-t"><b>Memories for everything</b><span class="sty-meta">Preferences that apply to every style</span></span>${pendingGlobal ? `<span class="pill accent">${pendingGlobal} to review</span>` : ''}${icon('forward', 16)}</a>
+        </div>
       </section>
     </div>`));
+    wireCovers(body);
     for (const b of main.querySelectorAll('[data-new-style]')) b.onclick = () => newStyleDialog({ profiles: data.profiles });
     const toggle = body.querySelector('[data-archived]');
     if (toggle) toggle.onchange = () => { showArchived = toggle.checked; draw(); };
@@ -165,7 +207,8 @@ export async function renderStylePage(main, ctx) {
   if (found.id !== ctx.id) history.replaceState(null, '', styleHref(f.id, tab, Object.fromEntries([...query].filter(([k]) => k !== 'format'))));
   const kit = data.profiles.find((p) => p.id === f.profileId) || null;
   const unbranded = !kit || Boolean(kit.system);
-  const color = unbranded ? null : kitColor(kit);
+  // The cover's colour: the kit's (every kit has one); a No brand style's is derived from its id.
+  const color = (unbranded ? null : kitColor(kit)) || idColor(f.id);
   const shape = setupShape(f.type, formatInfo);
   const learning = await api(E).catch(() => ({ sessions: [] }));
   const sessions = learning.sessions.filter((s) => s.formatId === f.id);
@@ -187,8 +230,8 @@ export async function renderStylePage(main, ctx) {
   ];
   main.replaceChildren(h(`<div class="hub stp${tab === 'skill' || tab === 'examples' ? ' hub-formats' : ''}">
     <div class="stp-top">
-      <header class="stp-cover${color ? '' : ' no-kit'}"${coverStyle(color)}>
-        <span class="stp-frame ${shape.tall ? 'tall' : 'wide'}" aria-hidden="true"></span>
+      <header class="stp-cover"${coverStyle(color)}>
+        <span class="stp-frame ${shape.tall ? 'tall' : 'wide'}" aria-hidden="true">${ART[`${shape.tall ? 'tall' : 'wide'}-${shape.camera ? 'camera' : 'voice'}`]}</span>
         <div class="stp-in">
           <div class="stp-bar">
             <nav class="stp-crumb" aria-label="Breadcrumb"><a href="#/styles">${TERMS.myStyles}</a><span aria-hidden="true">/</span><span aria-current="page">${esc(f.name)}</span></nav>
@@ -460,8 +503,10 @@ export async function renderKit(main, ctx) {
     part = await renderMemories(host, { profileId: p.id, profileName: p.name });
   } else {
     const styles = await loadStyles(formatInfo, projects);
-    const entries = styleEntries(styles, { profileId: p.id, archived: true });
+    const studied = studiedFormats(styles);
+    const entries = styleEntries(styles, { profileId: p.id, archived: true }).map((e) => ({ ...e, studied: studied.has(e.id) }));
     box.append(h(`<div class="stc-grid">${entries.map((e) => styleCard(e)).join('')}${p.archived ? '' : newCard(!entries.length)}</div>`));
+    wireCovers(box);
     box.querySelector('[data-new-style]')?.addEventListener('click', () => newStyleDialog({ profiles: data.profiles, kitId: p.id }));
   }
   return { name: p.name, teardown: () => part?.teardown?.() };

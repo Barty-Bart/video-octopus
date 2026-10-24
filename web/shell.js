@@ -8,24 +8,16 @@ import { $, esc } from './ui.js';
 import { icon } from './icons.js';
 import { TERMS } from './terms.js';
 import { currentAppearance, onAppearance, saveAppearance } from './appearance.js';
+import { avatarInk } from './kit-colors.js';
 
 const RAIL_ICON = 18;
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
 export const ASK_KEYS = isMac ? '⌘J' : 'Ctrl J';
 
-// Text on a channel colour: white or near-black, whichever reads better (WCAG contrast). The theme's --text can't be
-// used here: it turns light in the dark theme, while the brand colour stays the same.
-function luminance(hex) {
-  const n = parseInt(hex.slice(1), 16);
-  const lin = (c) => { const v = c / 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
-  return 0.2126 * lin((n >> 16) & 255) + 0.7152 * lin((n >> 8) & 255) + 0.0722 * lin(n & 255);
-}
-export function avatarInk(hex) {
-  const l = luminance(hex);
-  const onWhite = 1.05 / (l + 0.05), onDark = (l + 0.05) / (luminance('#141416') + 0.05);
-  return onWhite >= onDark ? '#ffffff' : '#141416';
-}
-// An 18px (or larger) rounded square with the channel's initial: its approved brand colour, else a quiet token.
+// Text on a kit colour (white or near-black, WCAG contrast) lives with the kit palette in web/kit-colors.js.
+export { avatarInk };
+
+// An 18px (or larger) rounded square with the kit's initial in its colour (web/kit-colors.js kitColor), else a quiet token.
 export function channelAvatar(channel, size = '') {
   const initial = esc((channel?.name || '?').trim().slice(0, 1).toUpperCase() || '?');
   const color = /^#[0-9a-f]{6}$/i.test(channel?.color || '') ? channel.color : null;

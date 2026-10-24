@@ -10,6 +10,7 @@ import { createConfiguredProject, profileBusy, killProfileResearch } from './pro
 import { ProfileStore } from './profile-store.mjs';
 import { safeFile, formatSkillName, formatSkillId, pinnedFormatSkillName } from './learning-store.mjs';
 import { generateFormatSkills, projectPublishedFiles } from './format-skills.mjs';
+import { styleCover } from './style-covers.mjs';
 import { FileStore, MAX_SKILL_FILES, MAX_SKILL_FILE_BYTES, formatBytes } from './file-store.mjs';
 import { beginMaintenance, endMaintenance, activityView } from './maintenance.mjs';
 import { settingsChanged, restartWhenIdle } from './settings.mjs';
@@ -276,6 +277,15 @@ export async function learningRoute(req,res,url,{send,body,serveFile}) {
       if(group==='formats' && id && action==='videos') return reply(current(s=>s.formatVideos(id)).map(row=>{const dir=projectDir(row.project),meta=dir?projectMeta(dir):null;return {...row,name:meta?.name||row.project,created:row.created||meta?.created||null,exists:Boolean(dir)};}));
       if(group==='formats' && id && action==='skill') return reply(current(s=>formatSkillView(studio,s,id)));
       if(group==='formats' && id && action==='files') return reply(current(s=>s.formatFiles(id)));
+      // A style card's cover picture, if the studio has one (server/style-covers.mjs); 204 when it has none.
+      if(group==='formats' && id && action==='cover') {
+        const ids=(url.searchParams.get('projects')||'').split(',').filter(Boolean);
+        const {thumbFor}=await import('./thumbs.mjs'); // loaded on first use: it keeps its cache in the app's local/ folder
+        const pic=await styleCover(current,id,ids,{thumbFor});
+        if(!pic){res.writeHead(204,{'Cache-Control':'no-store'});res.end();return true;}
+        res.writeHead(200,{'Content-Type':pic.type,'Cache-Control':'private, max-age=60','X-Content-Type-Options':'nosniff'});
+        res.end(pic.bytes);return true;
+      }
       if(group==='files' && !id) return reply(current(s=>s.fileReport()));
       if(group==='versions' && id) return reply(current(s=>s.version(id)));
       if(group==='sessions' && id) {
@@ -317,6 +327,8 @@ export async function learningRoute(req,res,url,{send,body,serveFile}) {
     if(group==='versions' && action==='regenerate') return reply(current(s=>s.regenerateVersion(id)));
     if(group==='profiles') {
       if(!id) return reply(current(s=>s.profile(b.name,b.description)));
+      // The kit colour (display only): no format skill names it, so nothing is rebuilt.
+      if(action==='color') return reply(current(s=>s.setKitColor(id,b)));
       let profile;
       if(action==='update') profile=current(s=>s.updateProfile(id,b));
       else if(action==='archive'||action==='unarchive') profile=current(s=>s.archiveProfile(id,b.expected,action==='archive',{refuseUsed:true}));

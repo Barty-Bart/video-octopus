@@ -175,6 +175,7 @@
   --tc-size: 13px;
   --playhead: var(--accent);
   --playhead-ink: var(--on-accent);
+  --kit-dim: 0%;              /* how much darker kit-colour covers sit on the dark theme (My styles) */
 }
 
 /* ---- Dark ---- */
@@ -200,6 +201,7 @@
   --accent-soft: color-mix(in srgb, var(--accent) 16%, transparent);
   --swatch-orange: #f97316; --swatch-blue: #3b82f6; --swatch-green: #22c55e; --swatch-violet: #8b5cf6;
   --shadow-pop: 0 16px 40px -12px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(237, 237, 239, 0.08);
+  --kit-dim: 14%;
 
   --line-2: #2e2e34;
   --line-3: #1d1d22;

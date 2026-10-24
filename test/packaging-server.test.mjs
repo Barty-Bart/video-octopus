@@ -271,7 +271,7 @@ test('Packaging end to end with a fake Codex: Generate → 6 cards, refine → 1
   await s.ok(`${P}/generate`, { brief: 'LIMIT-TEST' });
   view = await s.until(P, (b) => b.board.sheets[0]?.status === 'failed' && !b.busy, 'the failed sheet');
   assert.equal(view.board.sheets[0].failure.kind, 'usage-limit');
-  assert.match(view.board.sheets[0].failure.message, /Image limit reached on your ChatGPT plan\. It resets at/);
+  assert.match(view.board.sheets[0].failure.message, /Image limit reached on your ChatGPT plan\. It resets (at|on) /); // "on <day>" when the fake reset time falls after midnight
   assert.match(readFileSync(join(s.local, 'chats', `${vid}.packaging.jsonl`), 'utf8'), /Image limit reached/);
   // A turn that brings no image fails its sheet instead of leaving it running.
   await s.ok(`${P}/generate`, { brief: 'NO-IMAGE-TEST' });

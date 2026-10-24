@@ -1,5 +1,6 @@
 import { $, esc, h, api, toast, confirmBox } from './ui.js';
 import { mountResources } from './resources.js';
+import { KIT_PALETTE, kitColor, cleanColor } from './kit-colors.js';
 const field=(label,name,value='',rows=2)=>`<label>${label}<textarea name="${name}" rows="${rows}">${esc(value)}</textarea></label>`;
 const run=fn=>async e=>{const b=e?.currentTarget;if(b)b.disabled=true;try{await fn(e);}catch(err){toast(err.message);}finally{if(b)b.disabled=false;}};
 function brandFields(b={},assets=[]){return ['identity','audience','voice','fonts','notes'].map(k=>field(({identity:'Brand identity and offering',audience:'Audience',voice:'Voice and tone',fonts:'Fonts',notes:'Brand guidance and uncertainties'})[k],k,b[k]||'')).join('')+field('Colours (hex codes, separated by commas)','colors',(b.colors||[]).join(', '))+`<fieldset><legend>Assets included in this brand version</legend>${assets.map(a=>`<label class="learn-check"><input type="checkbox" name="asset-${a.id}"${b.assets?.includes(a.id)?' checked':''}>${esc(a.name)}</label>`).join('')||'<p class="sub">Upload logos, images or fonts below.</p>'}</fieldset>`;}
@@ -41,6 +42,11 @@ export function profileSettings({ makeChat, profileId, onBrandChange, rows = fal
     const pic = font ? '<span class="kb-glyph" aria-hidden="true">Aa</span>' : `<img src="/api/resources/${encodeURIComponent(a.id)}/file" alt="" loading="lazy">`;
     return `<li class="kb-asset"><span class="kb-pic">${pic}</span><span class="kb-asset-t"><b>${esc(a.name)}</b><span class="sub">${font ? 'Font' : 'Image'}${brand.assets?.includes(a.id) ? ' · in the brand' : ''}</span></span></li>`;
    };
+   // The kit colour (display only: covers, dots, avatars). The brand's first colour wins when it has one.
+   const saved = cleanColor(p.color), shown = kitColor(p), fromBrand = Boolean(shown && shown !== saved);
+   const custom = saved && !KIT_PALETTE.some(([hex]) => hex === saved);
+   const colorRow = `<div class="kb-row kb-color"><span class="kb-row-t"><b>Kit colour</b><span class="sub">${fromBrand ? 'Covers and dots use your brand’s first colour. This one is used if the brand has no colours.' : 'Covers and dots on My styles. It isn’t part of the brand.'}</span></span>
+     <span class="kc-sw" role="radiogroup" aria-label="Kit colour">${KIT_PALETTE.map(([hex, name]) => `<button type="button" role="radio" class="kc-dot" data-kit-color="${hex}" style="--c:${hex}" aria-checked="${hex === saved}" aria-label="${name}" title="${name}"></button>`).join('')}<label class="kc-dot kc-custom${custom ? ' on' : ''}"${custom ? ` style="--c:${saved}"` : ''} title="Another colour"><input type="color" data-kit-custom value="${saved || '#4f5bd5'}" aria-label="Another colour"></label></span></div>`;
    root.innerHTML = `${lead}
     <div class="kb-sum">
      <span class="kb-sw" role="img" aria-label="Brand colours: ${esc((brand.colors || []).join(', ') || 'none yet')}">${swatches || '<span class="sub">No colours yet</span>'}</span>
@@ -48,6 +54,7 @@ export function profileSettings({ makeChat, profileId, onBrandChange, rows = fal
     </div>
     <div class="kb-rows">
      <div class="kb-row"><span class="kb-row-t"><b>Brand</b><span class="sub">${p.brand ? `Approved · ${esc(when(p.brand.created))}` : 'Not set yet'}</span></span><button type="button" class="btn small" data-open="brandCard" aria-expanded="false">Edit</button></div>
+     ${p.system ? '' : colorRow}
      <div class="kb-row"><span class="kb-row-t"><b>Research</b><span class="sub">${last ? `${esc(last.url)} · ${esc(last.status)}` : 'No research yet'}</span></span><button type="button" class="btn small" data-open="researchCard" aria-expanded="false">${last ? 'Research again' : 'Research a website'}</button></div>
     </div>
     <section class="kb-panel" id="brandCard" aria-labelledby="brandCardTitle" hidden>
@@ -72,6 +79,15 @@ export function profileSettings({ makeChat, profileId, onBrandChange, rows = fal
     b.setAttribute('aria-expanded', String(!box.hidden));
     if (!box.hidden) box.querySelector('input,textarea')?.focus({ preventScroll: true });
    });
+   const setColor = run(async (hex) => {
+    const fresh = await api(`/api/learning/profiles/${encodeURIComponent(profileId)}/color`, { expected: p.revision || 1, color: hex });
+    toast('Kit colour saved.');
+    const next = await paint();
+    if (next && live) await onBrandChange?.(next, fresh);
+   });
+   root.querySelectorAll('[data-kit-color]').forEach((b) => b.onclick = () => { if (b.getAttribute('aria-checked') !== 'true') setColor(b.dataset.kitColor); });
+   const pick = $('[data-kit-custom]', root);
+   if (pick) pick.onchange = () => setColor(pick.value);
    $('[data-asset-upload]', root).onchange = run(async (e) => {
     for (const file of [...e.target.files]) {
      const r = await fetch(`/api/profiles/${encodeURIComponent(profileId)}/upload?name=${encodeURIComponent(file.name)}`, { method: 'POST', headers: { 'X-Studio': '1' }, body: file });

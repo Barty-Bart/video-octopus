@@ -4,6 +4,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, lstatSync, readdirSync, copyFileSync, rmSync } from 'node:fs';
 import { resolve, join, dirname, relative, isAbsolute, basename } from 'node:path';
 import { otherFileUses } from './resource-store.mjs';
+import { autoKitColors, nextKitColor, kitColor, cleanColor } from '../web/kit-colors.js';
 import { FileStore, MAX_SKILL_FILES, MAX_SKILL_FILE_BYTES, TEXT_FILES, KNOWLEDGE_TYPES, cleanFileName, extensionOf, mimeOf, hashFile, formatBytes } from './file-store.mjs';
 
 const id = () => randomUUID();
@@ -118,6 +119,7 @@ export class LearningStore {
         PRAGMA user_version=1;`));
       this.files = new FileStore(this.root);
       this.migrateFileStore();
+      this.backfillKitColors();
     } catch (e) { this.db.close(); throw e; }
   }
   close() { this.db.close(); }
@@ -142,8 +144,42 @@ export class LearningStore {
   }
   // A brand kit's optional one-line description (design V2 §5): up to 200 characters, '' clears it.
   // (In the UI a profile is a "brand kit" and a format is a "style"; ADDENDUM-styles-gallery.md, Flat 3.)
+  // A new kit gets an automatic kit colour (web/kit-colors.js): the first palette colour no other kit shows.
   profile(name, description = '') {
-    return this.put('profiles', { id: id(), name: text(name), ...describe(description), revision: 1, created: now() });
+    const kits = this.list('profiles').filter((p) => !p.system);
+    const color = nextKitColor(this.withBrandColors(kits).map(kitColor).filter(Boolean), kits.length);
+    return this.put('profiles', { id: id(), name: text(name), ...describe(description), color, revision: 1, created: now() });
+  }
+  // Kits made before kit colours (0.1.0-beta.20) get one, once, when the studio opens: distinct where the palette
+  // allows, in creation order, so the result is the same on every machine. Written without a new revision (nothing
+  // the creator edited changes) and only when a kit lacks a valid colour, so later opens write nothing.
+  backfillKitColors() {
+    if (this.list('profiles').every((p) => p.system || cleanColor(p.color))) return 0;
+    return this.tx(() => {
+      const kits = this.list('profiles').filter((p) => !p.system);
+      const picks = autoKitColors(this.withBrandColors(kits));
+      for (const [pid, color] of picks) this.update('profiles', { ...this.get('profiles', pid), color });
+      return picks.size;
+    });
+  }
+  // Profiles with their approved brand's colours, so an automatic colour avoids a hue another kit's brand shows.
+  // (brand_heads/brand_versions belong to ProfileStore; a plain LearningStore may not have them yet.)
+  withBrandColors(profiles) {
+    if (!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='brand_heads'").get()) return profiles;
+    const head = this.db.prepare('SELECT v.data FROM brand_heads h JOIN brand_versions v ON v.id=h.version WHERE h.profile_id=?');
+    return profiles.map((p) => {
+      const row = head.get(p.id);
+      const colors = row ? JSON.parse(row.data).brand?.colors : null;
+      return colors?.length ? { ...p, brand: { brand: { colors } } } : p;
+    });
+  }
+  // The kit colour the creator picked on the kit's Brand tab (#rrggbb). Display only: the brand is not changed.
+  setKitColor(profileId, { expected, color } = {}) {
+    const hex = cleanColor(color) || fail('Choose a colour as #rrggbb.');
+    return this.changeRecord('profiles', profileId, expected, 'This brand kit', (p) => {
+      if (p.system) fail('No brand is built in. It has no kit colour.');
+      p.color = hex;
+    });
   }
   // The one hidden built-in profile for styles without a brand ("No brand"): made the first time a style needs it,
   // never listed as a kit, never renamed, archived or given a brand. Its id is an ordinary profile id.

@@ -66,7 +66,9 @@ export function makeStylePicker({ id, getP, formatInfo = {}, onChanged }) {
     const row = (it) => {
       if (it.kind === 'new') return '<button type="button" class="sp-new">+ New style from this video</button>';
       const glyph = it.kind === 'style' ? `<span class="sp-orient ${it.tall ? 'tall' : 'wide'}" aria-hidden="true"></span>` : '<span class="sp-orient none" aria-hidden="true"></span>';
-      const chip = it.kind === 'none' ? '' : `<span class="sp-kit">${swatch(it.kitColor || colors.get(it.profileId), 'small')}${esc(it.kit || TERMS.noBrand)}</span>`;
+      // The kit chip: a filled swatch in the kit colour (every kit has one); No brand has no kit, so no swatch.
+      const kitColour = it.kitColor || colors.get(it.profileId);
+      const chip = it.kind === 'none' ? '' : `<span class="sp-kit">${COLOR.test(kitColour || '') ? swatch(kitColour, 'small') : ''}<span>${esc(it.kit || TERMS.noBrand)}</span></span>`;
       return `${it.kind === 'none' ? '<hr class="sp-sep">' : ''}<button type="button" role="option" class="sp-opt${it.kind === 'style' ? ' fmt' : ''}" aria-selected="${it.selected}"${it.locked ? ' aria-disabled="true" title="This video was built with another video setup. Pick a style with its setup, or No style."' : ''} data-profile="${esc(it.profileId || '')}" data-format="${esc(it.formatId || '')}">
         ${glyph}<span class="sp-opt-t">${esc(it.label)}</span>${it.locked ? '<span class="sp-kind">Other setup</span>' : chip}${it.selected ? icon('check', 14) : ''}</button>`;
     };

@@ -93,7 +93,7 @@
 .sty-head h1 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.01em; color: var(--text); }
 .sty-head .btn { height: 38px; border-radius: var(--r-m); padding: 0 16px; }
 .sty-title .eyebrow a { color: var(--text-3); }
-.sty-page { display: flex; flex-direction: column; gap: 40px; }
+.sty-page { display: flex; flex-direction: column; gap: 32px; }
 .sty-intro { margin: 0; max-width: 720px; font-size: 14px; line-height: 1.55; color: var(--text-2); }
 .sty-meta { font-size: 13px; color: var(--text-3); overflow-wrap: anywhere; }
 .sty-archived { align-self: flex-start; display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-2); }
@@ -193,45 +193,84 @@
 .hub .eyebrow a, .sty-title .eyebrow a { text-decoration: none; }
 .hub .eyebrow a:hover, .sty-title .eyebrow a:hover { text-decoration: underline; text-underline-offset: 2px; }
 
-/* ---------- My styles, one level (Flat 3): kits bar, flat style cards, the style page cover, brand kits ---------- */
-.kits-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 14px; border-radius: 14px; background: var(--surface-2); }
-.kits-bar > b { font-weight: 600; margin-right: 6px; color: var(--text); }
-.kit-pill { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px 0 6px; border-radius: 999px; background: var(--surface); box-shadow: 0 0 0 1px var(--line); color: var(--text); text-decoration: none; }
-.kit-pill:hover { background: var(--hover); }
-.kit-dot { display: inline-block; flex: none; width: 18px; height: 18px; border-radius: 50%; }
-.kit-dot.none { background: var(--active); box-shadow: inset 0 0 0 1px var(--line); }
-.kits-manage { color: var(--text-2); font-weight: 500; text-decoration: none; }
+/* ---------- My styles, one level (Flat 3): kits bar, flat style cards, the style page cover, brand kits ----------
+   Every kit has a colour (web/kit-colors.js), passed inline as --kit with its ink (--kit-ink) and chip ground
+   (--kit-chip). Covers are drawn from it: a soft tone, the style's initial and a frame showing how it is made. */
+.kits-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 10px 12px 10px 16px; border-radius: 14px; background: var(--surface-2); }
+.kits-bar > b { font-size: 13px; font-weight: 600; margin-right: 4px; color: var(--text-2); }
+.kit-pill { display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 14px 0 9px; border-radius: 999px; background: var(--surface); box-shadow: 0 0 0 1px var(--line); color: var(--text); font-weight: 500; text-decoration: none; transition: box-shadow var(--t) ease-out, background var(--t) ease-out; }
+.kit-pill:hover { box-shadow: 0 0 0 1px color-mix(in srgb, var(--text-3) 40%, transparent); background: var(--hover); }
+.kit-dot { display: inline-block; flex: none; width: 14px; height: 14px; border-radius: 50%; box-shadow: inset 0 0 0 1px color-mix(in srgb, black 12%, transparent); }
+.kits-manage { padding: 6px 4px; color: var(--text-2); font-size: 13px; font-weight: 500; text-decoration: none; }
 .kits-manage:hover { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
 
-.stc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr)); gap: 28px 22px; }
-.stc { display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 0; border: 0; background: none; font: inherit; color: inherit; text-align: left; text-decoration: none; cursor: pointer; }
+.stc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr)); gap: 30px 24px; }
+.stc { display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 0; border: 0; border-radius: 18px; background: none; font: inherit; color: inherit; text-align: left; text-decoration: none; cursor: pointer; }
+.stc:focus-visible { outline: 2px solid var(--focus, var(--sel)); outline-offset: 4px; }
 .stc.archived { opacity: 0.7; }
-.stc-cover { --kit: var(--surface-2); --kit-ink: var(--text); position: relative; display: flex; align-items: flex-end; justify-content: center; height: 190px; border-radius: 18px; overflow: hidden; background: var(--kit); color: var(--kit-ink); transition: filter var(--t) ease-out; }
-.stc:hover .stc-cover { filter: brightness(1.06); }
-.stc-frame { display: block; border-radius: 10px 10px 0 0; background: color-mix(in srgb, var(--kit) 55%, black); box-shadow: 0 -10px 30px -12px color-mix(in srgb, black 40%, transparent); }
-.stc-cover.no-kit .stc-frame { background: var(--active); box-shadow: 0 0 0 1px var(--line); }
-.stc-frame.tall { width: 78px; height: 140px; }
-.stc-frame.wide { width: min(200px, 70%); height: 116px; }
-.stc-chip { position: absolute; top: 12px; display: inline-flex; align-items: center; gap: 6px; max-width: 46%; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 500; background: color-mix(in srgb, black 25%, transparent); color: var(--kit-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.stc-cover.no-kit .stc-chip { background: var(--surface); color: var(--text-2); box-shadow: 0 0 0 1px var(--line); }
-.stc-badge { left: 14px; }
-.stc-kit { right: 12px; padding-left: 4px; }
-.stc-kit .kit-dot { width: 14px; height: 14px; box-shadow: 0 0 0 1.5px color-mix(in srgb, white 70%, transparent); }
-.stc-arch { top: auto; bottom: 12px; left: 14px; }
-.stc-t { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.stc-t b { font-size: 16px; font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
-.stc-desc { color: var(--text-2); overflow-wrap: anywhere; }
+.stc-cover { --kit: var(--text-3); --kit-ink: var(--surface); --kit-chip: color-mix(in srgb, black 24%, transparent);
+  --base: color-mix(in srgb, var(--kit), black var(--kit-dim));
+  position: relative; display: block; aspect-ratio: 16 / 10; min-height: 168px; border-radius: 18px; overflow: hidden; isolation: isolate; color: var(--kit-ink);
+  background:
+    radial-gradient(120% 90% at 100% 0%, color-mix(in srgb, white 26%, transparent), transparent 55%),
+    radial-gradient(90% 80% at 0% 100%, color-mix(in srgb, black 20%, transparent), transparent 60%),
+    linear-gradient(150deg, color-mix(in srgb, var(--base) 84%, white), var(--base) 55%, color-mix(in srgb, var(--base) 82%, black));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, black 8%, transparent);
+  transition: transform var(--t) ease-out, box-shadow var(--t) ease-out; }
+.stc:hover .stc-cover { transform: translateY(-2px); box-shadow: inset 0 0 0 1px color-mix(in srgb, black 8%, transparent), 0 14px 30px -18px color-mix(in srgb, var(--base) 80%, black); }
+.stc-art { position: absolute; inset: 0; display: grid; place-items: center end; padding: 20px 10% 0 0; }
+.stc-mono { position: absolute; left: 16px; bottom: -0.2em; font-size: 128px; font-weight: 700; line-height: 1; letter-spacing: -0.04em; color: var(--kit-ink); opacity: 0.13; pointer-events: none; user-select: none; }
+.stc-frame { position: relative; display: block; border-radius: 10px; overflow: hidden;
+  background: linear-gradient(170deg, color-mix(in srgb, var(--kit-ink) 22%, transparent), color-mix(in srgb, var(--kit-ink) 10%, transparent));
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--kit-ink) 38%, transparent), 0 16px 30px -14px color-mix(in srgb, black 55%, transparent); }
+.stc-frame.wide { width: min(176px, 58%); aspect-ratio: 16 / 9; }
+.stc-frame.tall { height: min(128px, 68%); aspect-ratio: 9 / 16; }
+.stc-frame svg, .stp-frame svg { display: block; width: 100%; height: 100%; fill: currentColor; opacity: 0.88; }
+:is(.stc-frame, .stp-frame) .o4 { opacity: 0.4; }
+:is(.stc-frame, .stp-frame) .o6 { opacity: 0.6; }
+:is(.stc-frame, .stp-frame) .o7 { opacity: 0.7; }
+:is(.stc-frame, .stp-frame) .wave { opacity: 0.75; }
+:is(.stc-frame, .stp-frame) .cap { fill: var(--kit); opacity: 1; }
+/* The style's own picture (a video's thumbnail or frame, or an example's key frame) over the drawn cover. */
+.stc-pic { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity 0.25s ease-out; }
+.stc-cover.has-pic .stc-pic { opacity: 1; }
+.stc-cover.has-pic { --kit-ink: white; --kit-chip: color-mix(in srgb, black 45%, transparent); }
+.stc-cover.has-pic::after { content: ''; position: absolute; inset: 0 0 auto; height: 64px; background: linear-gradient(color-mix(in srgb, black 38%, transparent), transparent); pointer-events: none; }
+.stc-chip { position: absolute; z-index: 1; top: 12px; display: inline-flex; align-items: center; gap: 6px; max-width: calc(50% - 18px); height: 24px; box-sizing: border-box; padding: 0 10px; border-radius: 999px; font-size: 12px; font-weight: 500; background: var(--kit-chip); color: var(--kit-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+.stc-chip > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.stc-badge { left: 12px; }
+.stc-kit { right: 12px; }
+/* The kit chip is a light label, so its dot reads as the kit's colour even on a cover of the same colour. */
+.stc-kit { background: color-mix(in srgb, white 92%, transparent); color: color-mix(in srgb, black 82%, transparent); -webkit-backdrop-filter: none; backdrop-filter: none; }
+.stc-kit:has(.kit-dot) { padding-left: 6px; }
+.stc-kit .kit-dot { width: 12px; height: 12px; box-shadow: none; }
+.stc-arch { top: auto; bottom: 12px; left: 12px; }
+.stc-t { display: flex; flex-direction: column; gap: 3px; min-width: 0; padding: 0 2px; }
+.stc-t b { font-size: 15px; font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
+.stc-desc { font-size: 13px; line-height: 1.4; color: var(--text-2); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .stc-meta { font-size: 12px; color: var(--text-3); }
 .stc-review { color: var(--accent-text); font-weight: 500; }
-.stc-new .stc-cover { flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 0 20px; text-align: center; background: transparent; border: 1.5px dashed color-mix(in srgb, var(--text-3) 45%, transparent); color: var(--text-2); }
+/* New style: the same height as a card (cover and text), a dashed outline with a plus. */
+.stc-new { align-self: stretch; }
+.stc-new .stc-cover { flex: 1; aspect-ratio: auto; min-height: 168px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 20px; box-sizing: border-box; text-align: center;
+  background: transparent; box-shadow: none; border: 1.5px dashed color-mix(in srgb, var(--text-3) 45%, transparent); color: var(--text-3); font-size: 13px; line-height: 1.4; transition: border-color var(--t) ease-out, background var(--t) ease-out; }
 .stc-new .stc-cover b { font-size: 15px; font-weight: 600; color: var(--text); }
-.stc-new:hover .stc-cover { background: var(--surface-2); filter: none; }
+.stc-new-ic { display: grid; place-items: center; width: 40px; height: 40px; margin-bottom: 6px; border-radius: 50%; background: var(--surface-2); color: var(--text); transition: background var(--t) ease-out, color var(--t) ease-out; }
+.stc-new:hover .stc-cover { transform: none; border-color: var(--text-3); background: var(--surface-2); box-shadow: none; }
+.stc-new:hover .stc-new-ic { background: var(--accent-soft); color: var(--accent-text); }
 
-.sty-tiles2 { display: flex; flex-wrap: wrap; gap: 12px; }
-.sty-tile2 { flex: 1 1 280px; display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-radius: 14px; background: var(--surface-2); color: var(--text); text-decoration: none; }
-.sty-tile2:hover { background: var(--hover); }
-.sty-tile2 > span:first-child { flex: 1; display: flex; flex-direction: column; }
-.sty-tile2 b { font-weight: 500; }
+/* Studio instructions and Memories for everything: two quiet rows under one small heading. */
+.sty-shared { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; }
+.sty-shared h2 { margin: 0; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-3); }
+.sty-shared-rows { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); column-gap: 24px; }
+.sty-link { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 12px 4px; border-bottom: 1px solid var(--line); color: var(--text); text-decoration: none; }
+.sty-link:hover b { text-decoration: underline; text-underline-offset: 3px; }
+.sty-link > .ic { flex: none; color: var(--text-3); }
+.sty-link:hover > .ic { color: var(--text); }
+.sty-link-ic { flex: none; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; background: var(--surface-2); color: var(--text-2); }
+.sty-link-t { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.sty-link-t b { font-weight: 500; }
+.sty-link-t .sty-meta { font-size: 12.5px; }
 
 .kit-list { display: flex; flex-direction: column; }
 .kit-row { display: flex; align-items: center; gap: 14px; padding: 14px 4px; border-top: 1px solid var(--line); color: var(--text); text-decoration: none; }
@@ -244,28 +283,31 @@
 
 /* The style page: a cover in the kit colour, one tab row. */
 .stp-top { flex: none; border-bottom: 1px solid var(--line); }
-.stp-cover { --kit: var(--surface-2); --kit-ink: var(--text); position: relative; display: flex; align-items: flex-end; min-height: 220px; overflow: hidden; background: var(--kit); color: var(--kit-ink); }
-.stp-frame { position: absolute; right: 250px; bottom: 0; border-radius: 12px 12px 0 0; background: color-mix(in srgb, var(--kit) 55%, black); }
-.stp-cover.no-kit .stp-frame { background: var(--active); box-shadow: 0 0 0 1px var(--line); }
-.stp-frame.tall { width: 96px; height: 172px; }
-.stp-frame.wide { width: 250px; height: 150px; }
+.stp-cover { --kit: var(--text-3); --kit-ink: var(--surface); --kit-chip: color-mix(in srgb, black 22%, transparent);
+  --base: color-mix(in srgb, var(--kit), black var(--kit-dim));
+  position: relative; display: flex; align-items: flex-end; min-height: 220px; overflow: hidden; color: var(--kit-ink);
+  background:
+    radial-gradient(70% 140% at 100% 0%, color-mix(in srgb, white 22%, transparent), transparent 60%),
+    linear-gradient(150deg, color-mix(in srgb, var(--base) 86%, white), var(--base) 50%, color-mix(in srgb, var(--base) 80%, black)); }
+.stp-frame { position: absolute; right: 250px; bottom: -14px; border-radius: 14px; overflow: hidden; color: var(--kit-ink);
+  background: linear-gradient(170deg, color-mix(in srgb, var(--kit-ink) 22%, transparent), color-mix(in srgb, var(--kit-ink) 8%, transparent));
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--kit-ink) 36%, transparent); }
+.stp-frame.tall { width: 104px; height: 185px; }
+.stp-frame.wide { width: 260px; height: 146px; }
 .stp-in { position: relative; width: 100%; box-sizing: border-box; padding: 18px 32px 24px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .stp-bar { display: flex; align-items: center; gap: 8px; }
 .stp-crumb { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 13px; color: color-mix(in srgb, var(--kit-ink) 80%, transparent); }
 .stp-crumb a { color: inherit; text-decoration: none; }
 .stp-crumb a:hover { text-decoration: underline; text-underline-offset: 2px; }
 .stp-crumb [aria-current] { color: var(--kit-ink); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.stp-icon { display: inline-grid; place-items: center; width: 34px; height: 34px; border: 0; border-radius: 9px; background: color-mix(in srgb, black 22%, transparent); color: var(--kit-ink); cursor: pointer; }
+.stp-icon { display: inline-grid; place-items: center; width: 34px; height: 34px; border: 0; border-radius: 9px; background: var(--kit-chip); color: var(--kit-ink); cursor: pointer; }
 .stp-icon svg { fill: currentColor; }
-.stp-cover.no-kit .stp-icon { background: var(--surface); box-shadow: 0 0 0 1px var(--line); }
 .stp-foot { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px; }
 .stp-title { flex: 1 1 320px; min-width: 0; }
-.stp-badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 500; background: color-mix(in srgb, black 22%, transparent); }
-.stp-cover.no-kit .stp-badge { background: var(--surface); box-shadow: 0 0 0 1px var(--line); color: var(--text-2); }
+.stp-badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 500; background: var(--kit-chip); }
 .stp-title h1 { margin: 8px 0 2px; font-size: 34px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.15; overflow-wrap: anywhere; }
 .stp-title p { margin: 0; font-size: 14px; color: color-mix(in srgb, var(--kit-ink) 85%, transparent); }
 .btn.stp-new { height: 40px; padding: 0 18px; border: 0; border-radius: 11px; background: var(--kit-ink); color: var(--kit); font-weight: 600; }
-.stp-cover.no-kit .btn.stp-new { background: var(--primary); color: var(--on-primary); }
 .btn.stp-new:hover { filter: brightness(0.95); }
 .stp-archived { margin: 12px 32px 0; }
 .stp-tabs { margin: 0; padding: 0 28px; }
@@ -286,6 +328,16 @@
 .kb-row:last-child { border-bottom: 1px solid var(--line); }
 .kb-row-t { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow-wrap: anywhere; }
 .kb-row-t b { font-weight: 500; }
+/* Kit colour: the palette as round swatches (data colours via --c), and one for any other colour. */
+.kb-color { flex-wrap: wrap; }
+.kc-sw { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.kc-dot { position: relative; display: inline-grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; background: var(--c); cursor: pointer; box-shadow: inset 0 0 0 1px color-mix(in srgb, black 14%, transparent); transition: transform var(--t) ease-out; }
+.kc-dot:hover { transform: scale(1.08); }
+.kc-dot[aria-checked="true"], .kc-custom.on { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--text); }
+.kc-dot:focus-visible, .kc-custom:focus-within { outline: 2px solid var(--focus, var(--sel)); outline-offset: 3px; }
+.kc-custom { background: conic-gradient(from 90deg, var(--swatch-orange), var(--swatch-green), var(--swatch-blue), var(--swatch-violet), var(--swatch-orange)); overflow: hidden; }
+.kc-custom.on { background: var(--c); }
+.kc-custom input { position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; opacity: 0; cursor: pointer; }
 .kb-panel { display: grid; gap: 12px; margin: 0 0 16px; padding: 16px; border-radius: 12px; background: var(--surface-2); }
 .kb-panel .vo-card-head h2 { margin: 0; font-size: 15px; }
 .kb-assets { margin: 8px 0 16px; }
@@ -302,6 +354,7 @@
 
 /* The editor's flat style picker: each style's kit chip. */
 .sp-kit { display: inline-flex; align-items: center; gap: 5px; max-width: 45%; font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sp-kit > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
 @media (max-width: 980px) {
   .stp-in { padding: 14px 16px 18px; }

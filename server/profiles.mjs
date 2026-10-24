@@ -10,6 +10,7 @@ import { existsSync, writeFileSync, readFileSync, mkdirSync, rmSync } from 'node
 import { join } from 'node:path';
 import { safeFile } from './learning-store.mjs';
 import { DatabaseSync } from 'node:sqlite';
+import { autoKitColors, cleanColor } from '../web/kit-colors.js';
 const chats=new Map();
 const use=fn=>{const s=new ProfileStore(settings().studio);try{return fn(s);}finally{s.close();}};
 export const profileBusy=()=>[...chats.values()].some(c=>c.busy);
@@ -230,12 +231,15 @@ const rowsOf = (db, tables, table) => (tables.has(table)
  ? db.prepare(`SELECT data FROM ${table} ORDER BY rowid`).all().map((r) => JSON.parse(r.data))
  : []);
 
-// Non-archived channels in creation order: { id, name, formats, color, pendingMemories }. `color` is the approved
-// brand's first colour; `pendingMemories` counts the review inbox the channel's Memories tab shows (the channel, its
-// formats and its videos).
+// Non-archived channels in creation order: { id, name, formats, color, pendingMemories }. `color` is the kit colour
+// (web/kit-colors.js): the approved brand's first colour, else the kit's saved colour (a studio not yet opened by this
+// version: the colour it will be given); `pendingMemories` counts the review inbox the channel's Memories tab shows
+// (the channel, its formats and its videos).
 export function channelSummaries() {
  return readStudioDb((db, tables) => {
-  const profiles = rowsOf(db, tables, 'profiles').filter((p) => !p.archived && !p.system); // No brand isn't a kit
+  const all = rowsOf(db, tables, 'profiles').filter((p) => !p.system); // No brand isn't a kit
+  const fallback = autoKitColors(all);
+  const profiles = all.filter((p) => !p.archived);
   const formats = rowsOf(db, tables, 'formats');
   const entries = rowsOf(db, tables, 'memory_entries').filter((m) => m.status === 'pending');
   const chats = rowsOf(db, tables, 'memory_chats').filter((c) => c.project);
@@ -257,7 +261,7 @@ export function channelSummaries() {
     name: p.name,
     description: p.description || '',
     formats: own.filter((f) => !f.archived).length,
-    color: brandColor(p.id),
+    color: brandColor(p.id) || cleanColor(p.color) || fallback.get(p.id) || null,
     pendingMemories: entries.filter((m) => scopes.has(m.scope)).length,
    };
   });

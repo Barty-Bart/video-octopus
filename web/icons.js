@@ -28,6 +28,10 @@ const PATHS = {
   trash: '<path d="M4.5 7h15M10 4h4M6.5 7l1 12.5h9l1-12.5M10 11v5M14 11v5"/>',
   more: '<circle cx="6" cy="12" r=".8"/><circle cx="12" cy="12" r=".8"/><circle cx="18" cy="12" r=".8"/>',
   media: '<rect x="3.5" y="5.5" width="17" height="13" rx="2"/><path d="M10 9.5v5l4-2.5z"/>',
+  // My styles: the rows shared by every style (Studio instructions, Memories for everything) and their arrow.
+  instructions: '<path d="M7 3.5h7l4.5 4.5v10.5a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2z"/><path d="M14 3.5V8h4.5M8.5 12.5h7M8.5 16h5"/>',
+  memory: '<path d="M7 3.5h10a1.5 1.5 0 0 1 1.5 1.5v15.5L12 16.5l-6.5 4V5A1.5 1.5 0 0 1 7 3.5z"/>',
+  forward: '<path d="M9.5 6l6 6-6 6"/>',
 };
 
 export const ICON_NAMES = Object.keys(PATHS);
