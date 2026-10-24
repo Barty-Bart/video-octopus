@@ -2,11 +2,24 @@
 // nothing else to install. The browser asks for the camera and mic once and shows its own screen picker;
 // one MediaRecorder per picture (screen + mic, camera + mic) or an AudioWorklet for a mic-only take sends a chunk
 // about every second to Video Octopus (server/browser-recorder.mjs), which makes the usual take files when you stop.
+//
+// While a take records, a small control bar (recorder.css) shows the time with Pause/Resume, Restart and Stop; when the
+// script scrolls in Video Octopus the bar sits in the script's own bar instead. Restart asks once, in the bar, before it
+// drops the take: the dropped take goes to the studio's trash and never becomes a take, and a new one starts after a
+// 3-second countdown with the same screen, camera and mic. After a take is saved the bar offers Delete take, which
+// moves it to the studio's trash (with Undo); see server/browser-recorder.mjs for what is refused.
 import { $, esc, h, api, toast, isMac } from './ui.js';
 import { scriptCard, prompterForTake, syncWithRecorder } from './prompter.js';
 
 export const HOTKEY = isMac ? '⌥⌘R' : 'Ctrl+Alt+R';
 export const isHotkey = (e) => e.code === 'KeyR' && e.altKey && !e.shiftKey && (isMac ? e.metaKey : e.ctrlKey);
+// While recording: pause/resume and restart. The same modifiers as the Record key, so they don't reach the editor's
+// own keys (Space, Z, the timeline's) or the script's (which ignore any modifier).
+export const PAUSE_KEY = isMac ? '⌥⌘P' : 'Ctrl+Alt+P';
+export const RESTART_KEY = isMac ? '⇧⌥⌘R' : 'Ctrl+Alt+Shift+R';
+export const isPauseKey = (e) => e.code === 'KeyP' && e.altKey && !e.shiftKey && (isMac ? e.metaKey : e.ctrlKey);
+export const isRestartKey = (e) => e.code === 'KeyR' && e.altKey && e.shiftKey && (isMac ? e.metaKey : e.ctrlKey);
+const RESTART_COUNTDOWN = 3;
 
 // Test hook: ?fakeScreen=1 makes "Pick a screen" use a moving test picture instead of the browser's picker.
 const FAKE_SCREEN = new URLSearchParams(location.search).has('fakeScreen');
@@ -34,7 +47,9 @@ export const browserName = () => {
 };
 
 // ---------- the session: one take at a time, for one project, kept while you move around the app ----------
-const S = { phase: 'idle', project: null, take: null, startedAt: 0, progress: 0, kind: null };
+// startedAt: when the take would have started had it never paused, so the time recorded is always Date.now() - startedAt
+// (while paused it is kept sliding, so anything showing that time stands still).
+const S = { phase: 'idle', project: null, take: null, startedAt: 0, progress: 0, kind: null, paused: false };
 const subs = new Set();
 export const session = () => S;
 export const onSession = (fn) => { subs.add(fn); return () => subs.delete(fn); };
@@ -120,18 +135,20 @@ const fmt = (s) => s ? JSON.parse(JSON.stringify(s.getTracks()[0]?.getSettings?.
 // Chunks go up one at a time per track, in order; a failed post is tried again (Video Octopus restarting, a busy disk),
 // and the take keeps recording meanwhile.
 function uploader(url) {
-  let seq = 0, busy = false, fails = 0, hardFails = 0;
+  let seq = 0, busy = false, fails = 0, hardFails = 0, cancelled = false;
   const q = [], waiters = [];
   const uploads = {
     sent: 0, error: null,
-    push(blob) { if (blob?.size) { q.push({ seq: seq++, blob }); pump(); } },
+    push(blob) { if (blob?.size && !cancelled) { q.push({ seq: seq++, blob }); pump(); } },
+    // Restart: nothing more goes up for this take (what's queued is dropped with it).
+    cancel() { cancelled = true; q.length = 0; },
     drain: () => (q.length || busy ? new Promise((r) => waiters.push(r)) : Promise.resolve()),
     pending: () => q.reduce((s, c) => s + c.blob.size, 0),
   };
   async function pump() {
     if (busy) return;
     busy = true;
-    while (q.length && !uploads.error) {
+    while (q.length && !uploads.error && !cancelled) {
       const c = q[0];
       try {
         const r = await fetch(`${url}&seq=${c.seq}`, { method: 'POST', headers: { 'X-Studio': '1', 'Content-Type': 'application/octet-stream' }, body: c.blob });
@@ -143,6 +160,7 @@ function uploader(url) {
         }
         q.shift(); uploads.sent += c.blob.size; fails = 0; hardFails = 0;
       } catch (e) {
+        if (cancelled) break;
         fails++;
         if (fails === 3) toast(`Can't reach Video Octopus to save the take (${e.message}). Still recording; trying again…`);
         await new Promise((r) => setTimeout(r, Math.min(5000, 400 * fails)));
@@ -183,7 +201,7 @@ async function startTake(id, d, sel) {
       settings: { mime, screen: fmt(d.screen), camera: fmt(d.cam), mic: fmt(d.mic) },
     });
     const take = r.take;
-    const R = { id, take, kind, recs: [], ups: {}, timing: {}, ctx, node, d, stopped: false };
+    const R = { id, take, kind, recs: [], ups: {}, timing: {}, ctx, node, d, sel, stopped: false, paused: false, pausedMs: 0 };
     const up = (k) => (R.ups[k] = uploader(`${base}/rec-chunk?take=${encodeURIComponent(take)}&track=${k}`));
     if (kind === 'mic') {
       const u = up('audio');
@@ -191,7 +209,7 @@ async function startTake(id, d, sel) {
       const flush = () => { if (bufs.length) u.push(new Blob(bufs)); bufs = []; n = 0; };
       R.audioDone = new Promise((done) => {
         node.port.onmessage = (e) => {
-          if (e.data.pcm) { bufs.push(e.data.pcm); n += e.data.pcm.length; if (n >= 48000 * tracks.audio.channels) flush(); }
+          if (e.data.pcm && !R.paused && !R.discarded) { bufs.push(e.data.pcm); n += e.data.pcm.length; if (n >= 48000 * tracks.audio.channels) flush(); }
           if (e.data.done) { flush(); done(); }
         };
       });
@@ -203,7 +221,7 @@ async function startTake(id, d, sel) {
         const mr = new MediaRecorder(stream, { mimeType: mime || undefined, videoBitsPerSecond: bits, audioBitsPerSecond: 256000 });
         const u = up(k);
         R.timing[k] = {};
-        mr.ondataavailable = (e) => u.push(e.data);
+        mr.ondataavailable = (e) => { if (!R.discarded) u.push(e.data); };
         mr.onstart = () => { R.timing[k].start = performance.now(); };
         mr.onerror = (e) => { console.error('MediaRecorder', e.error || e); toast(`The recorder stopped (${e.error?.message || 'error'}). Saving what's there.`); stop(); };
         R.recs.push({ k, mr, stopped: new Promise((done) => { mr.onstop = done; }) });
@@ -222,7 +240,7 @@ async function startTake(id, d, sel) {
       if (run === R && S.phase === 'recording') { toast(t.kind === 'video' && s === d.screen ? 'Screen sharing stopped: saving the take.' : `The ${t.kind === 'audio' ? 'microphone' : 'camera'} went away: saving the take.`); stop(); }
     });
     run = R;
-    set({ phase: 'recording', project: id, take, startedAt: Date.now(), progress: 0, kind });
+    set({ phase: 'recording', project: id, take, startedAt: Date.now(), progress: 0, kind, paused: false });
     return take;
   } catch (e) { ctx?.close().catch(() => {}); throw e; } // a mic-only take that didn't start lets go of its AudioContext
 }
@@ -232,8 +250,10 @@ export async function stop() {
   const R = run;
   if (!R || R.stopped) return;
   R.stopped = true;
-  set({ phase: 'stopping' });
-  const at = performance.now();
+  endPause(R);
+  set({ phase: 'stopping', paused: false });
+  // The time spent paused isn't in the files: the take's length leaves it out too.
+  const at = performance.now() - R.pausedMs;
   for (const k of Object.keys(R.timing)) R.timing[k].stop = at;
   if (R.node) { R.node.port.postMessage('stop'); await Promise.race([R.audioDone, new Promise((r) => setTimeout(r, 2000))]); }
   for (const x of R.recs) { try { if (x.mr.state !== 'inactive') x.mr.stop(); } catch {} }
@@ -257,7 +277,11 @@ function watchSave(id, take) {
     let st = null;
     try { st = await api(`/api/projects/${encodeURIComponent(id)}/rec-status?take=${encodeURIComponent(take)}`); } catch {}
     if (S.take !== take) return;
-    if (st?.done) { if (!st.ok) toast(st.error || 'Couldn’t save the take.'); return set({ phase: 'idle', progress: 0, take: null }); }
+    if (st?.done) {
+      if (!st.ok) toast(st.error || 'Couldn’t save the take.');
+      else afterTake(id, take);
+      return set({ phase: 'idle', progress: 0, take: null });
+    }
     if (st) set({ progress: st.progress || 0 });
     setTimeout(tick, 700);
   };
@@ -269,6 +293,230 @@ export async function recover(id, take) {
   await api(`/api/projects/${encodeURIComponent(id)}/rec-finish`, { take, recover: true });
   if (S.phase === 'idle') { set({ phase: 'saving', progress: 0, project: id, take, kind: null }); watchSave(id, take); }
 }
+
+// ---------- pause, resume, restart ----------
+// Pause: every recorder pauses (the files carry no gap: they continue where they paused), the time stands still and
+// the script pauses with it. Video Octopus hears about it every couple of seconds, so a long pause isn't mistaken
+// for a closed page.
+const projectApi = (id, what) => `/api/projects/${encodeURIComponent(id)}/${what}`;
+function sayPaused(R, paused) { api(projectApi(R.id, 'rec-pause'), { take: R.take, paused }).catch(() => {}); }
+
+export function pause() {
+  const R = run;
+  if (!R || R.stopped || R.paused || S.phase !== 'recording') return;
+  R.paused = true;
+  R.pauseAt = performance.now();
+  R.frozen = Date.now() - S.startedAt;
+  for (const x of R.recs) { try { if (x.mr.state === 'recording') x.mr.pause(); } catch {} }
+  // Keep the time still for everything that shows Date.now() - startedAt (the Record button too).
+  R.freeze = setInterval(() => { S.startedAt = Date.now() - R.frozen; }, 200);
+  R.beat = setInterval(() => sayPaused(R, true), 2000);
+  sayPaused(R, true);
+  set({ paused: true });
+}
+
+// The pause ends (Resume, Stop or Restart): the time paused is counted out of the take's length.
+function endPause(R) {
+  if (!R.paused) return false;
+  clearInterval(R.freeze); clearInterval(R.beat);
+  R.pausedMs += performance.now() - R.pauseAt;
+  S.startedAt = Date.now() - R.frozen;
+  R.paused = false;
+  return true;
+}
+
+export function resume() {
+  const R = run;
+  if (!R || R.stopped || !R.paused) return;
+  endPause(R);
+  for (const x of R.recs) { try { if (x.mr.state === 'paused') x.mr.resume(); } catch {} }
+  sayPaused(R, false);
+  set({ paused: false });
+}
+export const togglePause = () => (run?.paused ? resume() : pause());
+
+// Restart: the take being recorded is dropped (Video Octopus moves it to the studio's trash; it never becomes a take),
+// then after a short countdown a new one starts with the same screen, camera and mic.
+export async function restart() {
+  const R = run;
+  if (!R || R.stopped || S.phase !== 'recording') return;
+  R.stopped = true;
+  R.discarded = true;
+  endPause(R);
+  ui.confirm = false;
+  set({ phase: 'starting', paused: false, restarting: true });
+  for (const u of Object.values(R.ups)) u.cancel();
+  if (R.node) { try { R.node.port.postMessage('stop'); } catch {} }
+  for (const x of R.recs) { try { if (x.mr.state !== 'inactive') x.mr.stop(); } catch {} }
+  await Promise.race([Promise.all(R.recs.map((x) => x.stopped)), new Promise((r) => setTimeout(r, 2000))]);
+  R.ctx?.close().catch(() => {});
+  run = null;
+  try { await api(projectApi(R.id, 'rec-discard'), { take: R.take }); }
+  catch (e) { toast(`Couldn't drop the take (${e.message}). It may show as an unsaved take: dismiss it there.`); }
+  set({ take: null });
+  if (!(await countdown(RESTART_COUNTDOWN, 'Starting again… the last take was discarded.'))) {
+    closeDevices(R.d);
+    set({ phase: 'idle', restarting: false });
+    return toast('Restart cancelled: nothing is recording. The dropped take is in the studio’s trash.');
+  }
+  // A source that went away during the countdown (Stop sharing): say so rather than record without it.
+  const gone = [R.d.screen, R.d.cam, R.d.mic].some((s) => s?.getTracks().some((t) => t.readyState === 'ended'));
+  if (gone) { closeDevices(R.d); set({ phase: 'idle', restarting: false }); return toast('A screen, camera or mic went away, so the new take didn’t start. Press Record to set it up again.'); }
+  try { await startTake(R.id, R.d, R.sel); set({ restarting: false }); }
+  catch (e) { closeDevices(R.d); set({ phase: 'idle', restarting: false }); toast(`Couldn't start recording: ${e.message}`); }
+}
+
+// Restart asks once, in the bar: "Restart? This take will be discarded." Pressing Restart (or its key) again confirms;
+// it goes back to the plain bar after a few seconds.
+const ui = { confirm: false, confirmT: 0, after: null };
+export function askRestart() {
+  if (!run || run.stopped || S.phase !== 'recording') return;
+  if (ui.confirm) return restart();
+  ui.confirm = true;
+  clearTimeout(ui.confirmT);
+  ui.confirmT = setTimeout(() => { ui.confirm = false; renderCtl(); }, 6000);
+  renderCtl();
+}
+const cancelRestart = () => { ui.confirm = false; clearTimeout(ui.confirmT); renderCtl(); };
+
+document.addEventListener('keydown', (e) => {
+  if (!run || run.stopped || S.phase !== 'recording') return;
+  if (isPauseKey(e)) { e.preventDefault(); e.stopPropagation(); togglePause(); }
+  else if (isRestartKey(e)) { e.preventDefault(); e.stopPropagation(); askRestart(); }
+  else if (e.key === 'Escape' && ui.confirm) { e.preventDefault(); e.stopPropagation(); cancelRestart(); }
+}, true);
+
+// ---------- after a take: Delete take, with Undo ----------
+function afterTake(id, take) {
+  clearTimeout(ui.afterT);
+  ui.after = { id, take, mode: 'saved' };
+  ui.afterT = setTimeout(() => { if (ui.after?.take === take && ui.after.mode === 'saved') { ui.after = null; renderCtl(); } }, 15000);
+  renderCtl();
+}
+
+// Moves the take to the studio's trash and out of its project (the project goes back to its take before). Returns the
+// server's answer, or throws with why it was refused (another project uses it, it's already transcribed or cut…).
+export async function deleteTake(id, take) {
+  return api(projectApi(id, 'rec-delete'), { take });
+}
+export async function restoreTake(id, trash) {
+  return api(projectApi(id, 'rec-restore'), { trash });
+}
+
+async function deleteFromBar() {
+  const a = ui.after;
+  if (!a || a.busy) return;
+  a.busy = true; renderCtl();
+  clearTimeout(ui.afterT);
+  try {
+    const r = await deleteTake(a.id, a.take);
+    Object.assign(a, { mode: 'deleted', trash: r.trash, busy: false });
+    ui.afterT = setTimeout(() => { if (ui.after === a) { ui.after = null; renderCtl(); } }, 10000);
+  } catch (e) {
+    Object.assign(a, { mode: 'refused', message: e.message, busy: false });
+  }
+  renderCtl();
+}
+async function undoDelete() {
+  const a = ui.after;
+  if (!a?.trash || a.busy) return;
+  a.busy = true; renderCtl();
+  clearTimeout(ui.afterT);
+  try {
+    await restoreTake(a.id, a.trash);
+    Object.assign(a, { mode: 'restored', busy: false });
+  } catch (e) {
+    Object.assign(a, { mode: 'refused', message: `Couldn't bring it back: ${e.message} It is in the studio's .trash folder.`, busy: false });
+  }
+  ui.afterT = setTimeout(() => { if (ui.after === a) { ui.after = null; renderCtl(); } }, 4000);
+  renderCtl();
+}
+
+// ---------- the control bar ----------
+const ICON = {
+  pause: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="4" y="3" width="3" height="10" rx="1"/><rect x="9" y="3" width="3" height="10" rx="1"/></svg>',
+  resume: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5"/></svg>',
+  restart: '<svg viewBox="0 0 16 16" aria-hidden="true" class="line"><path d="M3.5 8a4.5 4.5 0 1 0 1.4-3.3"/><path d="M3 2.5v3h3"/></svg>',
+  stop: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" rx="1.5"/></svg>',
+};
+let ctl = null, dockSlot = null, ctlTick = 0;
+const mmss = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+
+function buildCtl() {
+  ctl = h(`<div class="rc" role="region" aria-label="Recording controls">
+    <span class="rc-state"><i class="rc-dot" aria-hidden="true"></i><span class="rc-label"></span><span class="rc-time" aria-live="off"></span></span>
+    <span class="rc-btns">
+      <button type="button" class="rc-btn" data-a="pause"></button>
+      <button type="button" class="rc-btn" data-a="restart" aria-label="Restart" title="Restart: discard this take and record it again (${RESTART_KEY})">${ICON.restart}<span>Restart</span></button>
+      <button type="button" class="rc-btn stop" data-a="stop" aria-label="Stop" title="Stop and save the take (${HOTKEY})">${ICON.stop}<span>Stop</span></button>
+    </span>
+    <span class="rc-confirm" role="alert">
+      <span class="rc-q">Restart? This take will be discarded.</span>
+      <button type="button" class="rc-btn danger" data-a="yes" title="Discard this take and start again (${RESTART_KEY} again)">Discard and restart</button>
+      <button type="button" class="rc-btn" data-a="no" title="Keep recording (Esc)">Keep recording</button>
+    </span>
+    <span class="rc-after" role="status">
+      <span class="rc-msg"></span>
+      <button type="button" class="rc-btn" data-a="delete" title="Move this take to the studio's trash and out of the project. Undo brings it back.">Delete take</button>
+      <button type="button" class="rc-btn" data-a="undo">Undo</button>
+      <button type="button" class="rc-btn ghost" data-a="close" aria-label="Close">✕</button>
+    </span>
+  </div>`);
+  ctl.addEventListener('click', (e) => {
+    const a = e.target.closest('[data-a]')?.dataset.a;
+    if (a === 'pause') togglePause();
+    else if (a === 'restart') askRestart();
+    else if (a === 'yes') restart();
+    else if (a === 'no') cancelRestart();
+    else if (a === 'stop') { cancelRestart(); stop(); }
+    else if (a === 'delete') deleteFromBar();
+    else if (a === 'undo') undoDelete();
+    else if (a === 'close') { ui.after = null; renderCtl(); }
+  });
+}
+
+// Floating over the app, or docked in the script's bar while the script scrolls.
+function placeCtl() {
+  if (!ctl) return;
+  const docked = Boolean(dockSlot?.isConnected) && !ui.after;
+  const home = docked ? dockSlot : document.body;
+  if (ctl.parentNode !== home) home.append(ctl);
+  ctl.classList.toggle('docked', docked);
+}
+export const dockControls = (slot) => { dockSlot = slot; renderCtl(); };
+export const undockControls = (slot) => { if (dockSlot === slot) dockSlot = null; renderCtl(); };
+
+function renderCtl() {
+  if (S.phase !== 'recording' && ui.confirm) { ui.confirm = false; clearTimeout(ui.confirmT); } // stopped meanwhile
+  const live = ['starting', 'recording', 'stopping', 'saving'].includes(S.phase);
+  if (!live && !ui.after) { clearInterval(ctlTick); ctlTick = 0; ctl?.remove(); return; }
+  if (!ctl) buildCtl();
+  placeCtl();
+  const mode = live ? (ui.confirm && S.phase === 'recording' ? 'confirm' : S.phase === 'recording' && S.paused ? 'paused' : S.phase) : 'after';
+  ctl.dataset.mode = mode;
+  const q = (sel) => ctl.querySelector(sel);
+  const label = { starting: S.restarting ? 'Starting again…' : 'Starting…', recording: 'Recording', paused: 'Paused', confirm: 'Recording',
+    stopping: 'Finishing…', saving: `Saving take… ${Math.round((S.progress || 0) * 100)}%`, after: '' }[mode];
+  q('.rc-label').textContent = label;
+  const pb = q('[data-a=pause]');
+  pb.innerHTML = `${S.paused ? ICON.resume : ICON.pause}<span>${S.paused ? 'Resume' : 'Pause'}</span>`;
+  pb.title = `${S.paused ? 'Resume recording' : 'Pause recording'} (${PAUSE_KEY})`;
+  pb.setAttribute('aria-pressed', String(Boolean(S.paused)));
+  pb.setAttribute('aria-label', S.paused ? 'Resume' : 'Pause');
+  for (const b of ctl.querySelectorAll('.rc-btns .rc-btn')) b.disabled = S.phase !== 'recording';
+  const a = ui.after;
+  if (mode === 'after' && a) {
+    q('.rc-msg').textContent = { saved: 'Take saved into the project.', deleted: 'Take moved to the studio’s trash.', restored: 'The take is back.', refused: a.message || '' }[a.mode];
+    q('[data-a=delete]').hidden = a.mode !== 'saved';
+    q('[data-a=undo]').hidden = a.mode !== 'deleted';
+    for (const b of ctl.querySelectorAll('.rc-after .rc-btn')) b.disabled = Boolean(a.busy);
+  }
+  const time = () => { const t = q('.rc-time'); if (t) t.textContent = ['recording', 'paused', 'confirm'].includes(mode) ? mmss(Date.now() - S.startedAt) : ''; };
+  time();
+  clearInterval(ctlTick);
+  ctlTick = ['recording', 'paused', 'confirm'].includes(mode) ? setInterval(time, 250) : 0;
+}
+onSession(() => renderCtl());
 
 // ---------- the record panel ----------
 let panelOpen = null; // { start() } while the panel is up, for the hotkey
@@ -520,7 +768,8 @@ export async function recordPanel({ id, P, choices, opts = {}, settingsLink }) {
     if (k !== 'mic' && sel.camera !== 'none' && !d.cam) return perm(permText({ name: 'NotFoundError' }, 'camera'), () => openDevs('cam'));
     if (sel.mic !== 'none' && !d.mic) return perm(permText({ name: 'NotFoundError' }, 'microphone'), () => openDevs('mic'));
     close(true);
-    prompterForTake(id, { onSession, stop }); // the script, if there is one, scrolls once the take starts
+    // The script, if there is one, scrolls once the take starts; the recording controls sit in its bar meanwhile.
+    prompterForTake(id, { onSession, stop, dock: dockControls, undock: undockControls });
     set({ phase: 'starting', project: id });
     if (sel.countdown && !(await countdown(sel.countdown))) { closeDevices(d); return set({ phase: 'idle' }); }
     try { await startTake(id, d, sel); }
@@ -562,9 +811,9 @@ function followChoices(page, sel) {
 }
 
 // Big 3-2-1 over the app. Resolves false if cancelled.
-function countdown(n) {
+function countdown(n, say = 'Recording starts… switch to what you want to record.') {
   return new Promise((done) => {
-    const el = h(`<div class="countdown"><div class="num"></div><div class="sub">Recording starts… switch to what you want to record.</div><button class="btn small">Cancel</button></div>`);
+    const el = h(`<div class="countdown"><div class="num"></div><div class="sub">${esc(say)}</div><button class="btn small">Cancel</button></div>`);
     document.body.append(el);
     let left = n, t = 0;
     const finish = (ok) => { clearTimeout(t); el.remove(); done(ok); };
@@ -575,4 +824,4 @@ function countdown(n) {
 }
 
 // For tests (headless Chromium with fake devices): the running take's streams.
-window.__studioRec = { session, streams: () => run?.d || dev, stop };
+window.__studioRec = { session, streams: () => run?.d || dev, stop, pause, resume, restart, askRestart, deleteTake, restoreTake };

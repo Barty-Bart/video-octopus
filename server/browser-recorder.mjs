@@ -8,12 +8,22 @@
 // Crash-safe: take.json in the take folder says which project the take is for, what each track holds and how far
 // each part got. A page that closes mid-take leaves the parts; the next time the project opens, Video Octopus offers to
 // finish them. Parts are only removed once the final files exist.
+//
+// Pause, Restart and Delete (web/recorder.js has the buttons):
+// - Pause: the page pauses its recorders, so no chunks come; it says so (/rec-pause) every couple of seconds while
+//   paused, which keeps the take "still recording" rather than offered as an unsaved one.
+// - Restart: the page drops the take it was recording (/rec-discard) and starts a new one. The dropped take never
+//   becomes a take: its folder moves to the studio's trash, marked discarded.
+// - Delete take (/rec-delete): nothing is ever deleted. The take's folder, its copies in the project's source/ and
+//   their playback copies move to <studio>/.trash/<when>-<take>/ with a manifest.json saying where everything was,
+//   and the project goes back to the take it had before. /rec-restore (the Undo) puts it all back. A take that
+//   another project also uses, or that its own project has already transcribed, cut or exported, is refused.
 import { existsSync, mkdirSync, readdirSync, statSync, openSync, writeSync, closeSync, ftruncateSync, readFileSync, writeFileSync,
-  renameSync, rmSync } from 'node:fs';
+  renameSync, rmSync, cpSync } from 'node:fs';
 import { spawn, execFile } from 'node:child_process';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { settings, saveSettings, readJSON, writeJSON, studioTool, h264, state, setProjectState } from './util.mjs';
-import { probeFile, projectDir, projectMeta, formatTemplate } from './studio.mjs';
+import { probeFile, projectDir, projectMeta, formatTemplate, projectsRoot, isTakeFile, proxyName, appendWorklog } from './studio.mjs';
 import { recorderSection } from './settings.mjs';
 
 export const FPS = 30;
@@ -43,7 +53,7 @@ export function recorderBusy() {
   if (finishing.size) return true;
   const root = settings().recordingsDir;
   if (!root || !existsSync(root)) return false;
-  return readdirSync(root).some((n) => { const t = readTake(n); return t?.recorder === 'browser' && !t.finished && !t.dismissed; });
+  return readdirSync(root).some((n) => { const t = readTake(n); return t?.recorder === 'browser' && !t.finished && !t.dismissed && !t.discarded; });
 }
 const saveTake = (stamp, t) => writeJSON(takeFile(stamp), { ...t, updated: Date.now() });
 const partName = (stamp, track, t) => `${stamp}_${track}.${t.tracks[track].ext}.part`;
@@ -117,7 +127,7 @@ async function addChunk(id, url, req) {
   const buf = await rawBody(req);
   // Read again after the body: the other track's chunk may have been written meanwhile.
   const fresh = readTake(stamp);
-  if (!fresh || fresh.finished || finishing.has(stamp)) throw new Error('That take is already being saved.');
+  if (!fresh || fresh.finished || fresh.discarded || finishing.has(stamp)) throw new Error('That take is already being saved.');
   const tr = fresh.tracks[track], dir = takeDir(stamp), part = join(dir, partName(stamp, track, fresh));
   if (seq < tr.next || tr.pending.includes(seq)) return { ok: true, next: tr.next, dup: true };
   if (seq > tr.next) {
@@ -151,7 +161,7 @@ export function unfinishedTakes(id) {
   const out = [];
   for (const n of names) {
     const t = readTake(n);
-    if (!t || t.recorder !== 'browser' || t.finished || t.dismissed || (id && t.project !== id) || finishing.has(n)) continue;
+    if (!t || t.recorder !== 'browser' || t.finished || t.dismissed || t.discarded || (id && t.project !== id) || finishing.has(n)) continue;
     if (Date.now() - (t.updated || 0) < STALE_MS) continue; // still recording in some page
     const bytes = Object.keys(t.tracks).reduce((s, k) => s + (t.tracks[k].bytes || 0), 0);
     if (!bytes) continue;
@@ -168,6 +178,7 @@ function finishTake(id, stamp, timing, { recover = false } = {}, ctx) {
   const t = readTake(stamp);
   if (!t || t.project !== id) throw new Error('Unknown take.');
   if (t.finished) throw new Error('That take is already saved.');
+  if (t.discarded) throw new Error('That take was discarded.');
   if (finishing.has(stamp)) throw new Error('That take is being saved.');
   if (recover && Date.now() - (t.updated || 0) < STALE_MS) throw new Error('That take is still recording in another window.');
   const dir = takeDir(stamp);
@@ -325,7 +336,198 @@ async function evenEnds(dir, files) {
 const videoLength = (p) => new Promise((ok) => execFile(studioTool('ffprobe'), ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=duration', '-of', 'csv=p=0', p],
   { timeout: 15000 }, (e, out) => ok(e ? 0 : parseFloat(String(out)) || 0)));
 
-// ---- routes: /rec-start, /rec-chunk, /rec-finish, /rec-status, /rec-unfinished, /rec-dismiss. Returns true when it answered. ----
+// ---- pause: the page's recorders are paused; it says so every couple of seconds (so the take isn't stale) ----
+function pauseTake(id, stamp, paused) {
+  const t = readTake(stamp);
+  if (!t || t.project !== id) throw new Error('Unknown take.');
+  if (t.finished || t.discarded || finishing.has(stamp)) throw new Error('That take is already being saved.');
+  const pauses = Array.isArray(t.pauses) ? t.pauses.slice(-200) : [];
+  const open = pauses.length && pauses[pauses.length - 1].resumed == null;
+  if (paused && !open) pauses.push({ at: Date.now(), resumed: null });
+  if (!paused && open) pauses[pauses.length - 1].resumed = Date.now();
+  saveTake(stamp, { ...t, paused: Boolean(paused), pauses });
+  return { ok: true, paused: Boolean(paused) };
+}
+
+// ---- the studio's trash: takes are moved here, never deleted ----
+// <studio>/.trash/<when>-<take>/ holds take/ (the recordings folder), project/source/ and project/work/ (the project's
+// copies and playback copies) and manifest.json. Before there's a studio: next to the recordings folder.
+export function trashRoot() {
+  const s = settings();
+  return s.studio ? join(s.studio, '.trash') : join(dirname(s.recordingsDir), '.video-octopus-trash');
+}
+const TRASH_NAME = /^\d{4}-\d\d-\d\d_\d\d-\d\d-\d\d(-\d+)?-[\w .()-]{1,120}$/;
+// A take folder's name: the recorder's stamp, or a folder another recorder made (no slashes, no dot files).
+const takeName = (n) => typeof n === 'string' && /^[\w .()-]{1,120}$/.test(n) && !n.startsWith('.') && !n.includes('..');
+
+// rename, or across disks a copy that is complete before the original goes.
+function moveAside(from, to) {
+  mkdirSync(dirname(to), { recursive: true });
+  if (existsSync(to)) throw new Error(`${to} is already there.`);
+  try { renameSync(from, to); }
+  catch (e) {
+    if (e.code !== 'EXDEV') throw e;
+    cpSync(from, to, { recursive: true, errorOnExist: true, force: false, preserveTimestamps: true });
+    rmSync(from, { recursive: true, force: true });
+  }
+}
+
+function newTrashEntry(stamp) {
+  const d = new Date(), two = (n) => String(n).padStart(2, '0');
+  const when = `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}_${two(d.getHours())}-${two(d.getMinutes())}-${two(d.getSeconds())}`;
+  let name = `${when}-${stamp}`;
+  for (let i = 2; existsSync(join(trashRoot(), name)); i++) name = `${when}-${i}-${stamp}`;
+  mkdirSync(join(trashRoot(), name), { recursive: true });
+  return name;
+}
+
+// Restart: the take being recorded is dropped. It never becomes a take (or an unsaved one): marked discarded and
+// moved to the trash.
+function discardTake(id, stamp) {
+  const t = readTake(stamp);
+  if (!t || t.project !== id) throw new Error('Unknown take.');
+  if (t.finished || finishing.has(stamp)) throw new Error('That take is already being saved.');
+  saveTake(stamp, { ...t, discarded: Date.now() });
+  const entry = newTrashEntry(stamp);
+  moveAside(takeDir(stamp), join(trashRoot(), entry, 'take'));
+  writeJSON(join(trashRoot(), entry, 'manifest.json'), { v: 1, kind: 'discarded', take: stamp, at: Date.now(), project: id, from: takeDir(stamp) });
+  return { ok: true, trash: entry };
+}
+
+// The projects whose source/ holds this take's files (or whose project.json lists it), and what was made from it.
+function projectsUsing(stamp) {
+  const out = [];
+  let names = [];
+  try { names = readdirSync(projectsRoot()); } catch { return out; }
+  for (const n of names) {
+    if (n.startsWith('.') || n.startsWith('_')) continue;
+    const dir = join(projectsRoot(), n);
+    let files = [];
+    try { files = readdirSync(join(dir, 'source')).filter((f) => f.startsWith(`${stamp}_`) && isTakeFile(f)); } catch {}
+    const meta = projectMeta(dir);
+    if (files.length || meta?.takes?.includes(stamp)) out.push({ id: n, dir, name: meta?.name || n, files, meta: meta || {} });
+  }
+  return out;
+}
+
+// Work the creator did on this take in its project after it arrived: a transcript, a cut or an export. (A transcript
+// the take brought along is copied as it arrives, so the first minute doesn't count.)
+const WORK_FILES = ['work/tr/words.json', 'work/words.json', 'work/edl_manual.json'];
+function workOnTake(u, arrived) {
+  const after = (p) => { try { return statSync(p).mtimeMs > arrived + 60000; } catch { return false; } };
+  if (WORK_FILES.slice(0, 2).some((f) => after(join(u.dir, f)))) return 'transcribed';
+  if (after(join(u.dir, WORK_FILES[2]))) return 'cut';
+  try { if (readdirSync(join(u.dir, 'renders')).some((f) => !f.startsWith('.') && after(join(u.dir, 'renders', f)))) return 'exported'; } catch {}
+  return null;
+}
+
+const refuse = (message) => Object.assign(new Error(message), { status: 409 });
+
+// Delete take: everything moves to the trash, and the project goes back to the take it had before (an Undo puts it
+// all back). Refused while the take is recording or saving, when another project uses it too, and when its project
+// already has work made from it.
+export function deleteTake(id, stamp) {
+  if (!takeName(stamp)) throw new Error('Unknown take.');
+  const dir = takeDir(stamp);
+  if (!existsSync(dir) || !statSync(dir).isDirectory()) throw new Error('That take isn’t in the recordings folder any more.');
+  const t = readTake(stamp);
+  if (finishing.has(stamp) || (t?.recorder === 'browser' && !t.finished && !t.dismissed)) throw refuse('That take is still recording or saving.');
+  const users = projectsUsing(stamp);
+  const mine = users.find((u) => u.id === id);
+  if (!mine && t?.project !== id) throw new Error('That take isn’t part of this project.');
+  const others = users.filter((u) => u.id !== id);
+  if (others.length) throw refuse(`This take is also used by ${others.map((u) => `“${u.name}”`).join(', ')}, so it wasn’t deleted. Remove it there first.`);
+  let arrived = t?.finished || 0;
+  if (mine) for (const f of mine.files) { try { arrived = Math.max(arrived, statSync(join(mine.dir, 'source', f)).mtimeMs); } catch {} }
+  const work = mine && mine.meta.activeTake === stamp ? workOnTake(mine, arrived) : null;
+  if (work) throw refuse(`This take is already ${work} in “${mine.name}”, so it wasn’t deleted. Record a new take to replace it.`);
+
+  const entry = newTrashEntry(stamp), root = join(trashRoot(), entry);
+  const manifest = { v: 1, kind: 'deleted', take: stamp, at: Date.now(), from: dir, project: mine ? id : null, projectName: mine?.name || null, files: [], proxies: [] };
+  if (mine) {
+    const meta = mine.meta, pdir = mine.dir;
+    for (const f of mine.files) {
+      moveAside(join(pdir, 'source', f), join(root, 'project', 'source', f));
+      manifest.files.push(f);
+      const px = proxyName(f);
+      if (existsSync(join(pdir, px))) { moveAside(join(pdir, px), join(root, 'project', px)); manifest.proxies.push(px); }
+    }
+    // project.json: no longer one of its takes; the canvas goes back to the take before it; its layers go.
+    const takes = (meta.takes || []).filter((x) => x !== stamp);
+    const next = { ...meta, takes };
+    const wasActive = meta.activeTake === stamp;
+    if (wasActive) {
+      delete next.activeTake; delete next.activeSince;
+      if (takes.length) Object.assign(next, { activeTake: takes[takes.length - 1], activeSince: Date.now() });
+    }
+    const layers = meta.layout?.layers;
+    const ours = (x) => typeof x?.file === 'string' && x.file.replace(/^source\//, '').startsWith(`${stamp}_`);
+    if (Array.isArray(layers) && layers.some(ours)) next.layout = { ...meta.layout, layers: layers.filter((x) => !ours(x)) };
+    manifest.before = { takes: meta.takes || [], activeTake: meta.activeTake ?? null, activeSince: meta.activeSince ?? null, layers: Array.isArray(layers) ? layers.filter(ours) : [] };
+    manifest.after = { activeTake: next.activeTake ?? null, activeSince: next.activeSince ?? null };
+    // A block whose own file was this take waits for a recording again.
+    const bpath = join(pdir, 'work', 'blocks.json'), doc = readJSON(bpath, null);
+    const blk = doc?.blocks?.find((b) => typeof b?.source?.file === 'string' && b.source.file.replace(/^source\//, '').startsWith(`${stamp}_`));
+    if (blk) {
+      manifest.block = { id: blk.id, source: blk.source };
+      blk.source = { pending: 'record' };
+      writeJSON(bpath, doc);
+    }
+    writeJSON(join(pdir, 'project.json'), next);
+    appendWorklog(pdir, `Deleted take ${stamp}: moved to the studio's trash (${entry})${wasActive ? next.activeTake ? `; the canvas take is ${next.activeTake} again` : '; the project has no take now' : ''}`);
+  }
+  moveAside(dir, join(root, 'take'));
+  writeJSON(join(root, 'manifest.json'), manifest);
+  return { ok: true, take: stamp, trash: entry, project: manifest.project, projectName: manifest.projectName, activeTake: manifest.after?.activeTake ?? null };
+}
+
+// Undo: the take's folder, its project files and the project's choices come back (the canvas only goes back to it if
+// nobody picked another take meanwhile).
+export function restoreTake(id, entry) {
+  if (!TRASH_NAME.test(entry || '')) throw new Error('Unknown trash entry.');
+  const root = join(trashRoot(), entry), m = readJSON(join(root, 'manifest.json'), null);
+  if (!m || m.kind !== 'deleted' || !takeName(m.take)) throw new Error('That isn’t a deleted take.');
+  if (m.project && m.project !== id) throw new Error('That take belongs to another project.');
+  if (!m.project && !existsSync(join(root, 'take'))) throw new Error('That take isn’t in the trash any more.');
+  const dir = takeDir(m.take);
+  if (existsSync(dir)) throw refuse('A take with that name is back in the recordings folder already.');
+  const pdir = m.project ? projectDir(m.project) : null;
+  if (m.project && !pdir) throw new Error('The project that take was in is gone; the take stays in the trash.');
+  if (pdir) for (const f of m.files) if (existsSync(join(pdir, 'source', f))) throw refuse(`source/${f} is in the project again already.`);
+  moveAside(join(root, 'take'), dir);
+  if (pdir) {
+    for (const f of m.files) moveAside(join(root, 'project', 'source', f), join(pdir, 'source', f));
+    for (const px of m.proxies || []) if (!existsSync(join(pdir, px))) moveAside(join(root, 'project', px), join(pdir, px));
+    const meta = projectMeta(pdir) || {}, b = m.before || {};
+    const takes = (meta.takes || []).filter((x) => x !== m.take);
+    takes.splice(Math.min(takes.length, Math.max(0, (b.takes || []).indexOf(m.take))), 0, m.take);
+    const next = { ...meta, takes };
+    // Nobody changed the canvas take since the delete: it goes back to what it was.
+    if ((meta.activeTake ?? null) === (m.after?.activeTake ?? null)) {
+      delete next.activeTake; delete next.activeSince;
+      if (b.activeTake) next.activeTake = b.activeTake;
+      if (b.activeSince) next.activeSince = b.activeSince;
+    }
+    if (b.layers?.length) {
+      const have = new Set((meta.layout?.layers || []).map((x) => x.file));
+      next.layout = { ...(meta.layout || {}), layers: [...(meta.layout?.layers || []), ...b.layers.filter((x) => !have.has(x.file))] };
+    }
+    if (m.block) {
+      const bpath = join(pdir, 'work', 'blocks.json'), doc = readJSON(bpath, null);
+      const blk = doc?.blocks?.find((x) => x.id === m.block.id);
+      if (blk && blk.source?.pending) { blk.source = m.block.source; writeJSON(bpath, doc); }
+    }
+    writeJSON(join(pdir, 'project.json'), next);
+    appendWorklog(pdir, `Brought back take ${m.take} from the studio's trash`);
+  }
+  // The entry is empty now but for its manifest: it goes.
+  const left = (d) => readdirSync(d, { withFileTypes: true }).some((e) => (e.isDirectory() ? left(join(d, e.name)) : e.name !== 'manifest.json' || d !== root));
+  if (!left(root)) rmSync(root, { recursive: true, force: true });
+  return { ok: true, take: m.take, project: m.project };
+}
+
+// ---- routes: /rec-start, /rec-chunk, /rec-pause, /rec-discard, /rec-finish, /rec-status, /rec-unfinished, /rec-dismiss,
+// /rec-delete, /rec-restore. Returns true when it answered. ----
 export async function recRoute(req, res, { id, action, url, send, body, emit, receiveTake }) {
   if (!action.startsWith('/rec-')) return false;
   try {
@@ -351,6 +553,18 @@ export async function recRoute(req, res, { id, action, url, send, body, emit, re
       if (!t || t.project !== id) throw new Error('Unknown take.');
       saveTake(b.take, { ...t, dismissed: Date.now() }); // the parts stay in the take folder
       return send(res, 200, { ok: true }), true;
+    }
+    if (action === '/rec-pause') return send(res, 200, pauseTake(id, String(b.take || ''), Boolean(b.paused))), true;
+    if (action === '/rec-discard') return send(res, 200, discardTake(id, String(b.take || ''))), true;
+    if (action === '/rec-delete') {
+      const r = deleteTake(id, String(b.take || ''));
+      emit({ t: 'files' });
+      return send(res, 200, r), true;
+    }
+    if (action === '/rec-restore') {
+      const r = restoreTake(id, String(b.trash || ''));
+      emit({ t: 'files' });
+      return send(res, 200, r), true;
     }
   } catch (e) { return send(res, e.status || 400, { error: e.message }), true; }
   return send(res, 404, { error: 'Unknown action' }), true;

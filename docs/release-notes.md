@@ -1,3 +1,12 @@
+# v0.1.0-beta.16
+
+- **Pause and resume while recording** (⌥⌘P; Ctrl+Alt+P on Windows). Every recorder pauses, the timer stops, and the teleprompter pauses with it; the saved take leaves the pause out.
+- **Restart a take** (⇧⌥⌘R; Ctrl+Alt+Shift+R). It asks once ("Restart? This take will be discarded."), throws the half-take away (to the studio trash, never as a take), counts down 3 s and starts again with the script back at the top.
+- **Delete take**, offered for 15 seconds after a take is saved: the take's files move to the studio's `.trash` folder and the video goes back to its previous take; Undo restores everything. It refuses if another video uses the take, if a transcript, cut or render was already made from it, or while still recording.
+- **Teleprompter buttons.** Play/pause, speed up/down and text size bigger/smaller are now real buttons (with their keys in the tooltip) in the practice run, while recording and in the script's own window. All keyboard shortcuts still work.
+
+Verified with 345 unit tests on Node 24.22.1 and 22.22.1 and a disposable browser run with real recording, uploads and file moves (Chromium's fake camera and mic and the app's test picture for the screen). Not exercised: the native screen picker, Windows. This is a source update on main; the downloadable tagged prerelease remains separate.
+
 # v0.1.0-beta.15
 
 - **My styles is flat.** Each style is one kind of video (for example "Faceless reel" or "YouTube tutorial") shown as a card you click straight into. A style's page has one row of tabs: Skill (rules and Talk to this style, with skills, files, insights, history and videos alongside), Examples, Brand, People & places, and Memories.

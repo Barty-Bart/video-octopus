@@ -6,37 +6,60 @@
 <title>Script</title>
 <link rel="icon" href="favicon.svg">
 <link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="recorder.css">
 <style>
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
   #host { position: fixed; inset: 0; }
-  #state { position: fixed; right: 14px; bottom: 10px; font: 13px/1.4 system-ui, sans-serif; color: #8a8a8a; }
+  #state { font: 13px/1.4 system-ui, sans-serif; color: #8a8a8a; white-space: nowrap; }
   #state.live { color: #ff6b5a; }
 </style>
 </head>
 <body>
 <div id="host"></div>
-<div id="state" aria-live="polite"></div>
+<div class="ppw-bar" id="bar"><div id="state" aria-live="polite"></div></div>
 <div id="toast" hidden></div>
 <script type="module">
   // The script in its own window (web/prompter.js): drag it to a teleprompter screen or a second display. It starts
-  // when Video Octopus's recording starts and stops with it; Space starts it any time.
-  import { mountPrompter, loadScript } from './prompter.js';
+  // when Video Octopus's recording starts and stops with it, pauses and resumes with it, and goes back to the top when
+  // the take restarts; Space starts it any time. The buttons (prompterControls) show when the mouse moves or the
+  // screen is tapped, or the state line at the bottom is clicked, and fade after a few seconds.
+  import { mountPrompter, loadScript, prompterControls } from './prompter.js';
   const id = new URLSearchParams(location.search).get('p') || '';
-  const state = document.getElementById('state');
+  const state = document.getElementById('state'), bar = document.getElementById('bar');
   const chan = 'BroadcastChannel' in window ? new BroadcastChannel('studio-prompter') : null;
   const text = await loadScript(id);
   document.title = `Script · ${id}`;
   const p = mountPrompter(document.getElementById('host'), text || '(No script yet: put one in the record panel.)',
-    { hint: 'Starts when the recording starts · Space starts it now · F full screen' });
-  let recording = false;
+    { hint: 'Starts when the recording starts · Space or Play starts it now · F full screen', fullscreen: document.documentElement });
+  bar.prepend(prompterControls(p));
+  let hideT = 0;
+  const showBar = () => {
+    bar.classList.add('on');
+    clearTimeout(hideT);
+    // Stays while the pointer is on it or a key moved the focus into it (a click's focus doesn't hold it).
+    hideT = setTimeout(() => { if (!bar.matches(':hover') && !bar.querySelector(':focus-visible')) bar.classList.remove('on'); else showBar(); }, 3000);
+  };
+  addEventListener('pointermove', showBar);
+  addEventListener('pointerdown', showBar);
+  bar.addEventListener('focusin', showBar);
+  showBar();
+  let recording = false, wasPlaying = false, paused = false;
   const say = (s, live) => { state.textContent = s; state.classList.toggle('live', Boolean(live)); };
   say('Waiting for the recording');
   chan?.addEventListener('message', (e) => {
     const m = e.data || {};
     if (m.t === 'script' && m.project === id) p.setText(m.text);
     if (m.t !== 'take' || (m.project && m.project !== id)) return;
-    if (m.phase === 'recording' && !recording) { recording = true; p.restart(); p.play(true); say('● Recording', true); }
-    if (m.phase === 'starting') say('Recording starts…');
+    if (m.phase === 'recording' && !recording) { recording = true; paused = false; p.restart(); p.play(true); say('● Recording', true); }
+    if (m.phase === 'recording' && recording && Boolean(m.paused) !== paused) {
+      paused = Boolean(m.paused);
+      if (paused) { wasPlaying = p.playing; p.play(false); say('Paused'); }
+      else { if (wasPlaying) p.play(true); say('● Recording', true); }
+    }
+    if (m.phase === 'starting') {
+      if (recording) { recording = false; p.play(false); p.restart(); }
+      say('Recording starts…');
+    }
     if (['stopping', 'saving', 'idle'].includes(m.phase) && recording) { recording = false; p.play(false); say('Recording stopped'); }
   });
   chan?.postMessage({ t: 'window', project: id, open: true });

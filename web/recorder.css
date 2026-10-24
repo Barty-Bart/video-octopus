@@ -1,0 +1,291 @@
+/* Recording controls and the script's buttons (web/recorder.js, web/prompter.js, web/prompter.html).
+   Theme tokens only (test/recorder-controls.test.mjs checks it). The recording bar and the script are a dark stage in
+   both themes, like the prompter itself (the --pp-* tokens); the after-take card follows the theme. */
+
+/* ---------- the recording bar: time, Pause/Resume, Restart, Stop ---------- */
+.rc {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 41; /* over the script (30) and the countdown (40) */
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100vw - 32px);
+  padding: 8px 8px 8px 14px;
+  border-radius: 999px;
+  background: var(--pp-bar);
+  color: var(--stage-dim);
+  box-shadow: var(--shadow-pop);
+  font-size: 13px;
+}
+.rc.docked {
+  position: static;
+  z-index: auto;
+  max-width: none;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.rc-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.rc-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--pp-dim);
+}
+.rc[data-mode="recording"] .rc-dot,
+.rc[data-mode="confirm"] .rc-dot {
+  background: var(--pp-live);
+  animation: pulse 1.2s infinite;
+}
+.rc[data-mode="paused"] .rc-dot {
+  background: var(--warning);
+}
+.rc-time {
+  color: var(--white);
+  font-weight: 600;
+  min-width: 3.2em;
+}
+
+.rc-btns,
+.rc-confirm,
+.rc-after {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.rc-confirm,
+.rc-after,
+.rc[data-mode="confirm"] .rc-btns,
+.rc[data-mode="after"] .rc-btns,
+.rc[data-mode="after"] .rc-state {
+  display: none;
+}
+.rc[data-mode="confirm"] .rc-confirm,
+.rc[data-mode="after"] .rc-after {
+  display: inline-flex;
+}
+.rc-q {
+  color: var(--white);
+  font-weight: 600;
+}
+
+.rc-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 40px;
+  min-width: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--pp-ghost-line);
+  border-radius: 999px;
+  background: var(--pp-key);
+  color: var(--pp-ghost);
+  font: inherit;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.rc-btn:hover:not(:disabled) {
+  border-color: var(--pp-ghost);
+}
+.rc-btn:focus-visible,
+.ppc-b:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.rc-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.rc-btn svg,
+.ppc-b svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  fill: currentColor;
+}
+.rc-btn svg.line,
+.ppc-b svg.line {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.rc-btn.stop,
+.rc-btn.danger {
+  background: var(--pp-stop);
+  border-color: transparent;
+  color: var(--white);
+}
+.rc-btn.ghost {
+  background: transparent;
+  border-color: transparent;
+}
+.rc-btn[aria-pressed="true"] {
+  border-color: var(--warning);
+}
+
+/* After a take: Delete take / Undo, on the theme's own surface. */
+.rc[data-mode="after"] {
+  padding: 8px 8px 8px 16px;
+  background: var(--pop-bg);
+  color: var(--text);
+  border: 1px solid var(--line);
+}
+.rc[data-mode="after"] .rc-msg {
+  max-width: 46ch;
+}
+.rc[data-mode="after"] .rc-btn {
+  background: var(--panel);
+  border-color: var(--line-2);
+  color: var(--text);
+}
+.rc[data-mode="after"] .rc-btn:hover:not(:disabled) {
+  border-color: var(--line-hover);
+}
+.rc[data-mode="after"] .rc-btn.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-2);
+}
+
+/* In the script's bar the recording controls come first, set apart from the script's own buttons. */
+.pp-recslot {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding-right: 14px;
+  border-right: 1px solid var(--pp-ghost-line);
+}
+
+/* ---------- the script's buttons ---------- */
+.ppc {
+  display: flex;
+  align-items: center;
+  gap: 6px 14px;
+  flex-wrap: wrap;
+}
+.ppc-g {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.ppc-l {
+  color: var(--pp-hud);
+  margin-right: 2px;
+}
+.ppc-b {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 40px;
+  min-height: 40px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--pp-key);
+  color: var(--pp-key-ink);
+  font: inherit;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+}
+.ppc-b:hover {
+  color: var(--white);
+  background: var(--pp-ghost-line);
+}
+.ppc-b[aria-pressed="true"] {
+  box-shadow: inset 0 0 0 2px var(--pp-ghost);
+}
+.ppc-play {
+  min-width: 132px;
+  font-size: 14px;
+}
+.ppc-v {
+  min-width: 2.6em;
+  text-align: center;
+  color: var(--white);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The script in its own window: the state line stays at the bottom; the buttons show on a move or a tap (or a
+   click on the state line) and fade after a few seconds. */
+.ppw-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  background: transparent;
+  transition: background 0.3s;
+}
+.ppw-bar .ppc {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s;
+}
+.ppw-bar.on,
+.ppw-bar:has(:focus-visible) {
+  background: var(--pp-bar);
+}
+.ppw-bar.on .ppc,
+.ppw-bar:has(:focus-visible) .ppc {
+  opacity: 1;
+  pointer-events: auto;
+}
+.ppw-bar #state {
+  margin-left: auto;
+  cursor: pointer;
+}
+
+@media (max-width: 720px) {
+  .rc {
+    left: 16px;
+    right: 16px;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    border-radius: 18px;
+  }
+  .rc.docked {
+    flex-wrap: wrap;
+  }
+  .pp-recslot {
+    padding-right: 0;
+    border-right: 0;
+  }
+  .rc-btn span {
+    display: none;
+  }
+  .rc-confirm .rc-btn,
+  .rc-after .rc-btn {
+    padding: 0 12px;
+  }
+  .ppc {
+    gap: 6px 10px;
+  }
+  .ppc-play {
+    min-width: 44px;
+  }
+  .ppc-play span {
+    display: none;
+  }
+}
