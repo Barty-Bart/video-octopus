@@ -281,8 +281,9 @@ try {
   });
 
   // A format can start Record without the camera ("record": {"camera": false}, e.g. a faceless explainer): its projects
-  // start with No camera, a camera picked in one is remembered for that project only, and other projects keep theirs.
-  await check('Record without the camera for a format that says so (record.camera false), remembered per project', async () => {
+  // start with No camera, a camera picked in one is remembered for that style (here: its setup, as the projects have no
+  // style; web/rec-preset.js), and other styles keep theirs.
+  await check('Record without the camera for a format that says so (record.camera false), remembered per style', async () => {
     const studio = join(ROOT, 'nocam-studio'), local = join(ROOT, 'nocam-local');
     for (const [p, type] of [['nocam', 'faceless-test'], ['talk', 'tutorial']]) {
       mkdirSync(join(studio, 'projects', p), { recursive: true });

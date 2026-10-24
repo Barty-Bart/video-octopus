@@ -21,7 +21,7 @@ const projectRel = /Project folder: (\S+) \(/.exec(sys)?.[1] || null;
 const project = projectRel ? join(cwd, projectRel) : null;
 const APP = /node "([^"]+)[\\/]bin[\\/]studio\.mjs"/.exec(sys)?.[1] || resolve(dirname(new URL(import.meta.url).pathname), '..');
 const log = (o) => { if (process.env.FAKE_CLAUDE_LOG) appendFileSync(process.env.FAKE_CLAUDE_LOG, JSON.stringify({ at: Date.now(), ...o }) + '\n'); };
-log({ start: true, mode, hooks: Boolean(settings.hooks), project: projectRel, resume: arg('--resume') });
+log({ start: true, mode, hooks: Boolean(settings.hooks), project: projectRel, resume: arg('--resume'), model: arg('--model'), effort: arg('--effort') });
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\n');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const session = arg('--resume') || randomUUID();
@@ -100,6 +100,10 @@ async function turn(text) {
       mkdirSync(join(cwd, 'notes'), { recursive: true }); appendFileSync(join(cwd, 'notes', 'log.md'), '- a line from the test project\n'); return '';
     });
     say(ok ? 'I logged it in notes/log.md (outside this project, as the studio\'s instructions ask).' : 'Fine, I left the notes alone.');
+  } else if (/RUN-NPM-TEST/.test(text)) {
+    // A plain command: in manual mode it asks, and the card offers "Always for npm commands".
+    const ok = await tool('Bash', { command: 'npm test', description: 'Run the project tests' }, () => 'all tests passed');
+    say(ok ? 'The tests pass.' : 'OK, I did not run the tests.');
   } else if (/which project/i.test(text)) {
     await tool('Bash', { command: `node "${APP}/bin/octopus.mjs" projects list; ls -t sessions; ls -td projects/*/`, description: 'List projects and the newest sessions' });
     await tool('Bash', { command: `cat "${APP}/README.md" | head -5 && grep -c Video Octopus "${APP}/README.md"`, description: 'Read the README' });

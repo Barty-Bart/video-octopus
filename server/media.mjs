@@ -15,10 +15,14 @@
 // - /media-remove { item, confirm }: the item's source/ files and their playback copies move to the studio's trash
 //   (<studio>/.trash/<when>-<item>/, browser-recorder.mjs), with a manifest saying where everything was. The item leaves
 //   project.json (takes, its layers); the canvas take falls back to the take before it. Never a hard delete; the
-//   recordings folder's own copy of a take is not touched (the recorder's Delete take does that).
+//   recordings folder's own copy of a take is not touched (Delete recording below, and the recorder's Delete take, do that).
 //   Refused (409) while Claude, an export or a playback copy uses the project's files; for the canvas take once a
 //   transcript, cut, scene plan or render was made from it; for a block's file. Renders made while the item was in
 //   the video are asked about first (they stay in renders/).
+// - /media-delete { item, confirm }: Delete recording. As /media-remove, and the take's copy in the recordings folder goes
+//   too (so it leaves Recordings); then the whole trash entry goes to the computer's Bin (os-trash.mjs). Other videos
+//   using the take are named and asked about first (they keep their own copies). With no Bin it stays in the studio's
+//   trash. Refused while the take is recording or saving.
 // - /media-restore { trash }: the Undo. Everything comes back where it was; the canvas take only if nobody changed it
 //   meanwhile. Layer order and visibility are the canvas's own (layout.layers order, hidden; saved through /layout).
 import { existsSync, readdirSync, statSync, rmSync } from 'node:fs';
@@ -27,7 +31,7 @@ import { readJSON, writeJSON, mtime } from './util.mjs';
 import { projectMeta, saveProjectMeta, projectMedia, roles, takeKey, isAudio, isTakeFile, probe, proxyName, proxyRunning,
   makeProxies, appendWorklog } from './studio.mjs';
 import { normalize, newLayers } from '../web/layout.js';
-import { trashRoot, moveAside, newTrashEntry, TRASH_NAME } from './browser-recorder.mjs';
+import { trashRoot, moveAside, newTrashEntry, TRASH_NAME, takeFolder, takeBusy, projectsUsing } from './browser-recorder.mjs';
 
 const STAMP = /^\d{4}-\d\d-\d\d_\d\d-\d\d-\d\d(-\d+)?$/;
 const MAX_LAYERS = 8;
@@ -70,6 +74,7 @@ export function mediaItems(dir) {
       recorded: STAMP.test(key) || (meta.takes || []).includes(key),
       picture: info.some((x) => x.role !== 'sound'),
       take: files.some(isTakeFile),
+      inRecordings: Boolean(takeFolder(key) && existsSync(takeFolder(key))), // Delete recording takes that copy too
       canvas: shown.some((f) => files.includes(f)),
       layers, blocks: usedBy,
     };
@@ -171,7 +176,8 @@ export function addAsLayer(dir, key, { busy = null } = {}) {
 }
 
 // ---- remove (to the trash) ----
-export function removeMedia(dir, key, { confirm = false, busy = null } = {}) {
+// What stops a remove, or the question to ask first ({ ok: false, confirm }); else { items, item, work }.
+function checkRemove(dir, key, { confirm = false, busy = null, ask = [] } = {}) {
   if (busy) throw refuse(busy);
   const { items, item, work } = findItem(dir, key);
   const files = item.files.map((x) => x.file);
@@ -183,10 +189,21 @@ export function removeMedia(dir, key, { confirm = false, busy = null } = {}) {
     throw refuse(`This recording already has ${listWords(work)}, so it wasn’t deleted. Put another take on the canvas first, or record a new one.`);
   }
   const renders = item.canvas ? 0 : rendersSince(dir, item.at);
-  if (renders && !confirm) {
-    return { ok: false, confirm: `${renders === 1 ? 'A render was' : `${renders} renders were`} made while ${label(item)} was in this video. ${renders === 1 ? 'It stays' : 'They stay'} in renders/, but remaking ${renders === 1 ? 'it' : 'them'} won’t show it.` };
-  }
+  const questions = [...(renders ? [`${renders === 1 ? 'A render was' : `${renders} renders were`} made while ${label(item)} was in this video. ${renders === 1 ? 'It stays' : 'They stay'} in renders/, but remaking ${renders === 1 ? 'it' : 'them'} won’t show it.`] : []), ...ask];
+  if (questions.length && !confirm) return { ok: false, confirm: questions.join(' ') };
+  return { items, item, work };
+}
 
+export function removeMedia(dir, key, opts = {}) {
+  const c = checkRemove(dir, key, opts);
+  if (c.ok === false) return c;
+  return moveOut(dir, key, c);
+}
+
+// The item's files go to a new entry of the studio's trash; project.json forgets it. Returns the remove's answer.
+// stamp: Delete recording also moves the recordings folder's copy of that take into the entry (as take/).
+function moveOut(dir, key, { items, item }, { stamp = null } = {}) {
+  const files = item.files.map((x) => x.file);
   const meta = projectMeta(dir) || {};
   const layout = normalize(meta.layout, meta.type);
   const id = basename(dir);
@@ -198,6 +215,11 @@ export function removeMedia(dir, key, { confirm = false, busy = null } = {}) {
     manifest.files.push(f);
     const px = proxyName(f);
     if (!isAudio(f) && existsSync(join(dir, px))) { moveAside(join(dir, px), join(root, 'project', px)); manifest.proxies.push(px); }
+  }
+  if (stamp) {
+    const from = takeFolder(stamp);
+    moveAside(from, join(root, 'take'));
+    Object.assign(manifest, { take: stamp, from });
   }
   let fallback = null, off = files;
   if (item.canvas) {
@@ -218,8 +240,27 @@ export function removeMedia(dir, key, { confirm = false, busy = null } = {}) {
   const saved = { ...meta, ...next };
   if (saved.activeTake == null) { delete saved.activeTake; delete saved.activeSince; }
   writeJSON(join(dir, 'project.json'), saved);
-  appendWorklog(dir, `Removed ${key} from the video (Media): ${files.join(', ')} moved to the studio's trash (${entry})${item.canvas ? fallback ? `; the canvas take is ${fallback} again` : '; the video has no take now' : ''}`);
-  return { ok: true, item: key, trash: entry, files, canvas: item.canvas, activeTake: fallback };
+  appendWorklog(dir, `${stamp ? `Deleted ${key} (from this video and from Recordings)` : `Removed ${key} from the video`} (Media): ${files.join(', ')}${stamp ? ` and recordings/${stamp}` : ''} moved to the studio's trash (${entry})${item.canvas ? fallback ? `; the canvas take is ${fallback} again` : '; the video has no take now' : ''}`);
+  return { ok: true, item: key, trash: entry, files, canvas: item.canvas, activeTake: fallback, recordings: Boolean(stamp) };
+}
+
+// ---- Delete recording: from this video and from Recordings, then to the computer's Bin ----
+// The same rules as a remove, and the recordings folder's copy must not be recording or saving. Other videos that use the
+// take keep their own copies in their source/: they are named and asked about first. Everything goes into one entry of
+// the studio's trash, which then goes to the Bin (os-trash.mjs via trash.mjs binEntry); with no Bin it stays there, and
+// Undo works as for a remove. toBin(entry) → { where, how, undo } or null. Returns the remove's answer with { bin, others }.
+export async function deleteRecording(dir, key, { confirm = false, busy = null, toBin = async () => null } = {}) {
+  const id = basename(dir);
+  const folder = takeFolder(key);
+  const stamp = folder && existsSync(folder) ? key : null;
+  if (stamp && takeBusy(stamp)) throw refuse(takeBusy(stamp));
+  const others = stamp ? projectsUsing(stamp).filter((u) => u.id !== id) : [];
+  const ask = others.length ? [`${others.map((u) => `“${u.name}”`).join(', ')} ${others.length > 1 ? 'also use' : 'also uses'} this take. ${others.length > 1 ? 'They keep their own copies' : 'It keeps its own copy'}; this video’s copy and the one in Recordings go to the Bin.`] : [];
+  const c = checkRemove(dir, key, { confirm, busy, ask });
+  if (c.ok === false) return { ...c, others: others.map((u) => u.name) };
+  const r = moveOut(dir, key, c, { stamp });
+  const bin = await toBin(r.trash);
+  return { ...r, bin, others: others.map((u) => u.name) };
 }
 
 // ---- the Undo ----
@@ -233,7 +274,11 @@ export function restoreMedia(dir, entry, { busy = null } = {}) {
     if (!existsSync(join(root, 'project', 'source', f))) throw new Error('Those files aren’t in the trash any more.');
     if (existsSync(join(dir, 'source', f))) throw refuse(`source/${f} is in the project again already.`);
   }
+  // A deleted recording: its take goes back to Recordings as well.
+  const takeBack = m.take && existsSync(join(root, 'take')) ? takeFolder(m.take) : null;
+  if (takeBack && existsSync(takeBack)) throw refuse('A take with that name is back in Recordings already.');
   for (const f of m.files) moveAside(join(root, 'project', 'source', f), join(dir, 'source', f));
+  if (takeBack) moveAside(join(root, 'take'), takeBack);
   for (const px of m.proxies || []) if (!existsSync(join(dir, px))) moveAside(join(root, 'project', px), join(dir, px));
 
   const meta = projectMeta(dir) || {}, b = m.before || {};
@@ -268,8 +313,9 @@ export function restoreMedia(dir, entry, { busy = null } = {}) {
 }
 
 // ---- routes; true when answered. ctx.busy(): why the project's files can't move now (Claude, an export), or null.
-// ctx.frame(file): frame a camera layer around the head (index.mjs frameCamera). ----
-export async function mediaRoute(req, res, { dir, action, send, body, emit, busy = () => null, frame = null }) {
+// ctx.frame(file): frame a camera layer around the head (index.mjs frameCamera). ctx.toBin(entry): Delete recording's
+// Bin step (trash.mjs binEntry). ----
+export async function mediaRoute(req, res, { dir, action, send, body, emit, busy = () => null, frame = null, toBin = async () => null }) {
   if (!action.startsWith('/media-')) return false;
   try {
     if (action === '/media-items' && req.method === 'GET') return send(res, 200, mediaItems(dir)), true;
@@ -291,6 +337,7 @@ export async function mediaRoute(req, res, { dir, action, send, body, emit, busy
       return changed(r, true);
     }
     if (action === '/media-remove') return changed(removeMedia(dir, key, { confirm: b.confirm === true, busy: busy() }));
+    if (action === '/media-delete') return changed(await deleteRecording(dir, key, { confirm: b.confirm === true, busy: busy(), toBin }));
     if (action === '/media-restore') return changed(restoreMedia(dir, String(b.trash || ''), { busy: busy() }), true);
   } catch (e) { return send(res, e.status || 400, { error: e.message }), true; }
   return send(res, 404, { error: 'Unknown action' }), true;

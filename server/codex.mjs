@@ -14,6 +14,7 @@ import { logUse, setPlanUsage } from './usage.mjs';
 import { activeSkillRoot } from './managed-skills.mjs';
 import { assertNotUpdating } from './maintenance.mjs';
 import { codexImage, isUsageLimitError, usageLimitText } from './images.mjs';
+import { codexParams } from './agent-choices.mjs';
 
 // ---- find Codex and its sign-in ----
 const run = (bin, args, env, ms = 10000) => new Promise((done) => {
@@ -84,6 +85,14 @@ export class CodexSession extends ChatSession {
     this.turnId = null;
   }
 
+  // turn/start's model and effort: a local model (LM Studio, Ollama) takes the model only; reasoning effort is the
+  // ChatGPT models' own.
+  turnChoice() {
+    const p = codexParams(this.choice());
+    if (PROVIDERS[section('claude').codexProvider]) delete p.effort;
+    return p;
+  }
+
   call(method, params) {
     return new Promise((done, fail) => {
       const id = ++this.seq;
@@ -146,8 +155,8 @@ export class CodexSession extends ChatSession {
     this.resumed = Boolean(r);
     if (!r) r = await this.call('thread/start', params);
     this.threadId = r.thread.id;
-    setProjectState(this.id, { sessionId: this.threadId, engine: 'codex', source: this.source, model: r.model || c.codexModel || null });
-    this.emit({ t: 'session', id: this.threadId, model: r.model || c.codexModel || 'codex' });
+    setProjectState(this.id, { sessionId: this.threadId, engine: 'codex', source: this.source, model: r.model || this.turnChoice().model || null });
+    this.emit({ t: 'session', id: this.threadId, model: r.model || this.turnChoice().model || 'codex' });
   }
 
   // thread/start's (and thread/resume's) parameters: the folder, Video Octopus's permission mode as Codex's approval policy and
@@ -158,7 +167,7 @@ export class CodexSession extends ChatSession {
     return {
       cwd, approvalPolicy, sandbox,
       developerInstructions: [this.currentContext(), settingsBrief(extra,{profileScoped:Boolean(this.profileScoped||this.projectScope?.())})].filter(Boolean).join('\n'),
-      ...(c.codexModel ? { model: c.codexModel } : {}),
+      ...(this.turnChoice().model ? { model: this.turnChoice().model } : {}),
       ...(provider ? { modelProvider: provider } : {}),
       ...(this.isRun() || this.isolatedThread ? { config: await this.runConfig(cwd) } : {}),
     };
@@ -347,7 +356,9 @@ export class CodexSession extends ChatSession {
     this.setBusy(true);
     try {
       const input = [{ type: 'text', text: this.withContextUpdate(text), text_elements: [] }, ...images.map((path) => ({ type: 'localImage', path }))];
-      await this.call('turn/start', { threadId: this.threadId, input });
+      // The model and reasoning effort picked for this chat go with every turn (turn/start's model and effort: "for this
+      // turn and subsequent turns"), so a change applies from the next message without a restart.
+      await this.call('turn/start', { threadId: this.threadId, input, ...this.turnChoice() });
     } catch (e) { this.setBusy(false); this.emit({ t: 'error', text: `Codex: ${e.message}` }); }
   }
 

@@ -41,7 +41,12 @@ import { blocksRoute, blocksSummary, blocksContext, prepareState, stepBrief, not
 import { shotsRoute, readShotsAndZooms, shotsContext, onShotNotes } from './shots.mjs';
 import { recRoute, unfinishedTakes, recorderChoices, recorderBusy } from './browser-recorder.mjs';
 import { mediaRoute } from './media.mjs';
-import { trashRoute } from './trash.mjs';
+import { trashRoute, binEntry } from './trash.mjs';
+import { agentChoice, setAgentChoice, choiceView, codexModels } from './agent-choices.mjs';
+import { ccSource } from './claude-source.mjs';
+import { codexSource } from './codex.mjs';
+import { piModels } from './pi.mjs';
+import { binName } from './os-trash.mjs';
 import { logUse, usageFromFiles, cutSaved, dashboard, backfill, catchUpUsage, getPlanUsage } from './usage.mjs';
 import { schedulesRoute, startScheduler, stopScheduler, readSchedules, schedulesBusy } from './schedules.mjs';
 import { inboxRoute, inboxItems } from './inbox.mjs';
@@ -81,7 +86,7 @@ const OPTIONAL_KIT_READS = new Set(['work/overrides.json', 'work/production.json
 
 // Settings, keys or the profile changed: each chat picks them up when it next starts (once it's idle).
 // Appearance is only how the app looks, and Updates only the app's own update check, so the chats carry on.
-onSettingsChange((what) => { if (what === 'appearance' || what === 'updates' || what === 'help') return; for (const c of chats.values()) restartWhenIdle(c); });
+onSettingsChange((what) => { if (['appearance', 'updates', 'help', 'storage'].includes(what)) return; for (const c of chats.values()) restartWhenIdle(c); });
 onSettingsChange((what) => { if (what === 'folders') activateStudioSkills(); });
 
 // The project's chat, for a POST (a message, a step, the sessions list, an answer): made on first use, and after an
@@ -100,6 +105,8 @@ function chatFor(id) {
     chat.cwd = () => (chat.projectScope() || chat.engine === 'pi') ? projectDir(id) || settings().studio : settings().studio;
     // Auto mode: a change outside this project's folder asks first (server/outside-hook.mjs; Claude Code only).
     chat.guard = () => projectDir(id);
+    // The chat panel's Model and Effort for this video (server/agent-choices.mjs), over the studio default.
+    chat.agentChoice = () => agentChoice(id, chat.engine);
     chat.listeners.add((ev) => broadcast(id, ev));
     chat.listeners.add((ev) => { if (ev.t === 'busy' && !ev.busy) stepRuns.delete(id); });
     // AI naming (server/naming.mjs): only the agent's own reply can name an automatically named video.
@@ -234,6 +241,20 @@ function addLayers(dir, files) {
   saveProjectMeta(dir, { layout });
 }
 
+// What the Model and Effort pickers need to know about the agent: its model source, and the models it lists (Codex's
+// own cache; pi's --list-models, at most every five minutes since it runs pi).
+let piList = { at: 0, list: [] };
+async function choiceContext(engine) {
+  const c = section('claude');
+  if (engine === 'claude') return { source: ccSource().id };
+  if (engine === 'codex') return { local: codexSource(c) !== 'chatgpt', models: codexModels() };
+  const endpoint = c.piSource === 'endpoint';
+  if (!endpoint && Date.now() - piList.at > 300000) {
+    try { piList = { at: Date.now(), list: (await piModels()).map((m) => ({ id: `${m.provider}/${m.model}`, label: `${m.provider} · ${m.model}` })) }; } catch {}
+  }
+  return { endpoint, models: endpoint ? [] : piList.list };
+}
+
 // Why the project's media can't be moved or switched right now (the Media section, server/media.mjs), or null.
 function mediaBusy(id, dir) {
   if (chats.get(id)?.busy) return 'Claude is working in this project: wait for it or stop it first.';
@@ -355,8 +376,15 @@ function allowed(req) {
   return hostOk && originOk && writeOk && (!site || site === 'same-origin' || site === 'none');
 }
 
+// The video's style for the record panel's remembered sources (browser-recorder.mjs recorderChoices): its style's id and
+// name, or its setup when it has no style.
+function styleOf(id, ctx = withProjectChannels([{ id }])[0]) {
+  return ctx?.formatId ? { key: `style:${String(ctx.formatId).replace(/[^\w.-]/g, '_').slice(0, 80)}`, name: ctx.formatName || null } : null;
+}
+
 function projectView(id, dir) {
   const meta = projectMeta(dir) || {};
+  const pinned = withProjectChannels([{ id }])[0];
   const r = roles(dir);
   // A sound file (mic-only take) plays as it is, so it is its own playback copy.
   const proxies = Object.fromEntries(r.files.map((f) => [f, isAudio(f) ? `source/${f}` : existsSync(join(dir, proxyName(f))) ? proxyName(f) : null]));
@@ -365,7 +393,7 @@ function projectView(id, dir) {
   return {
     id, name: meta.name || id, nameSource: meta.nameSource === 'auto' ? 'auto' : 'manual', autoNamedBy: meta.autoNamedBy || null,
     // The style and format it uses (its pinned setup), for the editor's style picker.
-    context: (({ profileId, profileName, formatId, formatName }) => ({ profileId, profileName, formatId, formatName }))(withProjectChannels([{ id }])[0]),
+    context: (({ profileId, profileName, formatId, formatName }) => ({ profileId, profileName, formatId, formatName }))(pinned),
     learning: projectLearning(id,meta), type: formatId(meta.type), shortStyle: meta.shortStyle || null, app: Boolean(projectMeta(dir)),
     path: dir, layout: normalize(meta.layout, meta.type),
     // The steps with their words, each done step's line, and the newest step finished since the page last looked.
@@ -373,7 +401,7 @@ function projectView(id, dir) {
     running: busy ? stepRuns.get(id)?.step || null : null, // the step Claude is working on (the dock on the message box)
     runningAt: busy ? stepRuns.get(id)?.at || null : null, // when it started (the dock shows how long it has run)
     cut: cutPlan(dir), busy, renders: listRenders(dir),
-    export: exportInfo(id, dir), recorder: recorderChoices(id), recUnfinished: unfinishedTakes(id), scenes: scenesSummary(dir), kit: kitSummary(dir, meta), editing: section('editing'),
+    export: exportInfo(id, dir), recorder: recorderChoices(id, styleOf(id, pinned)), recUnfinished: unfinishedTakes(id), scenes: scenesSummary(dir), kit: kitSummary(dir, meta), editing: section('editing'),
     brandColors: profilePalette(id) ?? section('look').colors, // Settings → Look → Brand (and the Brand kit): the canvas's border picker offers them
     blocks: blocksSummary(dir), prepare: prepareState(id, dir, busy),
     layerExports: listLayerExports(dir), // Layers and Timeline file exports (server/export-layers.mjs)
@@ -524,6 +552,8 @@ async function route(req, res) {
       formats: formats(), formatInfo: formatInfo(), usage: modelSourceView() ? null : getPlanUsage(engineName()), modelSource: modelSourceView(), engine: engineName(), engineLabel: ENGINES[engineName()],
       appearance: section('appearance', s), // Settings → Appearance: how Video Octopus looks (web/appearance.js applies it)
       help: section('help', s), // first-time help seen (help.stepsIntro: 'dismissed')
+      // Settings › Storage: what Delete recording does, and the computer's Bin it uses (null: none, the studio's trash).
+      storage: { ...section('storage', s), bin: binName() },
       ffmpeg: await ffmpegReady(), // Export stays off without it (Setup installs it)
       // The computer, for the page: "Show in Finder" or "Show in File Explorer", and paths shortened to ~.
       platform: process.platform, home: homedir(),
@@ -659,10 +689,26 @@ async function route(req, res) {
   // Export → Layers / Timeline file (server/export-layers.mjs; reads its own body, the canvas PNGs are large).
   if (await layersRoute(req, res, { id, dir, action, send, body, emit: exportEmit(id) })) return;
   // The built-in recorder's chunks (raw bodies, so this comes before the JSON body), finish and recovery.
-  if (await recRoute(req, res, { id, action, url, send, body, emit: (ev) => broadcast(id, ev), receiveTake: takeArrived })) return;
-  // The Media section (server/media.mjs): list, use an older take, add as a layer, remove to the trash, Undo.
+  if (await recRoute(req, res, { id, action, url, send, body, emit: (ev) => broadcast(id, ev), receiveTake: takeArrived, style: () => styleOf(id) })) return;
+  // The chat panel's Model and Effort pickers (server/agent-choices.mjs): GET what they show, POST { model?, effort? }
+  // ('studio' = follow Settings again). Checked against an allow-list or a strict pattern; Claude Code and pi restart
+  // their process once idle so the next message uses it, Codex sends it with the next turn.
+  if (action === '/agent-choice') {
+    const engine = engineName();
+    try {
+      if (req.method === 'POST') {
+        const b = await body(req);
+        setAgentChoice(id, engine, { ...('model' in b ? { model: b.model } : {}), ...('effort' in b ? { effort: b.effort } : {}) });
+        const c = chats.get(id);
+        if (c && c.engine === engine && engine !== 'codex') restartWhenIdle(c);
+      }
+      return send(res, 200, choiceView(id, engine, await choiceContext(engine)));
+    } catch (e) { return send(res, 400, { error: e.message }); }
+  }
+  // The Media section (server/media.mjs): list, use an older take, add as a layer, remove to the trash, Delete recording
+  // (this video and Recordings, to the computer's Bin: trash.mjs binEntry), Undo.
   if (await mediaRoute(req, res, { dir, action, send, body, emit: (ev) => broadcast(id, ev), busy: () => mediaBusy(id, dir),
-    frame: (file) => frameCamera(id, dir, { file }) })) return;
+    frame: (file) => frameCamera(id, dir, { file }), toBin: binEntry })) return;
   // Export → Audio / Transcript / Subtitles (server/export-audio.mjs, server/export-text.mjs).
   if (await audioRoute(req, res, { id, dir, action, url, send, body, emit: exportEmit(id) })) return;
   if (await textRoute(req, res, { id, dir, action, url, send, body })) return;

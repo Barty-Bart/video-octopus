@@ -22,9 +22,10 @@ import { existsSync, mkdirSync, readdirSync, statSync, openSync, writeSync, clos
   renameSync, rmSync, cpSync } from 'node:fs';
 import { spawn, execFile } from 'node:child_process';
 import { join, dirname } from 'node:path';
-import { settings, saveSettings, readJSON, writeJSON, studioTool, h264, state, setProjectState } from './util.mjs';
+import { settings, saveSettings, readJSON, writeJSON, studioTool, h264, state, setProjectState, patchState } from './util.mjs';
 import { probeFile, projectDir, projectMeta, formatTemplate, projectsRoot, isTakeFile, proxyName, appendWorklog } from './studio.mjs';
 import { recorderSection } from './settings.mjs';
+import { presetSources, startSources } from '../web/rec-preset.js';
 
 export const FPS = 30;
 const TRACKS = ['screen', 'webcam', 'audio'];
@@ -35,15 +36,30 @@ const finishing = new Set(); // take stamps being saved right now
 const saves = new Map();     // take stamp -> { progress, done, ok, error } for the page that pressed Stop
 
 const takeDir = (stamp) => join(settings().recordingsDir, stamp);
-// What the record panel starts with (Settings → Recording): { screen, camera, mic, target, countdown }. A format can
-// start without the camera ("record": {"camera": false}, e.g. a faceless explainer): its projects start with the screen
-// and No camera, and a camera picked in one of them is remembered for that project only (local/state.json), not for
-// every project.
-const cameraOff = (id) => { const dir = id && projectDir(id); return formatTemplate(dir ? projectMeta(dir)?.type : null)?.record?.camera === false; };
-export function recorderChoices(id) {
+// What the record panel starts with: { screen, camera, mic, target, countdown, preset }. The screen and the camera come
+// from the style's setup (web/rec-preset.js: on camera, faceless, short…), or from what the creator picked the last time
+// they recorded with this style (local/state.json recStyles[<style>] = { screen, camera }); the mic, the camera device,
+// where takes go and the countdown are Settings → Recording's. style: { key, name } (index.mjs styleOf): the video's
+// style ("style:<id>"), or its setup when it has none ("setup:<type>").
+const styleKeyOk = (k) => typeof k === 'string' && /^(style|setup):[\w.-]{1,80}$/.test(k);
+export function recorderChoices(id, style = null) {
   const c = recorderSection();
-  if (cameraOff(id)) Object.assign(c, { screen: 'screen', camera: state().projects?.[id]?.recCamera || 'none' });
-  return c;
+  const dir = id && projectDir(id), type = dir ? projectMeta(dir)?.type || null : null;
+  const preset = presetSources(type, formatTemplate(type)?.record || null);
+  const key = styleKeyOk(style?.key) ? style.key : `setup:${type || 'tutorial'}`;
+  const start = startSources(preset, state().recStyles?.[key] || null, c.camera);
+  return { ...c, screen: start.screen, camera: start.camera,
+    preset: { screen: preset.screen, camera: preset.camera, words: preset.words, style: style?.name || null, key, remembered: start.remembered } };
+}
+// The screen and camera of a take, remembered for its style (the next Record with this style starts with them).
+function rememberForStyle(key, screen, camera) {
+  if (!styleKeyOk(key)) return;
+  const all = { ...(state().recStyles || {}) };
+  all[key] = { screen, camera, at: Date.now() };
+  // At most 100 styles remembered: the oldest go.
+  const keys = Object.keys(all).sort((a, b) => (all[b].at || 0) - (all[a].at || 0));
+  for (const k of keys.slice(100)) delete all[k];
+  patchState({ recStyles: all });
 }
 const takeFile = (stamp) => join(takeDir(stamp), 'take.json');
 const readTake = (stamp) => (STAMP.test(stamp || '') ? readJSON(takeFile(stamp), null) : null);
@@ -67,7 +83,7 @@ function newStamp() {
 }
 
 // ---- start: the page says what it records; Video Octopus makes the take folder and remembers the choices ----
-function startTake(id, b) {
+function startTake(id, b, style = null) {
   const kind = ['screen', 'camera', 'mic'].includes(b.kind) ? b.kind : null;
   if (!kind) throw new Error('Nothing to record: pick a screen, a camera or a microphone.');
   const want = kind === 'screen' ? ['screen', ...(b.tracks?.webcam ? ['webcam'] : [])] : kind === 'camera' ? ['webcam'] : ['audio'];
@@ -89,12 +105,16 @@ function startTake(id, b) {
   });
   // The panel's choices are remembered for the next take (Settings → Recording shows them); a block's take
   // doesn't change where takes go.
+  // The screen and camera are remembered for this video's style (recorderChoices); the camera device (when one was on,
+  // in a style that starts with it), the mic, where takes go and the countdown for every take (Settings → Recording).
   const c = b.choices;
   if (c) {
-    const camera = str(c.camera) || 'none', own = cameraOff(id);
-    if (own) setProjectState(id, { recCamera: camera });
+    const camera = str(c.camera) || 'none', screen = c.screen === 'screen' ? 'screen' : 'none';
+    const { preset } = recorderChoices(id, style);
+    rememberForStyle(preset.key, screen, camera);
+    // A camera picked for a style that starts without one (faceless) stays that style's: other styles keep theirs.
     saveSettings({ recorder: { ...recorderSection(),
-      screen: c.screen === 'screen' ? 'screen' : 'none', ...(own ? {} : { camera }), mic: str(c.mic) || 'none',
+      screen, ...(camera !== 'none' && preset.camera ? { camera } : {}), mic: str(c.mic) || 'none',
       ...(target.startsWith('block:') ? {} : { target }), countdown: Math.min(10, Math.max(0, Math.round(Number(c.countdown)) || 0)) } });
   }
   return { take: stamp, tracks: Object.keys(tracks) };
@@ -396,7 +416,7 @@ function discardTake(id, stamp) {
 }
 
 // The projects whose source/ holds this take's files (or whose project.json lists it), and what was made from it.
-function projectsUsing(stamp) {
+export function projectsUsing(stamp) {
   const out = [];
   let names = [];
   try { names = readdirSync(projectsRoot()); } catch { return out; }
@@ -424,26 +444,35 @@ function workOnTake(u, arrived) {
 
 const refuse = (message) => Object.assign(new Error(message), { status: 409 });
 
+// Why this recordings-folder take can't move now (it is recording or saving), or null. Also for a name that isn't a take.
+export function takeBusy(stamp) {
+  const t = readTake(stamp);
+  return finishing.has(stamp) || (t?.recorder === 'browser' && !t.finished && !t.dismissed) ? 'That take is still recording or saving.' : null;
+}
+export const takeFolder = (stamp) => (takeName(stamp) ? takeDir(stamp) : null);
+
 // Delete take: everything moves to the trash, and the project goes back to the take it had before (an Undo puts it
 // all back). Refused while the take is recording or saving, when another project uses it too, and when its project
 // already has work made from it.
 // id: the project asking (the record panel's Delete take), or null for the Recordings page (/api/takes/delete): then
 // only the recordings folder's copy moves, and a take any project uses is refused, naming them.
-export function deleteTake(id, stamp) {
+export function deleteTake(id, stamp, { confirm = false } = {}) {
   if (!takeName(stamp)) throw new Error('Unknown take.');
   const dir = takeDir(stamp);
   if (!existsSync(dir) || !statSync(dir).isDirectory()) throw new Error('That take isn’t in the recordings folder any more.');
   const t = readTake(stamp);
-  if (finishing.has(stamp) || (t?.recorder === 'browser' && !t.finished && !t.dismissed)) throw refuse('That take is still recording or saving.');
+  if (takeBusy(stamp)) throw refuse(takeBusy(stamp));
   const users = projectsUsing(stamp);
   const mine = id === null ? null : users.find((u) => u.id === id);
   if (id !== null && !mine && t?.project !== id) throw new Error('That take isn’t part of this project.');
   const others = users.filter((u) => u.id !== id);
   const names = others.map((u) => `“${u.name}”`).join(', ');
-  if (others.length && id === null) {
-    throw refuse(`This take is used by ${names}, so it wasn’t deleted. Remove it from ${others.length > 1 ? 'those videos' : 'that video'} first.`);
+  // From Recordings: each video has its own copy of the take in its source/, so they keep working; asked first.
+  if (others.length && id === null && !confirm) {
+    return { ok: false, projects: others.map((u) => u.name),
+      confirm: `${names} ${others.length > 1 ? 'use' : 'uses'} this take. ${others.length > 1 ? 'Those videos keep their own copies' : 'That video keeps its own copy'}, so ${others.length > 1 ? 'they' : 'it'} won’t change; only the take in Recordings goes.` };
   }
-  if (others.length) throw refuse(`This take is also used by ${names}, so it wasn’t deleted. Remove it there first.`);
+  if (others.length && id !== null) throw refuse(`This take is also used by ${names}, so it wasn’t deleted. Remove it there first.`);
   let arrived = t?.finished || 0;
   if (mine) for (const f of mine.files) { try { arrived = Math.max(arrived, statSync(join(mine.dir, 'source', f)).mtimeMs); } catch {} }
   const work = mine && mine.meta.activeTake === stamp ? workOnTake(mine, arrived) : null;
@@ -535,7 +564,7 @@ export function restoreTake(id, entry) {
 
 // ---- routes: /rec-start, /rec-chunk, /rec-pause, /rec-discard, /rec-finish, /rec-status, /rec-unfinished, /rec-dismiss,
 // /rec-delete, /rec-restore. Returns true when it answered. ----
-export async function recRoute(req, res, { id, action, url, send, body, emit, receiveTake }) {
+export async function recRoute(req, res, { id, action, url, send, body, emit, receiveTake, style = () => null }) {
   if (!action.startsWith('/rec-')) return false;
   try {
     if (action === '/rec-unfinished' && req.method === 'GET') return send(res, 200, { takes: unfinishedTakes(id) }), true;
@@ -551,7 +580,7 @@ export async function recRoute(req, res, { id, action, url, send, body, emit, re
     if (req.method !== 'POST') return send(res, 405, { error: 'POST only' }), true;
     if (action === '/rec-chunk') return send(res, 200, await addChunk(id, url, req)), true;
     const b = await body(req);
-    if (action === '/rec-start') return send(res, 200, startTake(id, b)), true;
+    if (action === '/rec-start') return send(res, 200, startTake(id, b, style())), true;
     if (action === '/rec-finish') {
       return send(res, 200, finishTake(id, String(b.take || ''), b.timing || null, { recover: Boolean(b.recover) }, { emit, receiveTake })), true;
     }

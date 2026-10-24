@@ -18,6 +18,7 @@ import { sharedInstructionContext } from './profile-store.mjs';
 import { skillPreferencesBrief } from './skill-preferences.mjs';
 import { assertNotUpdating } from './maintenance.mjs';
 import { useMemory } from './memory.mjs';
+import { agentChoice, claudeArgs } from './agent-choices.mjs';
 
 // Tools that can't work inside an app chat (no terminal, no claude.ai, nothing after the turn ends).
 const NOT_IN_CHAT = ['ListAgents', 'SendMessage', 'PushNotification', 'CronCreate', 'CronDelete', 'CronList',
@@ -112,7 +113,7 @@ function editKey(p, root) {
 }
 
 // The context window until Claude Code reports its own: 1M for a model picked with [1m] (opus[1m], sonnet[1m]), else 200K.
-const defaultWindow = () => (/\[1m\]/i.test(settings().model || '') ? 1000000 : 200000);
+const defaultWindow = (model = settings().model) => (/\[1m\]/i.test(model || '') ? 1000000 : 200000);
 
 export class ChatSession {
   constructor(id, context) {
@@ -130,6 +131,9 @@ export class ChatSession {
     this.always = new Set();      // "Always for this session" keys (alwaysKey)
     this.engine = 'claude';       // which agent runs this chat (codex.mjs is the other); a saved session belongs to one
   }
+  // The model and effort this chat runs with (server/agent-choices.mjs): a project's own pick (chatFor sets agentChoice),
+  // else the studio default from Settings.
+  choice() { return this.agentChoice?.() || agentChoice(null, this.engine); }
   isRun() { return this.id.startsWith('_run_'); } // a scheduled run: nobody watches it (schedules.mjs answers for it)
   offersAlways() { return this.id !== '_studio' && !this.isRun(); }
   alwaysFor(r) { return this.offersAlways() ? alwaysKey(r.tool_name, r.input, this.cwd?.() || settings().studio) : null; }
@@ -197,7 +201,8 @@ export class ChatSession {
       '--disallowedTools', NOT_IN_CHAT.join(',')];
     if (sessionId) args.push('--resume', sessionId);
     this.resumed = Boolean(sessionId);
-    if (s.model && this.source === 'plan') args.push('--model', s.model);
+    // --model and --effort (claude --help), on the plan only: another model source names its own model.
+    args.push(...claudeArgs(this.choice(), this.source));
     args.push(...launch.args);
     // Clean chats (Settings → Agent & model; on by default, and always with another model source): only the studio's own
     // skills and settings. No claude.ai connectors or MCP servers (their tool lists alone were ~30k tokens at the start of
@@ -346,13 +351,13 @@ export class ChatSession {
   }
 
   setContext(tokens) {
-    this.ctx = { tokens: tokens || 0, window: this.ctx?.window || defaultWindow(), at: Date.now() };
+    this.ctx = { tokens: tokens || 0, window: this.ctx?.window || defaultWindow(this.choice().model), at: Date.now() };
     setProjectState(this.id, { context: this.ctx });
     this.emit({ t: 'context', tokens: this.ctx.tokens, window: this.ctx.window });
   }
   // For the usage log: which chat replied (the Video Octopus assistant, a scheduled run or a project), never what it said.
   usageScope() { return this.id === '_studio' ? { scope: 'studio' } : this.id.startsWith('_run_') ? { scope: 'schedule' } : { scope: 'project', project: this.id }; }
-  contextEvent() { return this.ctx?.tokens ? { t: 'context', tokens: this.ctx.tokens, window: this.ctx.window || defaultWindow() } : null; }
+  contextEvent() { return this.ctx?.tokens ? { t: 'context', tokens: this.ctx.tokens, window: this.ctx.window || defaultWindow(this.choice().model) } : null; }
 
   // ---- sessions: one log per conversation; earlier ones stay listed and can be continued ----
   get sessionsFile() { return join(CHAT_DIR, `${this.id}.sessions.json`); }
