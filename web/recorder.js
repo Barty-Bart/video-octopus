@@ -526,7 +526,7 @@ export const startFromPanel = () => panelOpen?.start();
 export const closePanel = () => panelOpen?.close();
 
 // choices: what Settings → Recording remembers ({ screen, camera, mic, target, countdown }, P.recorder);
-// P: the project; opts.target/label: a block.
+// P: the project; opts.target/label: a block, or 'replace' / 'layer' (the editor's Media section).
 export async function recordPanel({ id, P, choices, opts = {}, settingsLink }) {
   if (S.phase !== 'idle') return toast('A take is still recording or saving.');
   if (opening || panelOpen) return;
@@ -543,7 +543,9 @@ export async function recordPanel({ id, P, choices, opts = {}, settingsLink }) {
   const sel = {
     display: ch.screen === 'none' ? 'none' : 'screen',
     camera: ch.camera || 'default', mic: ch.mic || 'default',
-    target: /^block:/.test(opts.target || '') ? opts.target : hasTake && ch.target === 'layer' ? 'layer' : 'replace',
+    // The Media section asks for one: Record again ('replace') or Add as a layer → Record ('layer').
+    target: /^block:/.test(opts.target || '') ? opts.target : opts.target === 'replace' ? 'replace'
+      : hasTake && (opts.target === 'layer' || (!opts.target && ch.target === 'layer')) ? 'layer' : 'replace',
     countdown: [0, 3, 5].includes(ch.countdown) ? ch.countdown : 3,
   };
   const ly = P.layout || {};

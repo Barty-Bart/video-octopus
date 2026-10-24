@@ -219,6 +219,17 @@ export function newLayers(layout, files, dims) {
   });
 }
 
+// The Media section's reorder (drag or ↑/↓ on a layer's handle): the layer moves to index `to` of layout.layers,
+// which is bottom to top (the last one is drawn on top). Returns a new list; an unknown id leaves it as it is.
+export function moveLayer(layers, id, to) {
+  const list = [...(layers || [])];
+  const from = list.findIndex((x) => x.id === id);
+  if (from < 0) return list;
+  const [x] = list.splice(from, 1);
+  list.splice(Math.max(0, Math.min(list.length, Math.round(Number(to) || 0))), 0, x);
+  return list;
+}
+
 const R = Math.round;
 const box = (x, y, w, h) => ({ x: R(x), y: R(y), w: R(x + w) - R(x), h: R(y + h) - R(y) });
 

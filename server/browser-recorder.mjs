@@ -356,12 +356,13 @@ export function trashRoot() {
   const s = settings();
   return s.studio ? join(s.studio, '.trash') : join(dirname(s.recordingsDir), '.video-octopus-trash');
 }
-const TRASH_NAME = /^\d{4}-\d\d-\d\d_\d\d-\d\d-\d\d(-\d+)?-[\w .()-]{1,120}$/;
+export const TRASH_NAME = /^\d{4}-\d\d-\d\d_\d\d-\d\d-\d\d(-\d+)?-[\w .()-]{1,120}$/;
 // A take folder's name: the recorder's stamp, or a folder another recorder made (no slashes, no dot files).
 const takeName = (n) => typeof n === 'string' && /^[\w .()-]{1,120}$/.test(n) && !n.startsWith('.') && !n.includes('..');
 
-// rename, or across disks a copy that is complete before the original goes.
-function moveAside(from, to) {
+// rename, or across disks a copy that is complete before the original goes. (The editor's Media section, server/media.mjs,
+// moves a project's files to the same trash with these.)
+export function moveAside(from, to) {
   mkdirSync(dirname(to), { recursive: true });
   if (existsSync(to)) throw new Error(`${to} is already there.`);
   try { renameSync(from, to); }
@@ -372,7 +373,7 @@ function moveAside(from, to) {
   }
 }
 
-function newTrashEntry(stamp) {
+export function newTrashEntry(stamp) {
   const d = new Date(), two = (n) => String(n).padStart(2, '0');
   const when = `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}_${two(d.getHours())}-${two(d.getMinutes())}-${two(d.getSeconds())}`;
   let name = `${when}-${stamp}`;

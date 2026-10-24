@@ -1,3 +1,16 @@
+# v0.1.0-beta.18
+
+- **Media in every video.** The Canvas inspector starts with a Media section, and a **Media ▾** button sits in the canvas toolbar.
+  - **Current recording:** **Record again** (replaces the take) and **Delete recording**.
+  - **On the canvas:** every layer top to bottom; drag the grip (or focus it and use ↑/↓) to reorder; the eye shows or hides a layer; extra layers have Sound, Take off the canvas and Remove.
+  - **Also in this video:** older takes and imported files kept in the video's `source/` folder, each with **Use**, **Add as a layer** and **Remove**.
+  - **+ Add a layer:** record a new take, import a video file, or pick a recording.
+- **Nothing is lost.** Delete and Remove move the video's files (and their playback copies) to the studio's `.trash` folder; **Undo** and **Put back** (last three) restore them exactly. Your recordings folder is never touched. After deleting the current recording, the video returns to its previous take, or to "How do you want to start?" if it was the only one.
+- **Safe by default.** Delete and Remove are refused while Claude, Packaging, an export or a playback copy is working, and once a transcript, cut, scene plan or render was made from that recording; it asks first if renders were made while it was in the video.
+- A take's files are now matched exactly (a take no longer picks up a similarly named "-2" or "(2)" file).
+
+Verified with 371 unit tests on Node 24.22.1 and 22.22.1, the format-skill and learning runtimes, and a disposable browser run with synthetic takes and the real recorder (36 of 38 checks; the two failures are an existing sideways scroll at 375 px from the transport's volume slider and the timeline help button). The trash is never emptied automatically yet. This is a source update on main; the downloadable tagged prerelease remains separate.
+
 # v0.1.0-beta.17
 
 - **Click a stage to open its workspace.** The stages in the editor's top bar are now its tabs: Package → Packaging, Record and Build → the canvas, Cut → Cut, Plan → Scenes, Polish → Scenes at the first scene with open notes, and a new **Publish** stage with your renders and the post (title, description, captions) in one pane. The separate tab row is gone; a slim toolbar over the workspace keeps its name, its tools and Finder.

@@ -40,6 +40,7 @@ import { saveToLibrary as addToLibrary } from './library.mjs';
 import { blocksRoute, blocksSummary, blocksContext, prepareState, stepBrief, noteStep, receiveBlockTake } from './blocks.mjs';
 import { shotsRoute, readShotsAndZooms, shotsContext, onShotNotes } from './shots.mjs';
 import { recRoute, unfinishedTakes, recorderChoices, recorderBusy } from './browser-recorder.mjs';
+import { mediaRoute } from './media.mjs';
 import { logUse, usageFromFiles, cutSaved, dashboard, backfill, catchUpUsage, getPlanUsage } from './usage.mjs';
 import { schedulesRoute, startScheduler, stopScheduler, readSchedules, schedulesBusy } from './schedules.mjs';
 import { inboxRoute, inboxItems } from './inbox.mjs';
@@ -212,13 +213,7 @@ function receiveTake(id, dir, takeDir, target, duration, how = 'Imported') {
   // A mic-only take has no picture to put in a box, so it always becomes the canvas take.
   const asLayer = target === 'layer' && hadTake && !takeIsAudioOnly(takeDir);
   const files = importTakeFrom(dir, takeDir, how, { keepActive: asLayer });
-  const meta = projectMeta(dir);
-  if (asLayer) {
-    const dims = Object.fromEntries(files.map((f) => { const p = probe(dir, f); return [f, p?.w ? [p.w, p.h] : null]; }));
-    const layout = normalize(meta.layout, meta.type);
-    layout.layers = [...layout.layers, ...newLayers(layout, files, dims)].slice(-8);
-    saveProjectMeta(dir, { layout });
-  }
+  if (asLayer) addLayers(dir, files);
   makeProxies(dir, (ev) => broadcast(id, ev));
   broadcast(id, { t: 'take', files, duration, layer: asLayer });
   broadcast(id, { t: 'files' });
@@ -226,6 +221,24 @@ function receiveTake(id, dir, takeDir, target, duration, how = 'Imported') {
   const cam = files.find((f) => /_webcam\./i.test(f));
   if (cam) frameCamera(id, dir, asLayer ? { file: cam } : { main: true }).catch((e) => console.error(`Auto-frame after the take failed: ${e.message}`));
   return files;
+}
+
+// New files in source/ go on top of the canvas as layers (a take recorded or imported as a layer). At most 8 layers.
+function addLayers(dir, files) {
+  const meta = projectMeta(dir);
+  const pics = files.filter((f) => !isAudio(f));
+  const dims = Object.fromEntries(pics.map((f) => { const p = probe(dir, f); return [f, p?.w ? [p.w, p.h] : null]; }));
+  const layout = normalize(meta.layout, meta.type);
+  layout.layers = [...layout.layers, ...newLayers(layout, pics, dims)].slice(-8);
+  saveProjectMeta(dir, { layout });
+}
+
+// Why the project's media can't be moved or switched right now (the Media section, server/media.mjs), or null.
+function mediaBusy(id, dir) {
+  if (chats.get(id)?.busy) return 'Claude is working in this project: wait for it or stop it first.';
+  if (packagingBusy(id)) return 'Codex is working in this project’s Packaging: wait for it or stop it first.';
+  if (exportInfo(id, dir).running || layersRunning(id) || audioRunning(id)) return 'An export is running for this project: wait for it to finish, or stop it.';
+  return null;
 }
 
 function takeIsAudioOnly(takeDir) {
@@ -635,7 +648,7 @@ async function route(req, res) {
   if (await cutReviewRoute(req, res, { dir, action, send, body })) return;
   // Edits made in the window (layout, blocks) go into the change package; the same files changed by Claude during its
   // turn don't (watchProject tells them apart by this time).
-  if (req.method === 'POST' && ['/layout', '/blocks', '/shots', '/zooms', '/upload', '/final', '/type', '/rename', '/import', '/take-upload', '/rail'].includes(action)) uiTouched.set(id, Date.now());
+  if (req.method === 'POST' && ['/layout', '/blocks', '/shots', '/zooms', '/upload', '/final', '/type', '/rename', '/import', '/take-upload', '/rail', '/media-use', '/media-layer', '/media-remove', '/media-restore'].includes(action)) uiTouched.set(id, Date.now());
   // Blocks (M3b): the band, the strip, @mentions and dropped files (uploads stream, so this comes before the JSON body).
   if (await blocksRoute(req, res, { dir, action, url, send, body, chat: () => chatFor(id), broadcast: (ev) => broadcast(id, ev) })) return;
   // Shots and zooms (server/shots.mjs): GET /shots, /zooms; POST { op, … } like /blocks.
@@ -644,6 +657,9 @@ async function route(req, res) {
   if (await layersRoute(req, res, { id, dir, action, send, body, emit: exportEmit(id) })) return;
   // The built-in recorder's chunks (raw bodies, so this comes before the JSON body), finish and recovery.
   if (await recRoute(req, res, { id, action, url, send, body, emit: (ev) => broadcast(id, ev), receiveTake: takeArrived })) return;
+  // The Media section (server/media.mjs): list, use an older take, add as a layer, remove to the trash, Undo.
+  if (await mediaRoute(req, res, { dir, action, send, body, emit: (ev) => broadcast(id, ev), busy: () => mediaBusy(id, dir),
+    frame: (file) => frameCamera(id, dir, { file }) })) return;
   // Export → Audio / Transcript / Subtitles (server/export-audio.mjs, server/export-text.mjs).
   if (await audioRoute(req, res, { id, dir, action, url, send, body, emit: exportEmit(id) })) return;
   if (await textRoute(req, res, { id, dir, action, url, send, body })) return;
@@ -653,7 +669,10 @@ async function route(req, res) {
   // New project → "Import a file…": the file becomes the take (streams, so before the JSON body).
   if (action === '/take-upload') {
     try {
-      const files = await importUpload(dir, req, url.searchParams.get('name') || 'take.mp4');
+      // ?target=layer (Media → Add as a layer → Import a file…): a video comes in on top; the canvas take stays.
+      const asLayer = url.searchParams.get('target') === 'layer' && roles(dir).files.length > 0;
+      const files = await importUpload(dir, req, url.searchParams.get('name') || 'take.mp4', { keepActive: asLayer });
+      if (asLayer && files.some((f) => !isAudio(f))) addLayers(dir, files);
       makeProxies(dir, (ev) => broadcast(id, ev));
       broadcast(id, { t: 'files' });
       return send(res, 200, { files });

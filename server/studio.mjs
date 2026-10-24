@@ -18,6 +18,12 @@ export const MEDIA = /\.(mov|mp4|m4v|mkv|webm|wav|m4a|mp3|aif|aiff|caf|flac)$/i;
 export const isAudio = (f) => AUDIO.test(f || '');
 const TAKE_AUDIO = /_audio\.(wav|m4a|mp3|aif|aiff|caf|flac)$/i;
 export const isTakeFile = (f) => VIDEO.test(f || '') || TAKE_AUDIO.test(f || '');
+// Which take a file in source/ belongs to: the recorder's <stamp>_screen / _webcam / _audio files share <stamp>; an
+// imported file (clip.mp4, voice_audio.m4a) is a take of its own, named after the file.
+export function takeKey(f) {
+  const m = /^(.+)_(screen|webcam)\.(mov|mp4|m4v|mkv|webm)$/i.exec(f || '') || /^(.+)_audio\.(wav|m4a|mp3|aif|aiff|caf|flac)$/i.exec(f || '');
+  return m ? m[1] : basename(String(f || ''), extname(String(f || '')));
+}
 // The formats: the app's generic ones (core/pipelines.json) with the studio's own on top (<studio>/.studio/formats.json),
 // so creator-specific formats and Short styles live in the studio, not in the app.
 export const STUDIO_FORMATS = join('.studio', 'formats.json');
@@ -88,7 +94,10 @@ export function projectMedia(dir) {
 export function roles(dir) {
   const files = sources(dir);
   const active = projectMeta(dir)?.activeTake;
-  const pool = active && files.some((f) => f.startsWith(active)) ? files.filter((f) => f.startsWith(active)) : files;
+  // The active take's own files (takeKey), so a take named 2026-10-24_10-00-00 doesn't also pick up
+  // 2026-10-24_10-00-00-2 (or clip, clip (2)). Files named another way are matched by their start, as before.
+  const own = active ? files.filter((f) => takeKey(f) === active) : [];
+  const pool = own.length ? own : active && files.some((f) => f.startsWith(active)) ? files.filter((f) => f.startsWith(active)) : files;
   const screen = pool.find((f) => /_screen\./i.test(f)) || null;
   const webcam = pool.find((f) => /_webcam\./i.test(f)) || null;
   const audio = pool.find((f) => TAKE_AUDIO.test(f)) || null;
@@ -298,7 +307,8 @@ export function importTakeFrom(dir, takeDir, how = 'Imported', { keepActive = fa
 
 // New project → "Import a file…": a video or sound file from this computer becomes the project's take. It streams
 // into source/ (a sound file is named <name>_audio.<ext>, like a mic-only take) and becomes the canvas take.
-export async function importUpload(dir, req, name) {
+// keepActive: the file comes in as a layer (the Media section's Add as a layer → Import a file…): the canvas take stays.
+export async function importUpload(dir, req, name, { keepActive = false } = {}) {
   const ext = extname(String(name || '')).toLowerCase();
   if (!MEDIA.test(ext)) throw new Error('Pick a video (.mov, .mp4, .m4v, .mkv, .webm) or a sound file (.wav, .m4a, .mp3, .aif, .flac).');
   const stem = basename(String(name), extname(String(name))).replace(/[^\w.() -]/g, '_').replace(/^[.\s]+/, '').slice(0, 80) || 'take';
@@ -310,6 +320,16 @@ export async function importUpload(dir, req, name) {
   try { await pipeline(req, createWriteStream(part)); } catch (e) { rmSync(part, { force: true }); throw e; }
   if (!statSync(part).size) { rmSync(part, { force: true }); throw new Error('The file was empty.'); }
   renameSync(part, join(dir, 'source', file));
+  if (keepActive) {
+    // A project made by hand may not say which take is on the canvas: it's named now, so the layer can't take its place.
+    const before = projectMeta(dir) || {};
+    if (!before.activeTake) {
+      const main = roles(dir).take.find((f) => f !== file);
+      if (main) saveProjectMeta(dir, { activeTake: takeKey(main) });
+    }
+    appendWorklog(dir, `Imported ${name} as a new layer: source/${file}`);
+    return [file];
+  }
   const meta = projectMeta(dir) || {};
   saveProjectMeta(dir, { activeTake: take, ...(meta.activeTake ? { activeSince: Date.now() } : {}) });
   appendWorklog(dir, `Imported ${name} as the take: source/${file}`);
@@ -326,6 +346,8 @@ export function appendWorklog(dir, line) {
 // 720p H.264 + AAC proxies so the browser can play takes (the recorder writes PCM audio).
 // Sound files (a mic-only take) play as they are: no copy, the timeline reads their waveform directly.
 const running = new Map();
+// A playback copy of one of these source files is being made right now (its file mustn't move meanwhile).
+export const proxyRunning = (dir, files) => files.some((f) => running.has(join(dir, proxyName(f))));
 export function makeProxies(dir, onEvent) {
   // A project folder made by hand (or by Claude) may have no work/ yet: ffmpeg can't write the copy there otherwise.
   try { mkdirSync(join(dir, 'work'), { recursive: true }); } catch {}

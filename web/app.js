@@ -6,7 +6,7 @@ import { usageView } from './plan-usage.js';
 // and localhost and 127.0.0.1 are two.
 if (location.hostname === 'localhost') location.replace(location.href.replace('//localhost', '//127.0.0.1'));
 
-import { PRESETS, NIGHT, SHAPES, BG_KINDS, NO_CROP, MIN_KEEP, compose, withPreset, normalize, normCrop, animatedBg, borderLabel, effectiveLook, shotAt, transitionsOf, lookKeys,
+import { PRESETS, NIGHT, SHAPES, BG_KINDS, NO_CROP, MIN_KEEP, compose, withPreset, normalize, normCrop, animatedBg, borderLabel, effectiveLook, shotAt, transitionsOf, lookKeys, moveLayer,
   zoomAt, zoomedCrop, slideOffsets, zoominAt, cropRegion, ZOOM_SPEEDS } from './layout.js';
 import { $, esc, h, api, toast, ago, clock, tilde, fileManager, setSystem, engineName, cutWord, confirmBox } from './ui.js';
 import { makeTimeline } from './timeline.js';
@@ -38,6 +38,8 @@ import { STAGE_PANE, PANE_WORDS, paneOfTab, stageOfTab, stagesOf, stageForPane, 
   rememberStage, recallStage, recallLegacyTab, firstNotedScene } from './stages.js';
 import * as rec from './recorder.js';
 import { HOTKEY } from './recorder.js';
+import { icon } from './icons.js';
+import { makeMediaActions, popMenu, addLayerMenu, currentCard, otherRows, removedRows, wireReorder, itemName } from './media.js';
 import { applyAppearance, onAppearance, cutLookParams, themeSwitch } from './appearance.js';
 import { rememberMessage, reviewLessons } from './memory.js';
 import { projectLearningPanel } from './learning.js';
@@ -636,6 +638,7 @@ async function openProject(id) {
   let sound = null; // the kit's Sound section (web/sound.js): cues on the timeline, heard while playing
   const canvas = makeCanvas($('[data-pane=canvas]', el), { inspector: $('#insCanvas', el), tools: $('#tabTools', el) }, id, () => P,
     { openScene: (sid) => { setTab('scenes'); scenes.selectScene(sid); }, openCut: (t) => openCutAt(t), blocks, history, shots, zooms,
+      openRecord: (target) => recorder.open({ target }), // the Media section: Record again ('replace') or a new layer ('layer')
       sfx: () => sound?.timeline() || [], pickSfx: (cid) => sound?.pick(cid), moveSfx: (cid, t) => sound?.move(cid, t),
       cues: { move: (l) => sound?.cues.move(l), remove: (ids) => sound?.cues.remove(ids), duplicate: (ids) => sound?.cues.duplicate(ids) }, muteSfx: (on) => sound?.setMute(on) });
   sound = makeSound({ host: $('#insKit', el), id, getP: () => P, media: () => canvas.media(), history });
@@ -1725,6 +1728,17 @@ function layoutThumb(scene) {
   return `<svg viewBox="0 0 ${scene.W} ${scene.H}" aria-hidden="true"><rect width="${scene.W}" height="${scene.H}" class="bg"/>${rects}</svg>`;
 }
 
+// The Media section (web/media.js): the first section of the Canvas inspector, also shown while the video has no take.
+const MEDIA_SECTION = `<section class="media-sec" id="mediaSec" aria-labelledby="mediaH" tabindex="-1">
+  <div class="md-head"><h3 id="mediaH">Media</h3><span class="md-anchor"><button type="button" class="btn ghost small" id="mdAdd" aria-haspopup="menu" aria-expanded="false" title="Put another take or a video file on top of the recording, in its own box">+ Add a layer</button></span></div>
+  <div class="notice md-note" id="mdNote" role="alert" hidden><span id="mdNoteT"></span><button type="button" class="ly-eye" id="mdNoteX" aria-label="Close">×</button></div>
+  <div id="mdCurrent"></div>
+  <div id="mdCanvasWrap"><div class="md-sub">On the canvas <small>top to bottom · drag a layer’s dots to reorder</small></div>
+    <div class="layers" id="layerList" role="list" aria-label="On the canvas, top to bottom"></div></div>
+  <div id="mdOtherWrap" hidden><div class="md-sub">Also in this video</div><div class="layers" id="mdOther" role="list" aria-label="Also in this video"></div></div>
+  <div class="md-removed" id="mdRemoved"></div>
+  <p class="vh" id="mdSay" aria-live="polite"></p></section>`;
+
 function makeCanvas(pane, { inspector, tools }, id, getP, hooks = {}) {
   let videos = new Map(), master = null, mediaSig = '', raf = 0, paused = false;
   // The production sheet's scenes and the review notes, drawn on the timeline (mapped through the locked cut).
@@ -1801,12 +1815,87 @@ function makeCanvas(pane, { inspector, tools }, id, getP, hooks = {}) {
       if (scopeNow() === 'all') applyLayout(base); else if (!dirty) deriveEdit(true);
     }
     if (wrap) { refreshCutToggle(); loadTimeline(); bgSec?.refresh()?.then(() => ensureBg()); renderShotUI(); }
+    loadMedia();
   }
 
   // The canvas fills the inspector and the frame-shape switch in the tab bar; with no take they say why.
   function emptyInspector(text) {
-    tools.replaceChildren();
-    inspector.replaceChildren(h(`<div class="ins-body"><div class="ins-head"><b>Canvas</b></div><section><p class="sub">${esc(text)}</p></section></div>`));
+    tools.replaceChildren(mediaTool());
+    const body = h(`<div class="ins-body">${MEDIA_SECTION}<div class="ins-head"><b>Canvas</b></div><section><p class="sub">${esc(text)}</p></section></div>`);
+    $('#mdCanvasWrap', body).hidden = true;
+    inspector.replaceChildren(body);
+    wireMediaSection(body);
+  }
+
+  // ---- Media (web/media.js; server/media.mjs): the recording, the layers, older takes and files, the trash ----
+  let mediaData = null, mediaVer = 0, mediaLoading = null, mediaAgain = false;
+  const mediaHost = () => inspector.querySelector('#mediaSec');
+  const mediaNote = (text) => {
+    const n = inspector.querySelector('#mdNote');
+    if (!n) { if (text) toast(text); return; }
+    n.hidden = !text;
+    $('#mdNoteT', n).textContent = text || '';
+    if (text) { n.scrollIntoView({ block: 'nearest' }); toast(text.length > 90 ? `${text.slice(0, 88)}…` : text); }
+  };
+  const mediaActions = makeMediaActions({ id, refresh: () => loadMedia(), note: mediaNote, openRecord: (target) => hooks.openRecord?.(target) });
+  function loadMedia() {
+    if (mediaLoading) { mediaAgain = true; return mediaLoading; }
+    mediaLoading = api(`/api/projects/${encodeURIComponent(id)}/media-items`)
+      .then((d) => { mediaData = d; mediaVer++; renderMedia(); })
+      .catch(() => {})
+      .finally(() => { mediaLoading = null; if (mediaAgain) { mediaAgain = false; loadMedia(); } });
+    return mediaLoading;
+  }
+  const layerCount = () => (layout || normalize(getP().layout, getP().type)).layers.length;
+  const hasRecording = () => Boolean(mediaData?.items.some((x) => x.canvas));
+  function wireMediaSection(host) {
+    $('#mdAdd', host).onclick = (e) => { e.stopPropagation(); addLayerMenu(e.currentTarget, mediaActions, { layerCount: layerCount(), canLayer: hasRecording() }); };
+    $('#mdNoteX', host).onclick = () => mediaNote(null);
+    renderMedia();
+    loadMedia();
+  }
+  // The parts that come from the server's list; the canvas rows are renderLayers' (they follow the canvas).
+  function renderMedia() {
+    const host = mediaHost();
+    if (!host) return;
+    const sig = JSON.stringify([mediaVer, layerCount()]);
+    if (host.dataset.sig !== sig) {
+      host.dataset.sig = sig;
+      $('#mdCurrent', host).replaceChildren(currentCard(mediaData, mediaActions));
+      const others = otherRows(mediaData, mediaActions, { layerCount: layerCount() });
+      $('#mdOther', host).replaceChildren(...others);
+      $('#mdOtherWrap', host).hidden = !others.length;
+      $('#mdRemoved', host).replaceChildren(...removedRows(mediaData, mediaActions));
+      $('#mdAdd', host).hidden = Boolean(mediaData) && !hasRecording(); // a layer goes on top of a recording
+    }
+    if (ins) renderLayers();
+  }
+  // The Media menu in the canvas toolbar: the same actions, where the picture is.
+  function mediaTool() {
+    const wrap = h(`<span class="md-anchor"><button type="button" class="btn small md-tool" id="mediaTool" aria-haspopup="menu" aria-expanded="false" title="The recording, its layers and older takes: record again, delete, swap, add a layer">${icon('media', 15)}Media</button></span>`);
+    $('button', wrap).onclick = (e) => { e.stopPropagation(); mediaMenu(e.currentTarget); };
+    return wrap;
+  }
+  async function mediaMenu(anchor) {
+    if (!mediaData) await loadMedia();
+    const cur = mediaData?.items.find((x) => x.canvas);
+    const older = (mediaData?.items || []).filter((x) => !x.canvas && !x.layers.length && x.take && !x.blocks.length).slice(0, 4);
+    const items = [
+      { head: cur ? `Recording · ${itemName(cur.id)}` : 'No recording yet' },
+      { label: cur ? 'Record again' : 'Record', sub: cur ? 'A new take replaces this one (this one stays in the video)' : 'Screen, camera and mic', run: () => mediaActions.recordAgain() },
+      ...(cur ? [{ label: 'Delete recording', sub: mediaData.work?.length ? `It has ${mediaData.work.join(', ')}: put another take on first` : 'Its files go to the studio’s trash; Undo brings it back', danger: true, run: () => mediaActions.remove(cur, { recording: true }) }] : []),
+      { label: 'Add a layer…', sub: cur ? 'Record, import a file, or pick a recording' : 'Record or import the recording first', disabled: !cur, run: () => addLayerMenu(anchor, mediaActions, { layerCount: layerCount(), canLayer: true }) },
+      ...(older.length ? [{ head: 'Use an older take' }, ...older.map((x) => ({ label: itemName(x.id), sub: 'Put it back on the canvas as the recording', run: () => mediaActions.use(x) }))] : []),
+      { label: 'Show all media', sub: 'In the inspector: layers, order, show and hide, older takes', run: () => showMedia() },
+    ];
+    popMenu(anchor, items, { label: 'Media', align: 'left' });
+  }
+  function showMedia() {
+    const host = mediaHost();
+    if (!host) return;
+    host.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    host.classList.remove('md-flash'); void host.offsetWidth; host.classList.add('md-flash');
+    host.focus({ preventScroll: true });
   }
 
   function build(P) {
@@ -1841,7 +1930,7 @@ function makeCanvas(pane, { inspector, tools }, id, getP, hooks = {}) {
       <div class="blocks-strip" id="blockStrip"></div>
       <div class="timeline" id="timeline"></div></div>`);
     pane.replaceChildren(wrap);
-    tools.replaceChildren(h(`<div class="tools-row"><div class="seg" id="aspect" role="group" aria-label="Frame shape"><button data-a="16:9">16:9</button><button data-a="9:16">9:16</button></div>
+    tools.replaceChildren(h(`<div class="tools-row"><span class="md-tool-slot"></span><div class="seg" id="aspect" role="group" aria-label="Frame shape"><button data-a="16:9">16:9</button><button data-a="9:16">9:16</button></div>
       ${zoomsC ? '<button type="button" class="btn small" id="zoomTool" aria-pressed="false" title="Zoom into an area (Z): drag a box on the screen or the camera; the zoom starts at the playhead">Zoom into an area <kbd>Z</kbd></button>' : ''}
       <details class="pic-zoom"><summary class="btn small" id="picZoom" title="How big the picture shows: fit the space, or 50% / 100% of the export's pixels">Fit</summary>
         <div class="menu" role="menu">${[['fit', 'Fit'], ['0.5', '50%'], ['1', '100%']].map(([k, l]) => `<button class="mi" role="menuitemradio" data-z="${k}">${l}</button>`).join('')}</div></details></div>`));
@@ -1860,6 +1949,7 @@ function makeCanvas(pane, { inspector, tools }, id, getP, hooks = {}) {
       <section class="shot-sec" id="shotSec" hidden><div class="sh-t"><b id="shTitle">Whole video</b><small id="shSub"></small></div>
         <div class="seg wide sh-scope" id="shScope" role="radiogroup" aria-label="Where your changes go"><button type="button" role="radio" data-s="shot">This shot</button><button type="button" role="radio" data-s="all">Whole video</button></div>
         <p class="sub sh-hint" id="shHint" hidden></p></section>
+      ${MEDIA_SECTION}
       <div class="ins-head"><span class="sel-dot" id="selDot"></span><b id="fbName">Camera</b><span class="sub" id="selHint"></span></div>
       <section><h3>Layout<span class="ov" data-ov="layout"></span></h3><div class="tiles" id="presets"></div>
         <form class="ly-save" id="lySave" hidden><div class="ly-save-row"><input class="field" maxlength="40" placeholder="Name it, e.g. Boxed on stars" aria-label="Name of the layout"><button class="btn dark small" type="submit">Save</button><button class="btn ghost small" type="button" data-a="x">Cancel</button></div>
@@ -1888,13 +1978,12 @@ function makeCanvas(pane, { inspector, tools }, id, getP, hooks = {}) {
         <div class="row" id="mirrorRow"><span>Mirror</span><div class="seg" id="mirror" role="group" aria-label="Mirror the camera"><button data-v="auto">Auto</button><button data-v="on">On</button><button data-v="off">Off</button></div></div>
         <p class="sub" id="mirrorNote">Auto mirrors you when you sit on the left, so you look into the screen.</p></section>
       <section id="bgSec"></section>
-      <section><h3>Layers</h3><div class="layers" id="layerList"></div>
-        <div class="add-take"><button class="btn ghost wide" id="addLayer" aria-haspopup="menu" title="Put another take on top of this one, in its own box">+ Add a take as a layer</button></div></section>
       <p class="sub hint">Click the camera or the screen to edit it. Drag the camera to move it, a corner handle to resize; scroll over a picture to zoom, Crop trims its edges. Space plays.</p>
       <div class="shot-foot" id="shotFoot" hidden>
         <div class="sf-in" id="sfIn"><span class="sf-l">Into this shot</span><b id="sfTr">Cut</b><button type="button" class="btn small" id="sfTrBtn" aria-haspopup="dialog">Change</button></div>
         <div class="sf-btns"><button type="button" class="btn small" id="sfPrev">Same as previous</button><button type="button" class="btn small" id="sfAll">Apply to all shots</button><button type="button" class="btn small sf-back" id="sfBack">Back to the video’s look</button></div></div></div>`);
     inspector.replaceChildren(ins);
+    tools.querySelector('.md-tool-slot').replaceWith(mediaTool());
     stage = $('#stage', wrap);
     wireZoomSec();
     const zt = tools.querySelector('#zoomTool');
@@ -1975,7 +2064,7 @@ function makeCanvas(pane, { inspector, tools }, id, getP, hooks = {}) {
     pad2.onchange = () => saveLayout();
     $('#layerAudio', ins).onclick = () => { const x = layerOf(selected); if (x) { x.audio = !x.audio; setLayout(layout); } };
     $('#layerRemove', ins).onclick = () => { layout.layers = layout.layers.filter((x) => `layer:${x.id}` !== selected); selected = 'cam'; setLayout(layout); };
-    $('#addLayer', ins).onclick = (e) => { e.stopPropagation(); takeMenu(); };
+    wireMediaSection(ins);
     wireEdge(ins, { frame: () => edgeOf(selected), change: (save) => setLayout(layout, save) });
     const pad = $('#pad', ins);
     pad.oninput = () => { layout.pad = Number(pad.value); setLayout(layout, false); };
@@ -2540,9 +2629,13 @@ function makeCanvas(pane, { inspector, tools }, id, getP, hooks = {}) {
       const ov = shotOv(r.lref);
       const sub = ov ? (off ? 'hidden in this shot' : 'shown in this shot') : !inIt && r.kind !== 'audio' ? 'not in this layout' : off ? 'hidden, in the export too'
         : layer ? `take ${takeLabel(layer.file.slice(0, 19))} · sound ${layer.audio ? 'on' : 'off'}` : r.kind === 'audio' ? 'canvas take · sound only' : r.label === 'Camera' ? 'canvas take · sound' : 'canvas take';
-      const row = h(`<div class="layer${r.ref && r.ref === selected ? ' on' : ''}${off ? ' off' : ''}"><button class="ly-pick"${r.ref && !off ? '' : ' disabled'}><span class="lk ${kind}" aria-hidden="true"></span><span class="ln"><b>${esc(r.label)}</b><small>${esc(sub)}</small></span></button>
-        ${ov ? `<button class="ly-ov" aria-label="${esc(r.label)}: as the whole video has it" title="As the whole video has it">${RESET_ICON}</button>` : ''}${inIt ? `<button class="ly-eye" aria-pressed="${!off}" aria-label="${off ? 'Show' : 'Hide'} ${esc(r.label)}${scopeNow() === 'shot' ? ' in this shot' : ''}" title="${off ? 'Show it again' : scopeNow() === 'shot' ? 'Hide it in this shot' : 'Hide it in the picture and the export'}">${off ? TP_ICON.eyeOff : TP_ICON.eye}</button>` : ''}</div>`);
+      // An extra layer has a handle (drag, or ↑/↓ on it, to reorder) and ⋯ (Sound, Take off the canvas, Remove).
+      const grip = layer ? `<button type="button" class="md-grip" aria-label="Move ${esc(r.label)}: up or down arrow" title="Drag to reorder (or focus and press ↑ / ↓)">${icon('grip', 14)}</button>` : '<span class="md-grip-gap" aria-hidden="true"></span>';
+      const more = layer ? `<span class="md-anchor"><button type="button" class="ly-eye md-more" aria-haspopup="menu" aria-expanded="false" aria-label="More for ${esc(r.label)}">${icon('more')}</button></span>` : '';
+      const row = h(`<div class="layer${r.ref && r.ref === selected ? ' on' : ''}${off ? ' off' : ''}" role="listitem"${layer ? ` data-layer="${esc(layer.id)}"` : ''}>${grip}<button class="ly-pick"${r.ref && !off ? '' : ' disabled'}><span class="lk ${kind}" aria-hidden="true"></span><span class="ln"><b>${esc(r.label)}</b><small>${esc(sub)}</small></span></button>
+        ${ov ? `<button class="ly-ov" aria-label="${esc(r.label)}: as the whole video has it" title="As the whole video has it">${RESET_ICON}</button>` : ''}${inIt ? `<button class="ly-eye" aria-pressed="${!off}" aria-label="${off ? 'Show' : 'Hide'} ${esc(r.label)}${scopeNow() === 'shot' ? ' in this shot' : ''}" title="${off ? 'Show it again' : scopeNow() === 'shot' ? 'Hide it in this shot' : 'Hide it in the picture and the export'}">${off ? TP_ICON.eyeOff : TP_ICON.eye}</button>` : ''}${more}</div>`);
       if (ov) row.classList.add('shot-ov');
+      if (layer) $('.md-more', row).onclick = (e) => { e.stopPropagation(); layerMenu(e.currentTarget, layer, r.label); };
       $('.ly-ov', row)?.addEventListener('click', () => resetHidden(r.lref));
       if (r.ref && !off) $('.ly-pick', row).onclick = () => { selected = r.ref; reframe = false; renderFrameBar(); };
       $('.ly-eye', row)?.addEventListener('click', () => toggleHidden(r.lref));
@@ -2550,6 +2643,35 @@ function makeCanvas(pane, { inspector, tools }, id, getP, hooks = {}) {
     }), ...(gfx ? [h(`<div class="layer ly-gfx"><span class="lk gfx" aria-hidden="true"></span><span class="ln"><b>Scene graphics</b><small>${esc([gfx.sceneFile, nBuilt < gfx.scenes.length ? `${nBuilt} of ${gfx.scenes.length} scenes built` : `${gfx.scenes.length} scene${gfx.scenes.length > 1 ? 's' : ''}`, gfxFile ? `in ${gfxFile}` : 'in the renders'].filter(Boolean).join(' · '))}</small></span>
         <button class="btn ghost small" data-a="scenes" title="The scene graphics are drawn into Claude's render, not on this canvas; Export → Video puts the render in for the scenes it reaches. Review and change them in Scenes">Scenes →</button></div>`)] : []));
     $('[data-a=scenes]', box)?.addEventListener('click', () => hooks.openScene?.(sceneNow()?.id || sceneData.scenes[0]?.id));
+    wireReorder(box, {
+      onMove: (lid, step) => { const i = layout.layers.findIndex((x) => x.id === lid); if (i >= 0) placeLayer(lid, i + step); },
+      // Dropped on a row: just above it (drawn over it) or just below it.
+      onDrop: (lid, target, above) => {
+        const rest = layout.layers.filter((x) => x.id !== lid), t = rest.findIndex((x) => x.id === target);
+        if (t >= 0) placeLayer(lid, above ? t + 1 : t);
+      },
+    });
+  }
+  // A layer to index `to` of layout.layers (bottom to top), saved; the handle keeps the focus, a line says where it is.
+  function placeLayer(lid, to) {
+    const i = layout.layers.findIndex((x) => x.id === lid), n = layout.layers.length;
+    const at = Math.max(0, Math.min(n - 1, to));
+    if (i < 0 || at === i) return;
+    const focused = document.activeElement?.closest?.('[data-layer]')?.dataset.layer === lid;
+    layout.layers = moveLayer(layout.layers, lid, at);
+    setLayout(layout);
+    const say = inspector.querySelector('#mdSay');
+    if (say) say.textContent = `Layer moved: ${n - at} of ${n} from the top.`;
+    if (focused) requestAnimationFrame(() => inspector.querySelector(`[data-layer="${CSS.escape(lid)}"] .md-grip`)?.focus());
+  }
+  // ⋯ on a layer: Sound on/off, Take off the canvas (it stays in the video), Remove from this video (to the trash).
+  function layerMenu(anchor, layer, name) {
+    const item = mediaData?.items.find((x) => x.layers.some((l) => l.id === layer.id));
+    popMenu(anchor, [
+      { label: layer.audio ? 'Sound: on — turn off' : 'Sound: off — turn on', sub: 'Mix this layer’s sound into the export', run: () => { const x = layerOf(`layer:${layer.id}`); if (x) { x.audio = !x.audio; setLayout(layout); } } },
+      { label: 'Take off the canvas', sub: 'It stays in this video, under Also in this video', run: () => { layout.layers = layout.layers.filter((x) => x.id !== layer.id); if (selected === `layer:${layer.id}`) selected = 'cam'; setLayout(layout); } },
+      { label: 'Remove from this video…', sub: item ? 'Its files go to the studio’s trash (Undo brings them back)' : 'Loading…', danger: true, disabled: !item, run: () => mediaActions.remove(item) },
+    ], { label: `${name} actions` });
   }
   const isHidden = (ref) => (ref === 'cam' || ref === 'screen' ? layout.hidden.includes(ref) : Boolean(ref && layerOf(ref)?.hidden));
   function toggleHidden(ref) {
@@ -2560,30 +2682,6 @@ function makeCanvas(pane, { inspector, tools }, id, getP, hooks = {}) {
     setLayout(layout);
     return !off;
   }
-  // "+ Add a take as a layer": recent takes from the recordings folder (or record a new one); it goes on top in its own box.
-  async function takeMenu() {
-    const host = $('.add-take', ins);
-    const open = $('.take-menu', host);
-    if (open) { open.remove(); return; }
-    const menu = h(`<div class="take-menu menu" role="menu"><div class="menu-h">Add a take as a layer</div><div class="tm-list"><p class="sub">Loading…</p></div>
-      <button class="mi" role="menuitem" data-a="rec"><b>Record a new take…</b><small>Opens Record; the take comes in as a layer</small></button></div>`);
-    host.append(menu);
-    $('[data-a=rec]', menu).onclick = () => { menu.remove(); document.getElementById('recBtn')?.click(); };
-    let takes = [];
-    try { takes = await api('/api/takes'); } catch (e) { toast(e.message); }
-    const P = getP();
-    const onCanvas = (t) => (P.roles?.take || []).some((f) => f.startsWith(t.id)), asLayer = (t) => layout.layers.some((x) => x.file.startsWith(t.id));
-    $('.tm-list', menu).replaceChildren(...(takes.length ? takes.slice(0, 8).map((t) => {
-      const why = onCanvas(t) ? 'on the canvas already' : asLayer(t) ? 'a layer already' : t.files.every(isSound) ? 'sound only: no picture to put in a box' : '';
-      const b = h(`<button class="mi" role="menuitem"${why ? ' disabled' : ''}><b>${esc(takeLabel(t.id))}</b><small>${esc(why || `${takeWhat(t)} · ${gb(t.bytes)}`)}</small></button>`);
-      b.onclick = async () => {
-        menu.remove();
-        try { await api(`/api/projects/${encodeURIComponent(id)}/import`, { take: t.id, target: 'layer' }); } catch (e) { toast(e.message); }
-      };
-      return b;
-    }) : [h('<p class="sub">No recordings yet.</p>')]));
-  }
-
   async function autoFrame() {
     const btn = $('#autoframe', ins);
     btn.disabled = true; btn.textContent = 'Framing…';
@@ -2709,8 +2807,6 @@ function makeCanvas(pane, { inspector, tools }, id, getP, hooks = {}) {
   function closeMenus(e) {
     const z = tools.querySelector('.pic-zoom');
     if (z?.open && !z.contains(e.target)) z.open = false;
-    const m = ins && $('.take-menu', ins);
-    if (m && !m.contains(e.target)) m.remove();
   }
   document.addEventListener('click', closeMenus);
 

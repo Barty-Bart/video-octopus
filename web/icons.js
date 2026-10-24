@@ -23,6 +23,11 @@ const PATHS = {
   check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
   portrait: '<rect x="7.5" y="3" width="9" height="18" rx="2"/>',
   landscape: '<rect x="3" y="7" width="18" height="10" rx="2"/>',
+  // The editor's Media section (web/media.js): drag to reorder, delete to the trash, more actions, record.
+  grip: '<circle cx="9" cy="6" r=".8"/><circle cx="15" cy="6" r=".8"/><circle cx="9" cy="12" r=".8"/><circle cx="15" cy="12" r=".8"/><circle cx="9" cy="18" r=".8"/><circle cx="15" cy="18" r=".8"/>',
+  trash: '<path d="M4.5 7h15M10 4h4M6.5 7l1 12.5h9l1-12.5M10 11v5M14 11v5"/>',
+  more: '<circle cx="6" cy="12" r=".8"/><circle cx="12" cy="12" r=".8"/><circle cx="18" cy="12" r=".8"/>',
+  media: '<rect x="3.5" y="5.5" width="17" height="13" rx="2"/><path d="M10 9.5v5l4-2.5z"/>',
 };
 
 export const ICON_NAMES = Object.keys(PATHS);
