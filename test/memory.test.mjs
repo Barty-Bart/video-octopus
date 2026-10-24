@@ -188,7 +188,7 @@ test('approve picks This channel or Everything within the source chat chain, nev
   projectChat(s, 'video-a', p.id, f.id);
   const m = lesson(s, 'video-a', 'u1', 'I prefer short intros.', { key: 'intro', text: 'Short intros.' });
   for (const scope of [`profile:${other.id}`, `format:${f.id}`, 'project:video-a']) {
-    assert.throws(() => s.change(m.id, m.revision, { op: 'approve', scope }), /This style or Everything/);
+    assert.throws(() => s.change(m.id, m.revision, { op: 'approve', scope }), /This brand kit or Everything/);
   }
   assert.equal(s.getMemory(m.id).status, 'pending');
   const kept = s.change(m.id, m.revision, { op: 'approve', scope: 'global' });
@@ -199,7 +199,7 @@ test('approve picks This channel or Everything within the source chat chain, nev
   const anywhere = s.propose({ text: 'Warm colour grade.', key: 'grade', scope: 'global' });
   assert.equal(s.change(anywhere.id, anywhere.revision, { op: 'approve', scope: `profile:${other.id}` }).scope, `profile:${other.id}`);
   const mine = s.propose({ text: 'Square thumbnails.', key: 'thumbs', scope: `profile:${p.id}` });
-  assert.throws(() => s.change(mine.id, mine.revision, { op: 'approve', scope: `profile:${other.id}` }), /This style or Everything/);
+  assert.throws(() => s.change(mine.id, mine.revision, { op: 'approve', scope: `profile:${other.id}` }), /This brand kit or Everything/);
   // Omitting the level keeps today's behaviour.
   assert.equal(approve(s, mine).scope, `profile:${p.id}`);
   assert(s.context(chat).includes('Square thumbnails.'));
@@ -264,7 +264,7 @@ test('older format and video memories keep working, list under their channel wit
   assert.equal(lifted.scope, `profile:${p.id}`); assert.equal(lifted.status, 'approved');
   assert(s.context('video-a').includes('Format-level pacing.'));
   assert(!s.context(otherChat).includes('Format-level pacing.'));
-  assert.throws(() => s.change(videoMemory.id, videoMemory.revision, { op: 'move', scope: `profile:${other.id}` }), /This style or Everything/);
+  assert.throws(() => s.change(videoMemory.id, videoMemory.revision, { op: 'move', scope: `profile:${other.id}` }), /This brand kit or Everything/);
   assert.equal(s.change(videoMemory.id, videoMemory.revision, { op: 'move', scope: `profile:${p.id}` }).scope, `profile:${p.id}`);
 });
 
@@ -279,7 +279,7 @@ test('isolation: a memory from channel A never reaches channel B, whatever level
     assert.throws(() => s.change(secret.id, secret.revision, { op: 'approve', scope }));
   }
   const kept = approve(s, s.getMemory(secret.id));
-  for (const m of [kept, legacy]) assert.throws(() => s.change(m.id, m.revision, { op: 'move', scope: `profile:${other.id}` }), /This style or Everything/);
+  for (const m of [kept, legacy]) assert.throws(() => s.change(m.id, m.revision, { op: 'move', scope: `profile:${other.id}` }), /This brand kit or Everything/);
   assert(s.context('video-a').includes('MEM-ALPHA lower thirds.'));
   assert(!s.context('video-b').includes('MEM-ALPHA'));
   assert(!s.listing(`profile:${other.id}`).some(m => m.text.includes('MEM-ALPHA')));

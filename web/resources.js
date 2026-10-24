@@ -105,7 +105,8 @@ async function edit(r, levels, done) {
 }
 
 // mount(root, { profileId } | { project }): renders and keeps itself current. onChange runs after any change.
-export function mountResources(root, { profileId = null, project = null, onChange = null, compact = false } = {}) {
+// only: 'profile' shows just the kit's own level (a style's or kit's People & places tab, Flat 3).
+export function mountResources(root, { profileId = null, project = null, onChange = null, compact = false, only = null } = {}) {
   let live = true;
   root.teardown = () => { live = false; };
   async function paint() {
@@ -122,14 +123,18 @@ export function mountResources(root, { profileId = null, project = null, onChang
         ${items.length ? `<ul class="rs-list">${items.map(row).join('')}</ul>` : '<p class="sub">Nothing here yet.</p>'}
         <details class="rs-add-wrap"><summary class="btn ghost small">Add</summary>${addForm(scope, label)}</details></details>`;
     };
-    const html = data.levels.map((l) => {
+    const shown = only ? data.levels.filter((l) => l.level === only) : data.levels;
+    const html = shown.map((l) => {
       if (l.videos) {
         if (!l.videos.length) return `<div class="rs-level"><h3>${esc(l.label)}</h3><p class="sub">No videos in this style yet. A video’s own resources are added in its Packaging tab, or here.</p></div>`;
         return `<div class="rs-videos"><h3>${esc(l.label)}</h3>${l.videos.map((v) => section(v, v.scope, v.name, v.items, 3)).join('')}</div>`;
       }
       return section(l, l.scope, l.label, l.items);
     }).join('');
-    root.innerHTML = `<p class="sub rs-lead">${project ? 'What Codex may use for this video. Changes reach it straight away.' : 'Photos of you, logos, shapes, reference thumbnails and style notes for Packaging. All styles reaches every video; this style reaches its videos; a video’s own stay with it.'} Pictures marked “Someone else” are never sent to an image model.</p>${html}`;
+    const lead = project ? 'What Codex may use for this video. Changes reach it straight away.'
+      : only ? 'Photos of you and the places you film, logos, reference thumbnails and style notes. Claude uses them for thumbnails and scenes in every style that uses this kit.'
+        : 'Photos of you, logos, shapes, reference thumbnails and style notes for Packaging. All styles reaches every video; a brand kit reaches the videos of its styles; a video’s own stay with it.';
+    root.innerHTML = `<p class="sub rs-lead">${lead} Pictures marked “Someone else” are never sent to an image model.</p>${html}`;
     root.querySelectorAll('form.rs-add').forEach((f) => wireAdd(f, changed));
     root.querySelectorAll('.rs-row').forEach((li) => {
       const r = all.find((x) => x.id === li.dataset.id);

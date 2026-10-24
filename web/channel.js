@@ -1,175 +1,89 @@
-// My styles (design V2 §5, board "V2 My styles"): the style hub (#/style/<id>/<tab>) with its Formats, Brand and
-// Memories tabs, and the My styles page (#/styles), with Instructions and Memories for everything at
-// #/styles/instructions and #/styles/memories. A style is a learning profile (a "channel" before V2); code, API and
-// tables keep the profile names.
-import { $, esc, h, api, toast } from './ui.js';
-import { styleHref as channelHref } from './nav.js';
+// My styles, one level (Flat 3, ADDENDUM-styles-gallery.md). A style is a learning format; a brand kit is a learning
+// profile, shared by every style that uses it (format.profileId). Code, API and tables keep the profile/format names.
+//   #/styles                          My styles: the kits bar and one flat card per style
+//   #/styles/instructions, /memories  Studio instructions, Memories for everything
+//   #/styles/kits                     Brand kits: one row per kit
+//   #/styles/kit/<profileId>/<tab>    a kit: Brand · People & places · Memories · Styles
+//   #/style/<formatId>/<tab>          a style: Skill · Examples · Brand · People & places · Memories
+import { $, esc, h, api, toast, confirmBox } from './ui.js';
+import { styleHref, kitHref } from './nav.js';
 import { TERMS } from './terms.js';
-import { channelAvatar } from './shell.js';
+import { channelAvatar, avatarInk } from './shell.js';
 import {
-  renderLearning, channelMenuItems, newChannelDialog, newFormatDialog, archiveChannel, showMenu,
-  rememberedChannel, rememberChannel, videoSetups,
+  renderLearning, newStyleDialog, newKitDialog, renameKitDialog, archiveKit, changeKitDialog, showMenu, dialog, field,
+  realKits, rememberedChannel, rememberChannel, videoSetups,
 } from './learning.js';
 import { profileSettings, instructionSettings } from './profiles.js';
 import { renderMemories } from './memory.js';
+import { mountResources } from './resources.js';
 import { themeSwitch } from './appearance.js';
-import { icon } from './icons.js';
+import { styleEntries, setupShape, kitColor, COLOR } from './style-list.js';
 
+const E = '/api/learning';
 const DOTS = '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.5" cy="8" r="1.2"/><circle cx="8" cy="8" r="1.2"/><circle cx="12.5" cy="8" r="1.2"/></svg>';
-const TAB_NAMES = { formats: 'Formats', brand: 'Brand', memories: 'Memories' };
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const list = (names) => (names.length <= 2 ? names.join(' and ') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`);
 
-// `_` → a real style id: from the format, session, chat or scope in the query, else the remembered channel, else
-// the first one that isn't archived. null when there is no channel at all.
-async function resolveChannel(tab, query, profiles, formats, projects) {
-  const open = profiles.filter((p) => !p.archived);
-  const formatOwner = (formatId) => formats.find((f) => f.id === formatId)?.profileId || null;
-  if (tab === 'formats') {
-    if (query.get('format')) {
-      const owner = formatOwner(query.get('format'));
-      if (owner) return owner;
-    }
-    if (query.get('session')) {
-      const data = await api('/api/learning').catch(() => null);
-      const session = data?.sessions.find((s) => s.id === query.get('session'));
-      const owner = session && formatOwner(session.formatId);
-      if (owner) return owner;
-    }
-  }
-  if (tab === 'memories') {
-    const scope = query.get('scope') || '';
-    if (scope.startsWith('profile:')) return scope.slice('profile:'.length);
-    if (scope.startsWith('format:')) return formatOwner(scope.slice('format:'.length));
-    if (scope.startsWith('project:')) return projects.find((p) => p.id === scope.slice('project:'.length))?.profileId || null;
-    if (query.get('chat')) {
-      const binding = await api(`/api/memory?chat=${encodeURIComponent(query.get('chat'))}`).catch(() => null);
-      if (binding?.scope?.startsWith('profile:')) return binding.scope.slice('profile:'.length);
-      return null;
-    }
-  }
-  const last = rememberedChannel();
-  if (last && open.some((p) => p.id === last)) return last;
-  return open[0]?.id || null;
+// A cover in the kit's brand colour (a data colour, allowed inline), with white text unless that fails 4.5:1
+// (avatarInk). No kit: the quiet surface and the theme's text.
+function coverStyle(color) {
+  return COLOR.test(color || '') ? ` style="--kit:${color};--kit-ink:${avatarInk(color)}"` : '';
+}
+const kitDot = (color) => `<i class="kit-dot${COLOR.test(color || '') ? '' : ' none'}" aria-hidden="true"${COLOR.test(color || '') ? ` style="background:${color}"` : ''}></i>`;
+
+// Changes waiting in the newest draft of each style (sessions in review), for the cards' accent line.
+async function draftCounts(sessions) {
+  const waiting = sessions.filter((s) => s.status === 'review');
+  const counts = new Map();
+  await Promise.all(waiting.map(async (s) => {
+    const p = await api(`${E}/sessions/${s.id}/proposal`).catch(() => null);
+    const n = p ? p.rules.length + p.removals.length + (p.files?.added?.length || 0) + (p.files?.removed?.length || 0) : 0;
+    if (n) counts.set(s.formatId, Math.max(counts.get(s.formatId) || 0, n));
+  }));
+  return counts;
 }
 
-// The hub. ctx: { id, tab, query, makeChat, startVideo, counts, projects, onChannelsChange, onFormatsChange }.
-export async function renderChannel(main, ctx) {
-  const { tab, query, makeChat, startVideo, counts = {}, projects = [], onChannelsChange, onFormatsChange } = ctx;
-  let { id } = ctx;
-  const data = await api('/api/profiles');
-
-  if (id === '_') {
-    const resolved = await resolveChannel(tab, query, data.profiles, data.formats, projects);
-    if (!resolved) {
-      // No style to show: My styles (its Memories for everything, for a memory link without a style).
-      location.replace(tab === 'memories' ? '#/styles/memories' : '#/styles');
-      return null;
-    }
-    id = resolved;
-    const kept = new URLSearchParams(query);
-    kept.delete('scope'); // a scope only picked the style; the tab shows the style's whole level
-    history.replaceState(null, '', channelHref(id, tab, Object.fromEntries(kept)));
-  }
-
-  const p = data.profiles.find((x) => x.id === id);
-  if (!p) {
-    document.title = 'Style not found · Video Octopus';
-    main.replaceChildren(h(`<div class="home-wrap"><div class="empty"><b>This style doesn’t exist</b><span class="sub">It may have been removed from this studio.</span><a class="btn" href="#/styles">My styles</a></div></div>`));
-    return null;
-  }
-  rememberChannel(p.id);
-  document.title = `${p.name} · ${TAB_NAMES[tab]} · Video Octopus`;
-
-  const summary = (counts.channels || []).find((c) => c.id === p.id);
-  const formats = data.formats.filter((f) => f.profileId === p.id && !f.archived).length;
-  const videos = projects.filter((x) => x.profileId === p.id).length;
-  const pending = summary?.pendingMemories || 0;
-  const avatar = { name: p.name, color: summary?.color ?? (p.brand?.brand?.colors?.[0] || null) };
-  const tabs = [
-    ['formats', 'Formats', `<span class="seg-n">${formats}</span>`],
-    ['brand', 'Brand', `<span class="tab-status">${p.brand ? 'Approved' : 'Not set'}</span>`],
-    ['memories', 'Memories', pending ? `<span class="pill accent" title="${plural(pending, 'memory')} to review">${pending}</span>` : ''],
-  ];
-  main.replaceChildren(h(`<div class="hub${tab === 'formats' ? ' hub-formats' : ''}">
-    <div class="hub-top">
-      <div class="page-head">
-        ${channelAvatar(avatar, 'big')}
-        <div class="ph-title">
-          <p class="eyebrow"><a href="#/styles">${TERMS.myStyles}</a> · <a href="#/?style=${encodeURIComponent(p.id)}">${plural(videos, 'video')}</a></p>
-          <h1>${esc(p.name)}</h1>
-          ${p.description ? `<p class="ph-desc">${esc(p.description)}</p>` : ''}
-        </div>
-        <div class="ph-actions">
-          <span data-theme-slot></span>
-          <button type="button" class="btn primary" data-hub="new"${p.archived ? ' disabled title="Restore the style to make new videos"' : ''}>New video</button>
-          <button type="button" class="btn icon-btn" data-hub="menu" aria-haspopup="menu" aria-expanded="false" aria-label="Options for ${esc(p.name)}">${DOTS}</button>
-        </div>
-      </div>
-      ${p.archived ? `<div class="notice hub-archived"><span>This style is archived. It is hidden from New video. Nothing was deleted.</span><button type="button" class="btn small" data-hub="restore">Restore</button></div>` : ''}
-      <nav class="hub-tabs scroll-row" aria-label="${esc(p.name)} sections">
-        ${tabs.map(([key, label, extra]) => `<a class="hub-tab${key === tab ? ' on' : ''}" data-tab="${key}" href="${channelHref(p.id, key)}"${key === tab ? ' aria-current="page"' : ''}>${label}${extra}</a>`).join('')}
-      </nav>
-    </div>
-    <div class="hub-body" id="hubBody"></div>
-  </div>`));
-
-  main.querySelector('[data-theme-slot]')?.replaceWith(themeSwitch());
-  const body = $('#hubBody', main);
-  let part = null;
-  const newFormat = () => {
-    if (part?.newFormat) return part.newFormat();
-    newFormatDialog({ profiles: data.profiles, profileId: p.id, onCreated: (f) => { location.hash = channelHref(p.id, 'formats', { format: f.id }); } });
-  };
-  main.querySelector('[data-hub="new"]').onclick = () => startVideo({ profileId: p.id });
-  main.querySelector('[data-hub="menu"]').onclick = (e) => showMenu(e.currentTarget, channelMenuItems(p, { onChange: onChannelsChange, newFormat }));
-  const restore = main.querySelector('[data-hub="restore"]');
-  if (restore) restore.onclick = () => archiveChannel(p, false, { onDone: onChannelsChange }).catch((err) => toast(err.message));
-
-  if (tab === 'formats') {
-    part = await renderLearning(body, {
-      makeChat,
-      startVideo: (format) => startVideo({ format }),
-      channelId: p.id,
-      basePath: channelHref(p.id, 'formats'),
-      onFormatsChange,
-      onChannelChange: onChannelsChange,
-    });
-  } else if (tab === 'brand') {
-    // A brand approved, saved or restored here: the tab's status, the hub avatar and the sidebar follow at once,
-    // without redrawing the tab (its research session and chat stay open).
-    const onBrandChange = async (fresh) => {
-      if (!main.isConnected) return;
-      const status = main.querySelector('.hub-tab[data-tab="brand"] .tab-status');
-      if (status) status.textContent = fresh.brand ? 'Approved' : 'Not set';
-      const counts = await onFormatsChange?.();
-      if (!main.isConnected) return;
-      const color = counts?.channels?.find((c) => c.id === p.id)?.color ?? (fresh.brand?.brand?.colors?.[0] || null);
-      main.querySelector('.hub-top .page-head > .ch-av')?.replaceWith(h(channelAvatar({ name: p.name, color }, 'big')));
-    };
-    const node = profileSettings({ makeChat, profileId: p.id, onBrandChange });
-    body.append(h('<div class="hub-pad"></div>'));
-    body.firstElementChild.append(node);
-    part = node;
-  } else {
-    const box = h('<div class="hub-pad"></div>');
-    body.append(box);
-    part = await renderMemories(box, { profileId: p.id, profileName: p.name });
-  }
-  return { teardown: () => part?.teardown?.() };
+// Everything the style cards need: profiles (with brands), formats, versions, sessions, projects.
+async function loadStyles(formatInfo, projects) {
+  const [profiles, learning, rows] = await Promise.all([
+    api('/api/profiles'), api(E), projects ? Promise.resolve(projects) : api('/api/projects').catch(() => []),
+  ]);
+  const drafts = await draftCounts(learning.sessions);
+  return { profiles: profiles.profiles, formats: profiles.formats, versions: profiles.versions, sessions: learning.sessions, projects: rows, drafts, formatInfo };
 }
 
-// My styles (#/styles). ctx: { tab: 'styles' | 'instructions' | 'memories', counts, onChannelsChange, startVideo,
-// formatInfo (STATUS.formatInfo) }.
-export async function renderStyles(main, { tab, counts = {}, onChannelsChange, formatInfo = {} }) {
+// One style card (board Flat 3): cover in the kit colour with the frame rising from the bottom, the kind badge and
+// the kit chip, then name, description and meta.
+function styleCard(e, query = '') {
+  return `<a class="stc${e.archived ? ' archived' : ''}" href="${styleHref(e.id, 'skill')}${query}">
+    <span class="stc-cover${e.kitColor ? '' : ' no-kit'}"${coverStyle(e.kitColor)}>
+      <span class="stc-frame ${e.tall ? 'tall' : 'wide'}" aria-hidden="true"></span>
+      <span class="stc-chip stc-badge">${esc(e.badge)}</span>
+      <span class="stc-chip stc-kit">${kitDot(e.kitColor)}${esc(e.kitName)}</span>
+      ${e.archived ? '<span class="stc-chip stc-arch">Archived</span>' : ''}
+    </span>
+    <span class="stc-t">
+      <b>${esc(e.name)}</b>
+      ${e.description ? `<span class="stc-desc">${esc(e.description)}</span>` : ''}
+      <span class="stc-meta">${esc(e.meta)}${e.changes ? ` · <span class="stc-review">${plural(e.changes, 'change')} to review</span>` : ''}</span>
+    </span>
+  </a>`;
+}
+const newCard = (first = false) => `<button type="button" class="stc stc-new" data-new-style>
+    <span class="stc-cover"><b>${first ? 'Create your first style' : '+ New style'}</b><span>${first ? 'One kind of video you make, like “Faceless reel”' : 'One kind of video, from examples or a link'}</span></span>
+  </button>`;
+
+// ---------- My styles (#/styles) ----------
+// ctx: { tab: 'styles' | 'instructions' | 'memories', query, counts, projects, formatInfo, onChannelsChange }.
+export async function renderStyles(main, { tab, query, counts = {}, projects = null, formatInfo = {} }) {
   const sub = { instructions: 'Studio instructions', memories: 'Memories for everything' }[tab] || '';
   document.title = `${sub ? `${sub} · ` : ''}${TERMS.myStyles} · Video Octopus`;
-  const [data, projects] = await Promise.all([api('/api/profiles'), api('/api/projects').catch(() => [])]);
   main.replaceChildren(h(`<div class="sty">
     <header class="sty-head">
       ${sub ? `<div class="sty-title"><p class="eyebrow"><a href="#/styles">${TERMS.myStyles}</a></p><h1>${esc(sub)}</h1></div>` : `<h1>${TERMS.myStyles}</h1>`}
       <span class="gap"></span>
       <span data-theme-slot></span>
-      ${sub ? '' : `<button type="button" class="btn sty-quiet" data-new-format>New format</button><button type="button" class="btn primary" data-new-style>New style</button>`}
+      ${sub ? '' : '<button type="button" class="btn primary" data-new-style>New style</button>'}
     </header>
     <div class="sty-body" id="styBody"></div>
   </div>`));
@@ -178,74 +92,377 @@ export async function renderStyles(main, { tab, counts = {}, onChannelsChange, f
 
   if (tab === 'instructions') {
     const node = instructionSettings();
-    body.append(h('<p class="sty-intro">Shared by every style: how your agent should work on every video. Brand identity belongs to each style’s Brand tab.</p>'), node);
+    body.append(h('<p class="sty-intro">Shared by every style: how your agent should work on every video. Brand identity belongs to each brand kit.</p>'), node);
     return { teardown: () => node.teardown?.() };
   }
   if (tab === 'memories') return renderMemories(body, { scope: 'global' });
 
-  const created = (p) => { location.hash = channelHref(p.id, 'formats'); };
-  main.querySelector('[data-new-style]').onclick = () => newChannelDialog({ onCreated: created });
-  main.querySelector('[data-new-format]').onclick = () => newFormatDialog({
-    profiles: data.profiles, onCreated: (f, profileId) => { location.hash = channelHref(profileId || f.profileId, 'formats', { format: f.id }); },
-  });
-  const summaries = new Map((counts.channels || []).map((c) => [c.id, c]));
-  const versionNumber = (id) => data.versions?.find((v) => v.id === id)?.number;
-  // What a format's tile says about its video setup, in a word or two ("Long · on camera · skill v2").
-  const SETUP_WORDS = { tutorial: 'on camera', faceless: 'voiceover', short: 'vertical', explainer: 'product explainer' };
-  const setupName = (type) => SETUP_WORDS[type] || videoSetups.find((x) => x.id === type)?.name || type;
-  const tall = (type) => (formatInfo[type]?.aspect || (type === 'short' ? '9:16' : '16:9')) === '9:16';
-  const formatTile = (p, f) => {
-    const n = versionNumber(f.activeVersion);
-    const meta = [tall(f.type) ? 'Short' : 'Long', setupName(f.type),
-      f.targetSeconds ? `${Math.round(f.targetSeconds / 60) || 1} min` : '', f.activeVersion ? `skill v${n ?? ''}`.trim() : 'basic'].filter(Boolean);
-    return `<a class="sty-tile${f.archived ? ' archived' : ''}" href="${channelHref(p.id, 'formats', { format: f.id })}">
-      <span class="sty-prev"><span class="sty-frame ${tall(f.type) ? 'tall' : 'wide'}" aria-hidden="true"><i></i></span>${f.archived ? '<span class="pv-badge">Archived</span>' : ''}</span>
-      <span class="sty-tile-t"><b>${esc(f.name)}</b><span class="sty-meta">${esc([...new Set(meta)].join(' · '))}</span></span>
-    </a>`;
-  };
+  const data = await loadStyles(formatInfo, projects);
+  // Library's "Use notes as an example": the notes go to the style picked here (its Talk to this style).
+  const legacy = query?.get('legacyStyle') || '';
+  const carry = legacy ? `?legacyStyle=${encodeURIComponent(legacy)}` : '';
+  const kits = realKits(data.profiles);
   let showArchived = false;
   const draw = () => {
-    const list = data.profiles.filter((p) => showArchived || !p.archived);
-    const archivedCount = data.profiles.filter((p) => p.archived).length;
-    const sections = list.map((p) => {
-      const s = summaries.get(p.id);
-      const color = s?.color ?? (p.brand?.brand?.colors?.[0] || null);
-      const formats = data.formats.filter((f) => f.profileId === p.id && (showArchived || !f.archived));
-      const videos = projects.filter((x) => x.profileId === p.id).length;
-      const line = p.description || [plural(videos, 'video'), p.brand ? 'brand approved' : 'no brand yet'].join(' · ');
-      return `<section class="sty-group${p.archived ? ' archived' : ''}" aria-labelledby="sty-${esc(p.id)}">
-        <div class="sty-gh">
-          <a href="${channelHref(p.id)}" tabindex="-1" aria-hidden="true">${channelAvatar({ name: p.name, color }, 'mid')}</a>
-          <div class="sty-gt"><h2 id="sty-${esc(p.id)}"><a href="${channelHref(p.id)}">${esc(p.name)}</a>${p.archived ? ' <span class="badge">Archived</span>' : ''}</h2>
-            <span class="sty-meta">${esc(line)}</span></div>
-          <a class="sty-link" href="${channelHref(p.id, 'brand')}">${p.brand ? 'Brand, research &amp; assets' : 'Add a brand'}</a>
-        </div>
-        <div class="sty-tiles">
-          ${formats.map((f) => formatTile(p, f)).join('')}
-          ${p.archived ? '' : `<button type="button" class="sty-tile sty-add" data-add-format="${esc(p.id)}"><span class="sty-prev">${icon('plus', 18)}<b>Add a format</b></span></button>`}
-        </div>
-      </section>`;
-    }).join('');
+    const all = styleEntries(data, { archived: true });
+    const shown = all.filter((e) => showArchived || !e.archived);
+    const archivedCount = all.filter((e) => e.archived).length;
     const pendingGlobal = counts.waiting?.memories || 0;
     body.replaceChildren(h(`<div class="sty-page">
-      <p class="sty-intro">A style is a folder for one way you make videos: its brand, research, assets and memories, plus the formats inside it. Call it whatever you like. A video can use a style, or none.</p>
-      ${data.profiles.length ? '' : `<div class="sty-first"><b>Create your first style</b><span class="sty-meta">For example “Tutorials” or “Camping Instagram”. Add its formats next.</span><button type="button" class="btn primary" data-first>New style</button></div>`}
-      ${sections}
+      ${legacy ? `<p class="notice">Pick the style these legacy notes should teach: <b>${esc(legacy)}</b>. It opens with ${TERMS.talk}; start a conversation there and the notes are added.</p>` : ''}
+      <nav class="kits-bar" aria-label="${TERMS.kits}">
+        <b>${TERMS.kits}</b>
+        ${kits.map((k) => `<a class="kit-pill" href="${kitHref(k.id, 'brand')}">${kitDot(kitColor(k))}${esc(k.name)}</a>`).join('') || '<span class="sub">None yet</span>'}
+        <span class="gap"></span>
+        <a class="kits-manage" href="#/styles/kits">Manage brand kits</a>
+      </nav>
+      <div class="stc-grid">
+        ${shown.map((e) => styleCard(e, carry)).join('')}
+        ${newCard(!all.length)}
+      </div>
       ${archivedCount ? `<label class="learn-check sty-archived"><input type="checkbox" data-archived${showArchived ? ' checked' : ''}> Show archived (${archivedCount})</label>` : ''}
-      <section class="sty-shared" aria-labelledby="styShared">
-        <h2 id="styShared">Shared by all styles</h2>
-        <a class="sty-row" href="#/styles/instructions"><span><b>Studio instructions</b> <span class="sty-meta">· how your agent should work on every video</span></span><span class="sty-go">Edit</span></a>
-        <a class="sty-row" href="#/styles/memories"><span><b>Memories for everything</b> <span class="sty-meta">· preferences for every style</span></span>${pendingGlobal ? `<span class="pill accent">${pendingGlobal} to review</span>` : '<span class="sty-go">Open</span>'}</a>
+      <section class="sty-tiles2" aria-label="Shared by all styles">
+        <a class="sty-tile2" href="#/styles/instructions"><span><b>Studio instructions</b><span class="sty-meta">Shared by every style</span></span></a>
+        <a class="sty-tile2" href="#/styles/memories"><span><b>Memories for everything</b><span class="sty-meta">Preferences for every style</span></span>${pendingGlobal ? `<span class="pill accent">${pendingGlobal} to review</span>` : ''}</a>
       </section>
     </div>`));
-    body.querySelector('[data-first]')?.addEventListener('click', () => newChannelDialog({ onCreated: created }));
-    for (const b of body.querySelectorAll('[data-add-format]')) {
-      b.onclick = () => newFormatDialog({ profiles: data.profiles, profileId: b.dataset.addFormat,
-        onCreated: (f) => { location.hash = channelHref(b.dataset.addFormat, 'formats', { format: f.id }); } });
-    }
+    for (const b of main.querySelectorAll('[data-new-style]')) b.onclick = () => newStyleDialog({ profiles: data.profiles });
     const toggle = body.querySelector('[data-archived]');
     if (toggle) toggle.onchange = () => { showArchived = toggle.checked; draw(); };
   };
   draw();
   return { teardown() {} };
+}
+
+// ---------- the style page (#/style/<formatId>/<tab>) ----------
+const STYLE_TAB_NAMES = { skill: 'Skill', examples: 'Examples', brand: 'Brand', people: 'People & places', memories: 'Memories' };
+
+// `_` or an id that isn't a style: a session or format in the query picks the style; a kit's id goes to the kit.
+async function resolveStyle(id, tab, query, data) {
+  if (data.formats.some((f) => f.id === id)) return { id };
+  if (data.profiles.some((p) => p.id === id)) return { redirect: kitHref(id, ['brand', 'memories', 'people'].includes(tab) ? tab : 'styles') };
+  if (id !== '_') return {};
+  if (query.get('format') && data.formats.some((f) => f.id === query.get('format'))) return { id: query.get('format') };
+  if (query.get('session')) {
+    const s = (await api(E).catch(() => null))?.sessions.find((x) => x.id === query.get('session'));
+    if (s) return { id: s.formatId };
+  }
+  return { redirect: '#/styles' };
+}
+
+// ctx: { id, tab, panel, query, makeChat, startVideo, counts, projects, formatInfo, onChannelsChange, onFormatsChange }.
+export async function renderStylePage(main, ctx) {
+  const { tab, panel, query, makeChat, startVideo, counts = {}, projects = [], formatInfo = {}, onChannelsChange, onFormatsChange } = ctx;
+  const data = await api('/api/profiles');
+  const found = await resolveStyle(ctx.id, tab, query, data);
+  if (found.redirect) { location.replace(found.redirect); return null; }
+  const f = data.formats.find((x) => x.id === found.id);
+  if (!f) {
+    document.title = 'Style not found · Video Octopus';
+    main.replaceChildren(h(`<div class="home-wrap"><div class="empty"><b>This style doesn’t exist</b><span class="sub">It may have been removed from this studio.</span><a class="btn" href="#/styles">${TERMS.myStyles}</a></div></div>`));
+    return null;
+  }
+  if (found.id !== ctx.id) history.replaceState(null, '', styleHref(f.id, tab, Object.fromEntries([...query].filter(([k]) => k !== 'format'))));
+  const kit = data.profiles.find((p) => p.id === f.profileId) || null;
+  const unbranded = !kit || Boolean(kit.system);
+  const color = unbranded ? null : kitColor(kit);
+  const shape = setupShape(f.type, formatInfo);
+  const learning = await api(E).catch(() => ({ sessions: [] }));
+  const sessions = learning.sessions.filter((s) => s.formatId === f.id);
+  const examples = sessions.reduce((n, s) => n + s.references.length, 0);
+  const number = f.activeVersion ? data.versions.find((v) => v.id === f.activeVersion)?.number : null;
+  const people = unbranded ? 0 : await api(`/api/resources?profile=${encodeURIComponent(kit.id)}`)
+    .then((r) => r.levels.find((l) => l.level === 'profile')?.items.length || 0).catch(() => 0);
+  const pending = unbranded ? 0 : (counts.channels || []).find((c) => c.id === kit.id)?.pendingMemories || 0;
+  const archived = Boolean(f.archived || kit?.archived);
+  const sharing = unbranded ? [] : data.formats.filter((x) => x.profileId === kit.id && x.id !== f.id && !x.archived);
+  document.title = `${f.name} · ${STYLE_TAB_NAMES[tab]} · Video Octopus`;
+
+  const tabs = [
+    ['skill', 'Skill', number ? `v${number}` : 'Basic'],
+    ['examples', 'Examples', String(examples)],
+    ['brand', 'Brand', unbranded ? TERMS.noBrand : ''],
+    ['people', 'People &amp; places', unbranded ? '' : String(people)],
+    ['memories', 'Memories', pending ? `<span class="pill accent" title="${plural(pending, 'memory')} to review">${pending}</span>` : ''],
+  ];
+  main.replaceChildren(h(`<div class="hub stp${tab === 'skill' || tab === 'examples' ? ' hub-formats' : ''}">
+    <div class="stp-top">
+      <header class="stp-cover${color ? '' : ' no-kit'}"${coverStyle(color)}>
+        <span class="stp-frame ${shape.tall ? 'tall' : 'wide'}" aria-hidden="true"></span>
+        <div class="stp-in">
+          <div class="stp-bar">
+            <nav class="stp-crumb" aria-label="Breadcrumb"><a href="#/styles">${TERMS.myStyles}</a><span aria-hidden="true">/</span><span aria-current="page">${esc(f.name)}</span></nav>
+            <span class="gap"></span>
+            <span data-theme-slot></span>
+            <button type="button" class="stp-icon" data-style-menu aria-haspopup="menu" aria-expanded="false" aria-label="More actions for ${esc(f.name)}">${DOTS}</button>
+          </div>
+          <div class="stp-foot">
+            <div class="stp-title">
+              <span class="stp-badge">${esc(shape.badge)} · brand: ${esc(unbranded ? TERMS.noBrand : kit.name)}</span>
+              <h1>${esc(f.name)}</h1>
+              ${f.description ? `<p>${esc(f.description)}</p>` : ''}
+            </div>
+            <button type="button" class="btn stp-new" data-new-video${archived ? ' disabled title="Restore the style to make new videos"' : ''}>New video in this style</button>
+          </div>
+        </div>
+      </header>
+      ${archived ? `<div class="notice hub-archived stp-archived"><span>${f.archived ? 'This style is archived' : 'Its brand kit is archived'}. It is hidden from New video. Nothing was deleted.</span>${f.archived ? '<button type="button" class="btn small" data-restore>Restore</button>' : `<a class="btn small" href="${kitHref(kit.id, 'brand')}">Open the kit</a>`}</div>` : ''}
+      <nav class="hub-tabs stp-tabs scroll-row" aria-label="${esc(f.name)} sections">
+        ${tabs.map(([key, label, extra]) => `<a class="hub-tab${key === tab ? ' on' : ''}" data-tab="${key}" href="${styleHref(f.id, key)}"${key === tab ? ' aria-current="page"' : ''}>${label}${extra ? ` <span class="tab-status">${extra}</span>` : ''}</a>`).join('')}
+      </nav>
+    </div>
+    <div class="hub-body" id="hubBody"></div>
+  </div>`));
+  main.querySelector('[data-theme-slot]')?.replaceWith(themeSwitch());
+  const reload = () => onChannelsChange?.();
+  main.querySelector('[data-new-video]').onclick = () => startVideo({ format: f });
+  main.querySelector('[data-style-menu]').onclick = (e) => showMenu(e.currentTarget, styleMenu(f, { reload }));
+  const restore = main.querySelector('[data-restore]');
+  if (restore) restore.onclick = () => archiveStyle(f, false).then(reload).catch((err) => toast(err.message));
+
+  const body = $('#hubBody', main);
+  const pad = () => { const box = h('<div class="hub-pad stp-pad"></div>'); body.append(box); return box; };
+  const changeKit = () => changeKitDialog(f, { profiles: data.profiles, onDone: reload });
+  let part = null;
+  if (tab === 'skill' || tab === 'examples') {
+    part = await renderLearning(body, {
+      makeChat, formatId: f.id, tab, panel, orientation: shape.tall ? 'tall' : 'wide',
+      basePath: styleHref(f.id, tab), startVideo: (format) => startVideo({ format }),
+      onFormatsChange, onChannelChange: reload,
+    });
+  } else if (tab === 'brand') {
+    const box = pad();
+    if (unbranded) {
+      box.append(h(`<div class="stp-kit-head"><p><b>${TERMS.noBrand}</b> · this style doesn’t use a brand kit. Videos get no brand colours, fonts or voice, and only Everything memories.</p><button type="button" class="btn primary small" data-change-kit>Pick a brand kit</button></div>`));
+    } else {
+      box.append(h(`<div class="stp-kit-head"><p>Uses the <a href="${kitHref(kit.id, 'brand')}"><b>${esc(kit.name)}</b></a> brand kit${sharing.length ? ` · also used by ${esc(list(sharing.map((x) => x.name)))}` : ''}. Changes here apply to every style using it.</p><button type="button" class="btn small" data-change-kit>Change kit</button></div>`));
+      const node = profileSettings({ makeChat, profileId: kit.id, rows: true, onBrandChange: () => onFormatsChange?.() });
+      box.append(node);
+      part = node;
+    }
+    box.querySelector('[data-change-kit]').onclick = changeKit;
+  } else if (tab === 'people') {
+    const box = pad();
+    if (unbranded) {
+      box.append(h(`<div class="stp-kit-head"><p>Pick a brand kit to add people and places. They belong to the kit and are shared by every style that uses it.</p><button type="button" class="btn primary small" data-change-kit>Pick a brand kit</button></div>`));
+      box.querySelector('[data-change-kit]').onclick = changeKit;
+    } else {
+      box.append(h(`<div class="stp-kit-head"><p>From the <a href="${kitHref(kit.id, 'people')}"><b>${esc(kit.name)}</b></a> kit · shared by ${plural(sharing.length + 1, 'style')}</p></div>`));
+      const host = h('<div class="rs-panel"></div>');
+      box.append(host);
+      mountResources(host, { profileId: kit.id, only: 'profile' });
+      part = host;
+    }
+  } else {
+    const box = pad();
+    if (unbranded) {
+      box.append(h(`<div class="stp-kit-head"><p>${TERMS.noBrand}: this style uses <b>Everything</b> memories only. Pick a brand kit to keep preferences for a group of styles.</p></div>`));
+      const host = h('<div></div>');
+      box.append(host);
+      part = await renderMemories(host, { scope: 'global' });
+    } else {
+      box.append(h(`<div class="stp-kit-head"><p>Shared by styles using the <a href="${kitHref(kit.id, 'memories')}"><b>${esc(kit.name)}</b></a> kit. A style’s own pace and layout belong in its Skill rules.</p></div>`));
+      const host = h('<div></div>');
+      box.append(host);
+      part = await renderMemories(host, { profileId: kit.id, profileName: kit.name });
+    }
+  }
+  return { name: f.name, teardown: () => { part?.teardown?.(); } };
+}
+
+async function archiveStyle(f, archive) {
+  if (archive && !await confirmBox({ title: `Archive ${f.name}?`, text: 'It is hidden from My styles and New video, and its generated skill is unpublished. Nothing is deleted, existing videos are untouched, and you can restore it with Show archived.', ok: 'Archive style' })) return;
+  const r = await api(`${E}/formats/${f.id}/${archive ? 'archive' : 'unarchive'}`, { expected: f.revision || 1 });
+  toast(r.warning || (archive ? `${f.name} archived.` : `${f.name} restored.`));
+}
+
+// The style's … menu: Rename, Edit description, Edit setup, Duplicate, Archive or Restore.
+function styleMenu(f, { reload }) {
+  const update = async (body, done) => {
+    const r = await api(`${E}/formats/${f.id}/update`, { expected: f.revision || 1, ...body });
+    toast(r.warning || done);
+    await reload();
+  };
+  return [
+    { label: 'Rename', run: () => dialog('Rename style', field('Style name', 'name', f.name) + '<p class="sub">Existing videos keep the names they were made with.</p>', (b) => update({ name: b.name }, 'Renamed.')) },
+    { label: 'Edit description', run: () => dialog('Edit description', `<label>Description<input name="description" value="${esc(f.description || '')}" maxlength="200" placeholder="B-roll only, AI voice, punchy captions"></label>`, (b) => update({ description: b.description || '' }, 'Saved.')) },
+    { label: 'Edit setup', run: () => dialog('Edit setup', `<label>Kind<select name="type">${videoSetups.map((x) => `<option value="${x.id}"${x.id === f.type ? ' selected' : ''}>${esc(x.name)}</option>`).join('')}</select></label><label>Target length in seconds (optional)<input name="targetSeconds" type="number" min="0" max="7200" value="${f.targetSeconds || ''}"></label><p class="sub">Applies to future videos. Videos already made keep theirs, and saved skill versions don’t change.</p>`, (b) => update({ type: b.type, targetSeconds: Number(b.targetSeconds) || 0 }, 'Saved. It applies to future videos.')) },
+    { label: 'Duplicate', run: async () => {
+      try {
+        const copy = await api(`${E}/formats/${f.id}/duplicate`, { expected: f.revision || 1 });
+        toast(copy.warning || `Made ${copy.name}.`);
+        location.hash = styleHref(copy.id, 'skill');
+      } catch (e) { toast(e.message); }
+    } },
+    '-',
+    f.archived
+      ? { label: 'Restore style', run: () => archiveStyle(f, false).then(reload).catch((e) => toast(e.message)) }
+      : { label: 'Archive style', danger: true, run: () => archiveStyle(f, true).then(reload).catch((e) => toast(e.message)) },
+  ];
+}
+
+// ---------- Brand kits (#/styles/kits) ----------
+export async function renderKits(main, { formatInfo = {}, onChannelsChange }) {
+  document.title = `${TERMS.kits} · ${TERMS.myStyles} · Video Octopus`;
+  const data = await api('/api/profiles');
+  let showArchived = false;
+  main.replaceChildren(h(`<div class="sty">
+    <header class="sty-head">
+      <div class="sty-title"><p class="eyebrow"><a href="#/styles">${TERMS.myStyles}</a></p><h1>${TERMS.kits}</h1></div>
+      <span class="gap"></span><span data-theme-slot></span>
+      <button type="button" class="btn primary" data-new-kit>New kit</button>
+    </header>
+    <div class="sty-body" id="styBody"></div>
+  </div>`));
+  main.querySelector('[data-theme-slot]')?.replaceWith(themeSwitch());
+  main.querySelector('[data-new-kit]').onclick = () => newKitDialog({ onCreated: (p) => { location.hash = kitHref(p.id, 'brand'); } });
+  const body = $('#styBody', main);
+  const draw = () => {
+    const kits = data.profiles.filter((p) => !p.system && (showArchived || !p.archived));
+    const archivedCount = data.profiles.filter((p) => !p.system && p.archived).length;
+    const rows = kits.map((k) => {
+      const using = data.formats.filter((f) => f.profileId === k.id && !f.archived);
+      return `<a class="kit-row${k.archived ? ' archived' : ''}" href="${kitHref(k.id, 'brand')}">
+        ${channelAvatar({ name: k.name, color: kitColor(k) }, 'mid')}
+        <span class="kit-row-t"><b>${esc(k.name)}${k.archived ? ' <span class="badge">Archived</span>' : ''}</b><span class="sty-meta">${esc([using.length ? `used by ${plural(using.length, 'style')}` : 'not used by a style yet', k.description].filter(Boolean).join(' · '))}</span></span>
+        <span class="kit-row-s">${k.brand ? 'Brand approved' : 'No brand yet'}</span>
+      </a>`;
+    }).join('');
+    body.replaceChildren(h(`<div class="sty-page">
+      <p class="sty-intro">A brand kit is a reusable look and identity: brand, research, assets, people &amp; places and memories. Every style that uses a kit shares it; a style without one uses ${TERMS.noBrand}.</p>
+      <div class="kit-list">${rows || `<div class="sty-first"><b>No brand kits yet</b><span class="sty-meta">Make one for each look you use, like “Faceless AI”.</span></div>`}</div>
+      ${archivedCount ? `<label class="learn-check sty-archived"><input type="checkbox" data-archived${showArchived ? ' checked' : ''}> Show archived (${archivedCount})</label>` : ''}
+    </div>`));
+    const toggle = body.querySelector('[data-archived]');
+    if (toggle) toggle.onchange = () => { showArchived = toggle.checked; draw(); };
+  };
+  draw();
+  return { teardown() {} };
+}
+
+// ---------- a brand kit (#/styles/kit/<profileId>/<tab>) ----------
+const KIT_TAB_NAMES = { brand: 'Brand', people: 'People & places', memories: 'Memories', styles: 'Styles' };
+
+// `_` → a real kit id: from the scope, chat or format in the query, else the remembered kit, else the first one.
+async function resolveKit(query, profiles, formats, projects) {
+  const open = realKits(profiles);
+  const formatOwner = (formatId) => formats.find((f) => f.id === formatId)?.profileId || null;
+  const scope = query.get('scope') || '';
+  if (scope.startsWith('profile:')) return scope.slice('profile:'.length);
+  if (scope.startsWith('format:')) return formatOwner(scope.slice('format:'.length));
+  if (scope.startsWith('project:')) return projects.find((p) => p.id === scope.slice('project:'.length))?.profileId || null;
+  if (query.get('chat')) {
+    const binding = await api(`/api/memory?chat=${encodeURIComponent(query.get('chat'))}`).catch(() => null);
+    if (binding?.scope?.startsWith('profile:')) return binding.scope.slice('profile:'.length);
+    return null;
+  }
+  const last = rememberedChannel();
+  if (last && open.some((p) => p.id === last)) return last;
+  return open[0]?.id || null;
+}
+
+// ctx: { id, tab, query, makeChat, startVideo, counts, projects, formatInfo, onChannelsChange, onFormatsChange }.
+export async function renderKit(main, ctx) {
+  const { tab, query, makeChat, startVideo, counts = {}, projects = [], formatInfo = {}, onChannelsChange, onFormatsChange } = ctx;
+  const data = await api('/api/profiles');
+  let id = ctx.id;
+  if (id === '_') {
+    const resolved = await resolveKit(query, data.profiles, data.formats, projects);
+    if (!resolved || data.profiles.find((p) => p.id === resolved)?.system) {
+      location.replace(tab === 'memories' ? '#/styles/memories' : '#/styles/kits');
+      return null;
+    }
+    id = resolved;
+    const kept = new URLSearchParams(query);
+    kept.delete('scope'); // a scope only picked the kit; the tab shows the kit's whole level
+    history.replaceState(null, '', kitHref(id, tab, Object.fromEntries(kept)));
+  }
+  const p = data.profiles.find((x) => x.id === id);
+  if (!p || p.system) {
+    if (p?.system) { location.replace('#/styles'); return null; } // No brand is not a kit
+    document.title = 'Brand kit not found · Video Octopus';
+    main.replaceChildren(h(`<div class="home-wrap"><div class="empty"><b>This brand kit doesn’t exist</b><span class="sub">It may have been removed from this studio.</span><a class="btn" href="#/styles/kits">${TERMS.kits}</a></div></div>`));
+    return null;
+  }
+  rememberChannel(p.id);
+  document.title = `${p.name} · ${KIT_TAB_NAMES[tab]} · Video Octopus`;
+  const using = data.formats.filter((f) => f.profileId === p.id && !f.archived);
+  const summary = (counts.channels || []).find((c) => c.id === p.id);
+  const pending = summary?.pendingMemories || 0;
+  const tabs = [
+    ['brand', 'Brand', p.brand ? 'Approved' : 'Not set'],
+    ['people', 'People &amp; places', ''],
+    ['memories', 'Memories', pending ? `<span class="pill accent" title="${plural(pending, 'memory')} to review">${pending}</span>` : ''],
+    ['styles', 'Styles', String(using.length)],
+  ];
+  main.replaceChildren(h(`<div class="hub kitp">
+    <div class="hub-top">
+      <div class="page-head">
+        ${channelAvatar({ name: p.name, color: kitColor(p) }, 'big')}
+        <div class="ph-title">
+          <p class="eyebrow"><a href="#/styles">${TERMS.myStyles}</a> · <a href="#/styles/kits">${TERMS.kits}</a></p>
+          <h1>${esc(p.name)}</h1>
+          <p class="ph-desc">${esc(p.description || (using.length ? `Used by ${list(using.map((f) => f.name))}` : 'Not used by a style yet'))}</p>
+        </div>
+        <div class="ph-actions">
+          <span data-theme-slot></span>
+          <button type="button" class="btn primary" data-new-video${p.archived ? ' disabled title="Restore the kit to make new videos"' : ''}>New video</button>
+          <button type="button" class="btn icon-btn" data-kit-menu aria-haspopup="menu" aria-expanded="false" aria-label="Options for ${esc(p.name)}">${DOTS}</button>
+        </div>
+      </div>
+      ${p.archived ? '<div class="notice hub-archived"><span>This brand kit is archived. It is hidden from My styles. Nothing was deleted.</span><button type="button" class="btn small" data-restore>Restore</button></div>' : ''}
+      <nav class="hub-tabs scroll-row" aria-label="${esc(p.name)} sections">
+        ${tabs.map(([key, label, extra]) => `<a class="hub-tab${key === tab ? ' on' : ''}" data-tab="${key}" href="${kitHref(p.id, key)}"${key === tab ? ' aria-current="page"' : ''}>${label}${extra ? ` <span class="tab-status">${extra}</span>` : ''}</a>`).join('')}
+      </nav>
+    </div>
+    <div class="hub-body" id="hubBody"></div>
+  </div>`));
+  main.querySelector('[data-theme-slot]')?.replaceWith(themeSwitch());
+  const reload = () => onChannelsChange?.();
+  main.querySelector('[data-new-video]').onclick = () => startVideo({ profileId: p.id });
+  main.querySelector('[data-kit-menu]').onclick = (e) => showMenu(e.currentTarget, [
+    { label: 'Rename or describe', run: () => renameKitDialog(p, { onDone: reload }) },
+    { label: 'New style with this kit', run: () => newStyleDialog({ profiles: data.profiles, kitId: p.id }) },
+    '-',
+    p.archived
+      ? { label: 'Restore kit', run: () => archiveKit(p, false, { onDone: reload }).catch((err) => toast(err.message)) }
+      : { label: 'Archive kit', danger: true, run: () => archiveKit(p, true, { onDone: reload }).catch((err) => toast(err.message)) },
+  ]);
+  const restore = main.querySelector('[data-restore]');
+  if (restore) restore.onclick = () => archiveKit(p, false, { onDone: reload }).catch((err) => toast(err.message));
+
+  const body = $('#hubBody', main);
+  const box = h('<div class="hub-pad stp-pad"></div>');
+  body.append(box);
+  let part = null;
+  if (tab === 'brand') {
+    // A brand approved, saved or restored here: the tab status and the avatar follow, without redrawing the tab.
+    const onBrandChange = async (fresh) => {
+      if (!main.isConnected) return;
+      const status = main.querySelector('.hub-tab[data-tab="brand"] .tab-status');
+      if (status) status.textContent = fresh.brand ? 'Approved' : 'Not set';
+      await onFormatsChange?.();
+      if (!main.isConnected) return;
+      main.querySelector('.hub-top .page-head > .ch-av')?.replaceWith(h(channelAvatar({ name: p.name, color: kitColor(fresh) }, 'big')));
+    };
+    part = profileSettings({ makeChat, profileId: p.id, rows: true, onBrandChange });
+    box.append(part);
+  } else if (tab === 'people') {
+    box.append(h(`<div class="stp-kit-head"><p>People &amp; places of the <b>${esc(p.name)}</b> kit · shared by ${plural(using.length, 'style')}</p></div>`));
+    const host = h('<div class="rs-panel"></div>');
+    box.append(host);
+    mountResources(host, { profileId: p.id, only: 'profile' });
+    part = host;
+  } else if (tab === 'memories') {
+    box.append(h(`<div class="stp-kit-head"><p>Shared by every style using the <b>${esc(p.name)}</b> kit.</p></div>`));
+    const host = h('<div></div>');
+    box.append(host);
+    part = await renderMemories(host, { profileId: p.id, profileName: p.name });
+  } else {
+    const styles = await loadStyles(formatInfo, projects);
+    const entries = styleEntries(styles, { profileId: p.id, archived: true });
+    box.append(h(`<div class="stc-grid">${entries.map((e) => styleCard(e)).join('')}${p.archived ? '' : newCard(!entries.length)}</div>`));
+    box.querySelector('[data-new-style]')?.addEventListener('click', () => newStyleDialog({ profiles: data.profiles, kitId: p.id }));
+  }
+  return { name: p.name, teardown: () => part?.teardown?.() };
 }

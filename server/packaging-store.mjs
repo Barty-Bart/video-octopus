@@ -45,6 +45,8 @@ export class PackagingStore extends ProfileStore {
     const formatId = b.formatId || l.formatId || null;
     let profileId = b.profileId || l.profileId || null;
     if (formatId && !profileId) profileId = this.get('formats', formatId).profileId;
+    // No brand (the hidden kit for unbranded styles) has no people & places of its own.
+    if (profileId && this.isUnbranded(profileId)) profileId = null;
     return { profileId, formatId, project };
   }
   resourceChain(project) {
@@ -250,7 +252,7 @@ export class PackagingStore extends ProfileStore {
     const levelName = (scope) => {
       const p = parseScope(scope);
       if (p.level === 'global') return 'All styles';
-      if (p.level === 'profile') return `Style: ${ids.profileId ? this.get('profiles', ids.profileId).name : ''}`;
+      if (p.level === 'profile') return `Brand kit: ${ids.profileId ? this.get('profiles', ids.profileId).name : ''}`;
       if (p.level === 'format') return 'Format';
       return 'This video';
     };

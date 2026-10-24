@@ -52,7 +52,7 @@ export function ensureResourceTables(db) {
 
 export function checkResourceScope(scope) {
   const parsed = parseScope(scope);
-  if (!parsed || parsed.level === 'format') fail('Choose All styles, a style or a video for this resource.');
+  if (!parsed || parsed.level === 'format') fail('Choose All styles, a brand kit or a video for this resource.');
   return scope;
 }
 

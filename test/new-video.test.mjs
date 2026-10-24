@@ -38,6 +38,7 @@ async function fakeClaude() {
     const text = typeof m.message?.content === 'string' ? m.message.content : JSON.stringify(m.message?.content);
     log({ kind: 'message', text });
     if (!initialized) { initialized = true; out({ type: 'system', subtype: 'init', session_id: `fixture-${process.pid}`, model: 'fixture-model' }); }
+    if (text.includes('SLOW-ME')) await new Promise((r) => setTimeout(r, 2500)); // a reply still running (Change kit waits)
     const asked = /NAME-ME:([^"\n]+)/.exec(text);
     const reply = asked ? `Sounds good.\n\n\`\`\`octopus-name\n${asked[1].trim()}\n\`\`\`` : 'Fixture reply.';
     out({ type: 'assistant', message: { content: [{ type: 'text', text: reply }] } });
@@ -183,6 +184,11 @@ test('New video: Untitled video with the last-used style and format, a style or 
 
   // An archived style is not used again by itself, and refused when asked for.
   await s.ok('/api/projects', { untitled: true, formatId: c.FB.id });
+  // Flat 3: a brand kit that a style still uses can't be archived until that style moves or is archived.
+  const used = await s.req(`/api/learning/profiles/${c.B.id}/archive`, { expected: 1 });
+  assert.equal(used.status, 400);
+  assert.match(used.body.error, /Camp explainer/);
+  await s.ok(`/api/learning/formats/${c.FB.id}/archive`, { expected: 1 });
   await s.ok(`/api/learning/profiles/${c.B.id}/archive`, { expected: 1 });
   const after = await s.ok('/api/projects', { untitled: true });
   assert.equal(s.meta(after.id).context.profileId, null, 'the remembered style is archived: No style');
@@ -313,4 +319,93 @@ test('AI naming: the agent names an automatic video, the working title too, and 
   await sleep(400);
   assert.equal(s.meta(named.id).name, 'Named by me');
   assert.equal((await s.ok('/api/projects')).find((p) => p.id === named.id).nameSource, 'manual');
+});
+
+// Flat 3 Change kit: POST /api/learning/formats/<id>/move { profileId, expected }. The style (format) moves to another
+// kit; its drafts and conversations go with it (their memories follow it to the new kit), while videos made before
+// keep the kit, brand and memories they pinned. Refused with a stale revision and while a conversation is working.
+test('Change kit: a style moves, its videos keep their pins, its conversations follow, No brand is one hidden kit', async (t) => {
+  const s = await startServer(t);
+  const c = await styles(s);
+  const brandA = await s.ok(`/api/profiles/${c.A.id}/brand`, { brand: { identity: 'Tutorials brand', colors: ['#1d4ed8'] }, expected: null });
+  const video = await s.ok('/api/projects', { untitled: true, formatId: c.FA.id });
+  const pin = () => s.db((d) => JSON.parse(d.prepare('SELECT data FROM project_context WHERE project=?').get(video.id).data));
+  const chatRow = (id) => s.db((d) => { const r = d.prepare('SELECT data FROM memory_chats WHERE id=?').get(id); return r ? JSON.parse(r.data) : null; });
+  const before = pin();
+  assert.deepEqual([before.profileId, before.brandVersion, before.formatId], [c.A.id, brandA.id, c.FA.id]);
+  // The video's chat registers its memory scopes with kit A.
+  await s.ok(`/api/projects/${video.id}/chat`, { text: 'hello from the video' });
+  await s.until(() => chatRow(video.id), 'the video chat binding');
+  // A draft (a direct rule edit) in a conversation of the style.
+  const draft = await s.ok(`/api/learning/formats/${c.FA.id}/draft-rule`, { area: 'visuals', text: 'Progress bar in blue.' });
+  const sid = draft.session.id;
+
+  // While the style's conversation is replying: refused.
+  const replying = s.req(`/api/learning/sessions/${sid}/chat`, { text: 'SLOW-ME think about pacing' });
+  await s.until(() => s.wire().some((w) => w.kind === 'message' && w.text.includes('SLOW-ME')), 'the slow reply');
+  let f = (await s.ok('/api/learning')).formats.find((x) => x.id === c.FA.id);
+  const busy = await s.req(`/api/learning/formats/${c.FA.id}/move`, { profileId: c.B.id, expected: f.revision });
+  assert.equal(busy.status, 409);
+  assert.match(busy.body.error, /still working/);
+  await replying;
+  await s.until(async () => (await s.ok(`/api/learning/sessions/${sid}`)).status !== 'running', 'the reply to finish');
+  assert.deepEqual(chatRow(`_learning_${sid}`).scopes, ['global', `profile:${c.A.id}`, `format:${c.FA.id}`]);
+
+  // A stale revision is refused; the current one moves the style to kit B.
+  const stale = await s.req(`/api/learning/formats/${c.FA.id}/move`, { profileId: c.B.id, expected: f.revision - 1 });
+  assert.equal(stale.status, 400);
+  assert.match(stale.body.error, /changed/);
+  const moved = await s.ok(`/api/learning/formats/${c.FA.id}/move`, { profileId: c.B.id, expected: f.revision });
+  assert.equal(moved.profileId, c.B.id);
+  assert.equal(s.db((d) => d.prepare('SELECT profile_id FROM formats WHERE id=?').get(c.FA.id).profile_id), c.B.id);
+
+  // The video keeps its pin (kit A, A's brand version), its context files, its resources and its chat's memories.
+  assert.deepEqual(pin(), before);
+  assert.equal(s.meta(video.id).context.profileId, c.A.id);
+  const context = await s.ok(`/api/project-context/${video.id}`);
+  assert.equal(context.bundle.brandVersion, brandA.id);
+  assert.deepEqual(chatRow(video.id).scopes, ['global', `profile:${c.A.id}`, `format:${c.FA.id}`, `project:${video.id}`]);
+  const levels = (await s.ok(`/api/resources?project=${video.id}`)).levels.map((l) => l.scope);
+  assert.deepEqual(levels, ['global', `profile:${c.A.id}`, `project:${video.id}`], 'the video still sees kit A, never kit B');
+  const wires = s.wire().filter((w) => w.kind === 'message').length;
+  await s.ok(`/api/projects/${video.id}/chat`, { text: 'still here after the move' });
+  await s.until(() => s.wire().filter((w) => w.kind === 'message').length > wires, 'the video chat after the move');
+  assert.deepEqual(chatRow(video.id).scopes[1], `profile:${c.A.id}`, 'no "memory scope changed": the video stays on kit A');
+
+  // The style's conversation follows it to kit B; its draft stays with the style.
+  assert.deepEqual(chatRow(`_learning_${sid}`).scopes, ['global', `profile:${c.B.id}`, `format:${c.FA.id}`]);
+  const proposal = await s.ok(`/api/learning/sessions/${sid}/proposal`);
+  assert.ok(proposal.rules.some((r) => r.text === 'Progress bar in blue.'));
+  // A new video in the style now pins kit B.
+  const next = await s.ok('/api/projects', { untitled: true, formatId: c.FA.id });
+  assert.deepEqual([s.meta(next.id).context.profileId, s.meta(next.id).context.brandVersion], [c.B.id, null]);
+  // Same kit again: refused.
+  f = (await s.ok('/api/learning')).formats.find((x) => x.id === c.FA.id);
+  assert.equal((await s.req(`/api/learning/formats/${c.FA.id}/move`, { profileId: c.B.id, expected: f.revision })).status, 400);
+
+  // No brand: one hidden built-in kit, made once, never listed as a kit, never renamed, archived or branded.
+  const plain = await s.ok(`/api/learning/formats/${c.FA2.id}/move`, { profileId: null, expected: 1 });
+  const unbranded = (await s.ok('/api/learning')).profiles.filter((p) => p.system === 'unbranded');
+  assert.equal(unbranded.length, 1);
+  assert.equal(plain.profileId, unbranded[0].id);
+  assert.equal(unbranded[0].name, 'No brand');
+  const made = await s.ok('/api/learning/formats', { profileId: null, name: 'Product demo', type: 'explainer', description: 'Screen recording, zooms.' });
+  assert.equal(made.profileId, unbranded[0].id, 'the same hidden kit, not a second one');
+  assert.equal(made.description, 'Screen recording, zooms.');
+  assert.equal((await s.ok('/api/learning')).profiles.filter((p) => p.system).length, 1);
+  assert.ok(!(await s.ok('/api/app/counts')).channels.some((k) => k.id === unbranded[0].id), 'not a kit in the sidebar or My styles');
+  for (const [path, body] of [
+    [`/api/learning/profiles/${unbranded[0].id}/update`, { expected: 1, name: 'Mine' }],
+    [`/api/learning/profiles/${unbranded[0].id}/archive`, { expected: 1 }],
+    [`/api/profiles/${unbranded[0].id}/brand`, { brand: { identity: 'x' }, expected: null }],
+  ]) assert.equal((await s.req(path, body)).status, 400, path);
+  // A video in an unbranded style: no kit rung for memories or resources.
+  const demo = await s.ok('/api/projects', { untitled: true, formatId: made.id });
+  assert.deepEqual((await s.ok(`/api/resources?project=${demo.id}`)).levels.map((l) => l.scope), ['global', `project:${demo.id}`]);
+  // And back from No brand to a real kit.
+  const back = await s.ok(`/api/learning/formats/${c.FA2.id}/move`, { profileId: c.A.id, expected: plain.revision });
+  assert.equal(back.profileId, c.A.id);
+  // Duplicate: a basic style gets a basic copy in the same kit, with its description and skills.
+  const copy = await s.ok(`/api/learning/formats/${made.id}/duplicate`, { expected: made.revision });
+  assert.deepEqual([copy.profileId, copy.name, copy.description, copy.activeVersion], [made.profileId, 'Product demo copy', 'Screen recording, zooms.', null]);
 });

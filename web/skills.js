@@ -4,7 +4,7 @@
 import { $, esc, h, api, toast, confirmBox } from './ui.js';
 import { addSkillsDialog } from './brand.js';
 import { dialog, field, readOnlySkill, showMenu } from './learning.js';
-import { channelHref } from './nav.js';
+import { styleHref } from './nav.js';
 
 const E = '/api/learning';
 const KIND = { core: 'Core', 'customized-core': 'Core · edited', personal: 'Mine', format: 'Format' };
@@ -91,7 +91,7 @@ export async function renderSkills(root, { counts = {} } = {}) {
   function rowMarkup(s) {
     const on = s.id === selected;
     const control = s.kind === 'format'
-      ? (s.formatId ? `<a class="btn small" href="${channelHref('_', 'formats', { format: s.formatId })}">Open format</a>` : '')
+      ? (s.formatId ? `<a class="btn small" href="${styleHref(s.formatId, 'skill')}">Open style</a>` : '')
       : `<button type="button" class="switch" role="switch" aria-checked="${!s.disabled}" aria-label="${esc(skillName(s))} on" data-toggle="${esc(s.id)}"><i aria-hidden="true"></i></button>`;
     return `<tr class="${on ? 'on' : ''}${s.disabled ? ' off' : ''}" data-row="${esc(s.id)}">
       <td class="sk-name"><button type="button" class="sk-pick" data-pick="${esc(s.id)}" aria-pressed="${on}">
@@ -115,7 +115,7 @@ export async function renderSkills(root, { counts = {} } = {}) {
         ? '<p class="sk-note">Generated from the format’s active skill version. Change it by talking to the format.</p>'
         : '';
     const actions = s.kind === 'format'
-      ? `<button type="button" class="btn primary" data-open="${esc(s.id)}">Open</button>${s.formatId ? `<a class="btn" href="${channelHref('_', 'formats', { format: s.formatId })}">Open format</a>` : ''}`
+      ? `<button type="button" class="btn primary" data-open="${esc(s.id)}">Open</button>${s.formatId ? `<a class="btn" href="${styleHref(s.formatId, 'skill')}">Open style</a>` : ''}`
       : `<button type="button" class="btn primary" data-open="${esc(s.id)}">Open</button><button type="button" class="btn" data-toggle="${esc(s.id)}">${s.disabled ? 'Enable' : 'Disable'}</button>`;
     return `<div class="sk-card">
       <p class="eyebrow">${esc(kindLine)}</p>

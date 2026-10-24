@@ -7,7 +7,7 @@ import { $, esc, h, api, toast, tilde, ENGINES } from './ui.js';
 import { setupPage, studioCreator } from './setup.js';
 import { renderDashboard } from './dashboard.js';
 import { renderDatabaseRecovery } from './learning.js';
-import { channelHref, SETTINGS_SECTION_GROUP } from './nav.js';
+import { SETTINGS_SECTION_GROUP } from './nav.js';
 import { currentAppearance, saveAppearance } from './appearance.js';
 import { OLD_LOOK_NAMES } from './theme-map.js';
 import { sidebarMarkup, topBarMarkup, wireShell } from './shell.js';
@@ -82,7 +82,7 @@ const SECTIONS = {
   transcribe: ['Transcription', 'Where your speech becomes words: on this computer or with a cloud service.'],
   editing: ['Editing', 'How trimming feels in the Cut tab, and how your changes reach Claude.'],
   sound: ['Sound', 'Where sound effects come from, and how they sit under your voice.'],
-  look: ['Video defaults', `Starting background and framing for your videos. Each ${TERMS.channel.toLowerCase()}’s Brand tab provides colours and fonts; its formats provide approved format guidance. Existing edits remain under your control.`],
+  look: ['Video defaults', `Starting background and framing for your videos. Each brand kit provides colours and fonts; each style’s Skill provides approved guidance. Existing edits remain under your control.`],
   render: ['Rendering', 'How videos are rendered, and the defaults for new exports.'],
   folders: ['Folders', 'The studio is the home for your local database, projects and media. Skills are managed in the app; you do not need to arrange their folders.'],
   storage: ['Storage & backups', 'Back up and restore the local database, and look after the skill file store.'],
@@ -723,11 +723,11 @@ const DRAW = {
     drawColors();
     return frag(
       group('Video defaults',
-        row('Formats', 'For pacing, captions, storytelling and format-specific visual rules, use a style’s formats. Review the scene plan before applying those rules to a video.', h(`<a class="btn small" href="${channelHref('_', 'formats')}">Open formats</a>`)),
+        row('Styles', 'For pacing, captions, storytelling and style-specific visual rules, use a style’s Skill. Review the scene plan before applying those rules to a video.', h('<a class="btn small" href="#/styles">Open My styles</a>')),
         row('Background', 'Behind the picture in the picture-in-picture, Boxed and Split layouts.', sw),
         row('Picture-in-picture frame', '', seg([['rounded', 'Rounded'], ['circle', 'Circle'], ['frame', 'Whole frame']], l.pip, (x) => save('look', { pip: x }).then(redraw)))),
       group('Style brand',
-        row('Colours, fonts and brand assets', 'Set these in each style’s Brand tab. New video loads the style’s approved brand; these global video controls do not replace it.', h(`<a class="btn small" href="${channelHref('_', 'brand')}">Open the Brand tab</a>`))),
+        row('Colours, fonts and brand assets', 'Set these in a brand kit. New video loads the approved brand of the style’s kit; these global video controls do not replace it.', h('<a class="btn small" href="#/styles/kits">Open brand kits</a>'))),
     );
   },
 };

@@ -2,7 +2,7 @@ import { TERMS } from './terms.js';
 import { $, esc, h, api, toast, confirmBox } from './ui.js';
 import { projectProfilePanel } from './profiles.js';
 import { loadScript, scriptCard } from './prompter.js';
-import { channelHref } from './nav.js';
+import { styleHref, kitHref } from './nav.js';
 const E='/api/learning';
 export const videoSetups=[
  {id:'tutorial',name:'Long-form · on camera',example:'Long-form explainers with me on camera',hint:'A landscape tutorial with a presenter or screen recording. Starts with the tutorial workflow.'},
@@ -34,6 +34,8 @@ const AREAS = [
   { id: 'knowledge', name: 'Knowledge' },
 ];
 const TABS = ['skill', 'files', 'examples', 'learnings', 'videos', 'history'];
+// The Skill tab's side-column panels on a style page (Flat 3 Decision 3), by their ?panel= names.
+const SIDE_PANELS = { files: 'Files', insights: 'Insights', history: 'History', videos: 'Videos' };
 // Skill files: same limits as server/file-store.mjs (shown to the creator, enforced by the server).
 const MAX_FILES = 300;
 const MAX_FILE_BYTES = 1024 ** 3;
@@ -174,47 +176,135 @@ export function rememberChannel(profileId) {
   try { if (profileId) localStorage.setItem(LAST_CHANNEL_KEY, profileId); } catch {}
 }
 
-// A style's optional one-line description (up to 200 characters; design V2 §5).
-const describeField = (value = '') => `<label>Description <span class="sub">(optional)</span><input name="description" value="${esc(value)}" maxlength="200" placeholder="Me on camera, teaching with my screen"></label>`;
+// An optional one-line description (up to 200 characters): a brand kit's, or a style's (Flat 3).
+const describeField = (value = '', placeholder = 'Me on camera, teaching with my screen') => `<label>Description <span class="sub">(optional)</span><input name="description" value="${esc(value)}" maxlength="200" placeholder="${esc(placeholder)}"></label>`;
 
-// New style. `name` prefills it (the editor's "+ New style from this video").
-export function newChannelDialog({ onCreated, name = '' } = {}) {
-  dialog('New style', '<p class="sub">A folder for one way you make videos: its brand, research, assets and memories, plus the formats inside it. Call it whatever you like.</p>'
-    + field('Style name', 'name', name, 'input', 'Tutorials') + describeField(), async (b) => {
+// The brand kits a style can use: not archived, not the hidden No brand profile.
+export const realKits = (profiles) => (profiles || []).filter((p) => !p.archived && !p.system);
+
+// New brand kit (a profile). `name` prefills it.
+export function newKitDialog({ onCreated, name = '' } = {}) {
+  dialog('New brand kit', '<p class="sub">A brand kit is a reusable look and identity: brand, research, assets, people &amp; places and memories. Every style that uses it shares them.</p>'
+    + field('Kit name', 'name', name, 'input', 'Faceless AI') + describeField('', 'Calm, precise, blue and white'), async (b) => {
     const p = await api(`${E}/profiles`, b);
     await onCreated?.(p);
-  }, 'Create style');
+  }, 'Create kit');
 }
+// The Direction A / beta.14 name, kept for older callers.
+export const newChannelDialog = newKitDialog;
 
-export function renameChannelDialog(p, { onDone } = {}) {
-  dialog('Rename style', field('Style name', 'name', p.name) + describeField(p.description || '') + '<p class="sub">Existing videos keep the names they were made with.</p>', async (b) => {
+export function renameKitDialog(p, { onDone } = {}) {
+  dialog('Rename brand kit', field('Kit name', 'name', p.name) + describeField(p.description || '') + '<p class="sub">Existing videos keep the names they were made with.</p>', async (b) => {
     const result = await api(`${E}/profiles/${p.id}/update`, { expected: p.revision || 1, name: b.name, description: b.description || '' });
     if (result?.warning) toast(result.warning);
     await onDone?.();
   }, 'Save');
 }
+export const renameChannelDialog = renameKitDialog;
 
+// A kit that styles still use can't be archived (the server lists them); restore is always possible.
 export async function archiveChannel(p, archive, { onDone } = {}) {
-  if (archive && !await confirmBox({ title: `Archive ${p.name}?`, text: 'The style and its formats are hidden from New video. Nothing is deleted, existing videos are untouched, and you can restore it from My styles.', ok: 'Archive channel' })) return false;
+  if (archive && !await confirmBox({ title: `Archive ${p.name}?`, text: 'The brand kit is hidden from My styles and New video. Nothing is deleted, existing videos are untouched, and you can restore it from Brand kits.', ok: 'Archive kit' })) return false;
   const result = await api(`${E}/profiles/${p.id}/${archive ? 'archive' : 'unarchive'}`, { expected: p.revision || 1 });
   toast(result?.warning || (archive ? `${p.name} archived.` : `${p.name} restored.`));
   await onDone?.();
   return true;
 }
+export const archiveKit = archiveChannel;
+
+// The kit choice in New style and Change kit: existing kits, New kit (a name field appears) and No brand.
+export function kitOptions(profiles, selected) {
+  const kits = realKits(profiles);
+  return `${kits.map((k) => `<option value="${esc(k.id)}"${k.id === selected ? ' selected' : ''}>${esc(k.name)}</option>`).join('')}
+    <option value="__new"${selected === '__new' ? ' selected' : ''}>New kit…</option>
+    <option value=""${selected === '' ? ' selected' : ''}>${TERMS.noBrand}</option>`;
+}
+// The kit a New style / Change kit form chose: an existing id, null (No brand), or a new kit made now.
+async function chosenKit(b) {
+  if (b.kit !== '__new') return b.kit || null;
+  if (!String(b.kitName || '').trim()) throw Error('Name the new brand kit.');
+  return (await api(`${E}/profiles`, { name: b.kitName })).id;
+}
+function wireKitField(el) {
+  const select = $('[name=kit]', el), extra = $('[data-kit-name]', el);
+  const sync = () => { extra.hidden = select.value !== '__new'; $('input', extra).required = select.value === '__new'; };
+  select.onchange = sync;
+  sync();
+}
+const KIT_NAME_FIELD = '<label data-kit-name hidden>New kit name<input name="kitName" maxlength="200" placeholder="Faceless AI"></label>';
+
+// New style (Flat 3 §4): name, kind (video setup), brand kit and where to start. Creates the format under that kit
+// and opens it: Examples when starting from examples or a link (the link is added to a first conversation), else
+// Skill. onCreated(format) replaces the navigation (the editor's "+ New style from this video").
+export function newStyleDialog({ profiles, kitId, name = '', onCreated = null } = {}) {
+  const kits = realKits(profiles);
+  const selected = kitId !== undefined ? (kitId || '') : kits[0]?.id || '';
+  const el = dialog('New style', `<p class="sub">A style is one kind of video you make, like “Faceless reel”. It learns its own skill; a brand kit gives it a look and identity.</p>
+    ${field('Style name', 'name', name, 'input', 'Faceless reel')}
+    <label>Kind<select name="type">${options(videoSetups, 'short')}</select></label><p class="sub" id="styleSetupHint"></p>
+    <label>${TERMS.kit}<select name="kit">${kitOptions(profiles, selected)}</select></label>${KIT_NAME_FIELD}
+    ${describeField('', 'B-roll only, AI voice, punchy captions')}
+    <fieldset class="st-start"><legend>Start from</legend>
+      <label class="learn-check"><input type="radio" name="start" value="examples" checked>Examples · videos you made or admire</label>
+      <label class="learn-check"><input type="radio" name="start" value="link">A link</label>
+      <label class="learn-check"><input type="radio" name="start" value="blank">Blank · teach it later</label>
+    </fieldset>
+    <label data-start-link hidden>Link to an example<input name="link" type="url" placeholder="https://"></label>`, async (b) => {
+    const link = b.start === 'link' ? String(b.link || '').trim() : '';
+    if (b.start === 'link' && !/^https?:\/\//i.test(link)) throw Error('Paste a complete http(s) link, or start another way.');
+    const profileId = await chosenKit(b);
+    const f = await api(`${E}/formats`, { profileId, name: b.name, type: b.type, description: b.description || '' });
+    let session = null;
+    if (link) {
+      session = await api(`${E}/sessions`, { formatId: f.id, name: `${TERMS.conversation} 1` });
+      const u = new URL(link);
+      await api(`${E}/sessions/${session.id}/references`, { kind: 'link', name: (u.hostname + u.pathname).slice(0, 200), url: u.href, revision: session.revision });
+    }
+    toast('Style saved. You can use it in New video now.');
+    if (onCreated) return onCreated(f);
+    location.hash = styleHref(f.id, b.start === 'blank' ? 'skill' : 'examples', session ? { session: session.id } : null);
+  }, 'Create style');
+  const change = () => {
+    const x = videoSetups.find((v) => v.id === $('[name=type]', el).value);
+    $('#styleSetupHint', el).textContent = x.hint;
+  };
+  $('[name=type]', el).onchange = change;
+  change();
+  wireKitField(el);
+  for (const r of el.querySelectorAll('[name=start]')) r.onchange = () => { $('[data-start-link]', el).hidden = el.querySelector('[name=start]:checked').value !== 'link'; };
+  return el;
+}
+
+// Change kit (the style page's Brand tab): POST /api/learning/formats/<id>/move. Projects keep their pins.
+export function changeKitDialog(format, { profiles, onDone } = {}) {
+  const current = profiles.find((p) => p.id === format.profileId);
+  const selected = current?.system ? '' : (realKits(profiles).find((k) => k.id !== format.profileId)?.id || '__new');
+  const el = dialog('Change kit', `<p class="sub">${esc(format.name)} uses ${current?.system ? 'no brand kit' : `the <b>${esc(current?.name || '')}</b> kit`}. Pick another: its brand, people &amp; places and memories apply to new videos in this style. Videos already made keep the brand they were made with, and drafts stay with the style.</p>
+    <label>${TERMS.kit}<select name="kit">${kitOptions(profiles.filter((p) => p.id !== format.profileId), selected)}</select></label>${KIT_NAME_FIELD}`, async (b) => {
+    const profileId = await chosenKit(b);
+    if ((profileId || null) === (current?.system ? null : format.profileId)) throw Error('This style already uses that kit.');
+    const moved = await api(`${E}/formats/${format.id}/move`, { profileId, expected: format.revision || 1 });
+    toast(moved.warning || 'Kit changed. New videos in this style use it; earlier videos keep theirs.');
+    await onDone?.(moved);
+  }, 'Change kit');
+  if (current?.system) $('[name=kit] option[value=""]', el)?.remove(); // already No brand
+  wireKitField(el);
+  return el;
+}
 
 // New format. With `profileId` the channel is fixed (the channel hub); otherwise the creator picks one.
 export function newFormatDialog({ profiles, profileId = null, onCreated } = {}) {
   const open = (profiles || []).filter((p) => !p.archived);
-  if (!open.length) return newChannelDialog();
+  if (!open.length) return newKitDialog();
   const fixed = profileId && open.some((p) => p.id === profileId);
   const channelField = fixed
     ? `<input type="hidden" name="profileId" value="${esc(profileId)}">`
-    : `<label>${TERMS.channel}<select name="profileId">${options(open, profileId)}</select></label>`;
-  const el = dialog('New format', `${channelField}<p class="sub">Choose a starting setup and give your format a name. It is ready for New video as soon as you save. Teaching it a skill is optional.</p><label>Video setup<select name="type">${options(videoSetups, 'tutorial')}</select></label><p class="sub" id="formatSetupHint"></p>` + field('Your format name', 'name', '', 'input', 'Long-form explainers with me on camera') + '<p class="sub">This is your own name, not another preset. You can create several formats with the same video setup and teach each one a different skill.</p><label>Target length in seconds (optional)<input name="targetSeconds" type="number" min="0" max="7200" placeholder="e.g. 600 for a 10-minute video"></label>', async (b) => {
+    : `<label>${TERMS.kit}<select name="profileId">${options(open, profileId)}</select></label>`;
+  const el = dialog('New style', `${channelField}<p class="sub">Choose a starting setup and give your style a name. It is ready for New video as soon as you save. Teaching it a skill is optional.</p><label>Video setup<select name="type">${options(videoSetups, 'tutorial')}</select></label><p class="sub" id="formatSetupHint"></p>` + field('Your style name', 'name', '', 'input', 'Long-form explainers with me on camera') + '<label>Target length in seconds (optional)<input name="targetSeconds" type="number" min="0" max="7200" placeholder="e.g. 600 for a 10-minute video"></label>', async (b) => {
     const x = await api(`${E}/formats`, b);
-    toast('Format saved. You can use it in New video now.');
+    toast('Style saved. You can use it in New video now.');
     await onCreated?.(x, b.profileId);
-  }, 'Create format');
+  }, 'Create style');
   const change = () => {
     const x = videoSetups.find((s) => s.id === $('[name=type]', el).value);
     $('#formatSetupHint', el).textContent = x.hint;
@@ -228,29 +318,37 @@ export function newFormatDialog({ profiles, profileId = null, onCreated } = {}) 
 // The channel's options (the hub's ··· menu): rename, a new format, archive or restore.
 export function channelMenuItems(p, { onChange, newFormat } = {}) {
   return [
-    { label: 'Rename or describe', run: () => renameChannelDialog(p, { onDone: onChange }) },
+    { label: 'Rename or describe', run: () => renameKitDialog(p, { onDone: onChange }) },
     ...(!p.archived && newFormat ? [{ label: 'New format', run: newFormat }] : []),
     '-',
     p.archived
-      ? { label: 'Restore style', run: () => archiveChannel(p, false, { onDone: onChange }) }
-      : { label: 'Archive style', danger: true, run: () => archiveChannel(p, true, { onDone: onChange }) },
+      ? { label: 'Restore kit', run: () => archiveChannel(p, false, { onDone: onChange }) }
+      : { label: 'Archive kit', danger: true, run: () => archiveChannel(p, true, { onDone: onChange }) },
   ];
 }
 
 // The channel hub's Formats tab: this channel's formats beside the format home, with Talk to this format.
-// `channelId` fixes the channel; `basePath` is the address the selection is written to (#/style/<id>/formats).
+// `channelId` fixes the channel; `basePath` is the address the selection is written to (#/style/<formatId>/<tab> in single mode).
 // `onFormatsChange` runs after a format is made or archived (the sidebar's count); `onChannelChange` after the
 // channel itself changes (restore from the archived notice).
-export async function renderLearning(root, { makeChat, startVideo, channelId, basePath, onFormatsChange, onChannelChange } = {}) {
+//
+// Single mode (Flat 3, the style page #/style/<formatId>/<tab>): `formatId` fixes the style and `tab` is 'skill' or
+// 'examples'. The style page draws the cover and the one tab row, so neither the formats list, the format header nor
+// the inner tabs are drawn here. Files, Insights, History and Videos open as side panels from the Skill tab's side
+// column (`panel`), in the place the conversation panel takes; one of the two is open at a time.
+export async function renderLearning(root, { makeChat, startVideo, channelId, basePath, onFormatsChange, onChannelChange, formatId = null, tab: fixedTab = null, panel = null, orientation = 'wide' } = {}) {
   const params = new URLSearchParams(location.hash.split('?')[1]);
-  const remembered = readSelection()[channelId] || {};
+  const single = Boolean(formatId);
+  const remembered = single ? {} : readSelection()[channelId] || {};
   let live = true;
   let data = null;
   let view = {};
   let pid = channelId;
-  let fid = params.get('format') || remembered.formatId || null;
+  let fid = single ? formatId : params.get('format') || remembered.formatId || null;
   let sid = params.get('session');
-  let tab = TABS.includes(params.get('tab')) ? params.get('tab') : TABS.includes(remembered.tab) ? remembered.tab : 'skill';
+  let tab = single ? (fixedTab === 'examples' ? 'examples' : 'skill')
+    : TABS.includes(params.get('tab')) ? params.get('tab') : TABS.includes(remembered.tab) ? remembered.tab : 'skill';
+  let sidePanel = single && !sid && SIDE_PANELS[panel] ? panel : null;
   let talking = Boolean(sid);
   let showArchived = false;
   let firstLoad = true;
@@ -301,8 +399,9 @@ export async function renderLearning(root, { makeChat, startVideo, channelId, ba
 
   async function load() {
     data = await api(E);
+    if (single) pid = data.formats.find((f) => f.id === fid)?.profileId || null;
     const chosen = data.sessions.find((s) => s.id === sid);
-    if (chosen) fid = chosen.formatId; else sid = null;
+    if (chosen && (!single || chosen.formatId === fid)) fid = chosen.formatId; else sid = null;
     // The channel is fixed: a format or conversation from another channel isn't opened here.
     const chosenFormat = data.formats.find((f) => f.id === fid && f.profileId === pid);
     if (!chosenFormat) { fid = null; sid = null; }
@@ -310,17 +409,18 @@ export async function renderLearning(root, { makeChat, startVideo, channelId, ba
     if (firstLoad && (chosenFormat?.archived || data.profiles.find((p) => p.id === pid)?.archived)) showArchived = true;
     firstLoad = false;
     const profiles = data.profiles.filter((p) => p.id === pid);
-    const formats = data.formats.filter((f) => f.profileId === pid && (showArchived || !f.archived));
+    const formats = single ? data.formats.filter((f) => f.id === fid) : data.formats.filter((f) => f.profileId === pid && (showArchived || !f.archived));
     fid = formats.some((f) => f.id === fid) ? fid : formats[0]?.id || null;
     if (sid && conversation(sid)?.formatId !== fid) sid = null;
     const format = formats.find((f) => f.id === fid) || null;
     const conversations = format ? newestConversations(format.id) : [];
     if (talking && !sid) sid = conversations.find((s) => s.status !== 'cancelled')?.id || null;
-    const [videoRows, active, skill, files] = await Promise.all([
+    const [videoRows, active, skill, files, inventory] = await Promise.all([
       Promise.all(formats.map((f) => api(`${E}/formats/${f.id}/videos`).catch(() => []))),
       format?.activeVersion ? api(`${E}/versions/${format.activeVersion}`).catch((e) => ({ error: e.message })) : null,
       format ? api(`${E}/formats/${format.id}/skill`).catch(() => null) : null,
       format ? api(`${E}/formats/${format.id}/files`).catch((e) => ({ error: e.message })) : null,
+      single && format ? api(`${E}/skills`).catch(() => null) : null, // the side column's "Uses these skills"
     ]);
     view = {
       profiles,
@@ -333,6 +433,7 @@ export async function renderLearning(root, { makeChat, startVideo, channelId, ba
       activeError: active?.error || null,
       skill,
       files,
+      inventory,
       videos: new Map(formats.map((f, i) => [f.id, videoRows[i]])),
       ...(format ? await findDrafts(conversations) : { panel: null, panelError: null, draft: null }),
     };
@@ -361,6 +462,14 @@ export async function renderLearning(root, { makeChat, startVideo, channelId, ba
   }
 
   function remember() {
+    if (single) {
+      const query = new URLSearchParams();
+      if (talking && sid) query.set('session', sid);
+      if (sidePanel) query.set('panel', sidePanel);
+      if (legacyStyle) query.set('legacyStyle', legacyStyle);
+      window.history.replaceState(null, '', `${basePath}${query.size ? '?' + query : ''}`);
+      return;
+    }
     writeSelection(pid, { formatId: fid || null, tab });
     rememberChannel(pid);
     const query = new URLSearchParams();
@@ -368,7 +477,7 @@ export async function renderLearning(root, { makeChat, startVideo, channelId, ba
     if (talking && sid) query.set('session', sid);
     if (tab !== 'skill') query.set('tab', tab);
     if (legacyStyle) query.set('legacyStyle', legacyStyle);
-    window.history.replaceState(null, '', `${basePath || channelHref(pid, 'formats')}${query.size ? '?' + query : ''}`);
+    window.history.replaceState(null, '', `${basePath || kitHref(pid, 'styles')}${query.size ? '?' + query : ''}`);
   }
 
   async function paint() {
@@ -388,16 +497,31 @@ export async function renderLearning(root, { makeChat, startVideo, channelId, ba
     applySearch();
     if (talking && view.format && sid) mountConversation();
   }
-  // Tabs and inline changes repaint the format home only, so the conversation panel keeps running.
+  // Tabs and inline changes repaint the format home only (and an open side panel), so the conversation keeps running.
   function paintHome() {
     const home = $('.vf3-home', root);
     if (home) home.innerHTML = homeInner();
+    const side = $('#vfSideBody', root);
+    if (side) side.innerHTML = sideBody();
     remember();
   }
 
   // ---- Markup ----
 
   function page() {
+    if (single) {
+      const notice = legacyStyle && view.format
+        ? `<p class="notice vf-legacy">Use legacy style notes as an example: <b>${esc(legacyStyle)}</b>. Open ${TERMS.talk} and start a new conversation; the notes are added to it. The original files and projects stay unchanged.</p>`
+        : '';
+      if (!view.format) return `<div class="empty vf-home-empty"><b>This style no longer exists</b><p class="sub">It may have been removed from this studio.</p><a class="btn" href="#/styles">My styles</a></div>`;
+      const open = talking ? panelMarkup() : sidePanel ? sideMarkup() : '';
+      return `<div class="learn-page vf3-page">${notice}
+        <div class="vf3 single${open ? ' talking' : ''}">
+          <section class="vf3-pane vf3-home" data-scroll="home" aria-label="${esc(view.format.name)}">${homeInner()}</section>
+          ${open}
+        </div>
+      </div>`;
+    }
     const open = talking && view.format;
     const notice = legacyStyle
       ? `<p class="notice vf-legacy">Use legacy style notes as an example: <b>${esc(legacyStyle)}</b>. Choose the style and format, open ${TERMS.talk} and start a new conversation; the notes are added to it. The original files and projects stay unchanged.</p>`
@@ -446,7 +570,7 @@ export async function renderLearning(root, { makeChat, startVideo, channelId, ba
         <label class="learn-check vf-toggle"><input type="checkbox" data-show-archived${showArchived ? ' checked' : ''}>Show archived formats</label>
         <details class="vf-how"><summary>How formats work</summary>
           <p><b>A format</b> is a repeatable kind of video for this style. Its <b>skill</b> is the guide you teach it by talking to it, reviewed and saved as versions.</p>
-          <p>Saving a new version affects only future videos; existing videos keep the version they started with. The style's <a href="${channelHref(p.id, 'brand')}">Brand tab</a> holds identity and voice; <a href="#/settings/editing/look">Video defaults</a> hold starting appearance.</p>
+          <p>Saving a new version affects only future videos; existing videos keep the version they started with. The <a href="${kitHref(p.id, 'brand')}">brand kit</a> holds identity and voice; <a href="#/settings/editing/look">Video defaults</a> hold starting appearance.</p>
         </details>
       </div>
     </section>`;
@@ -458,6 +582,7 @@ export async function renderLearning(root, { makeChat, startVideo, channelId, ba
   }
 
   function homeInner() {
+    if (single) return tabBody();
     const { format: f, profile: p } = view;
     if (!p) {
       return `<div class="empty vf-home-empty"><b>Create a style to begin</b><p class="sub">A style is one way you make videos: a channel, a brand or a series. Add its video formats next; each one learns its own skill.</p>${button(`+ ${TERMS.channel}`, 'channel', 'primary')}</div>`;
@@ -550,6 +675,11 @@ export async function renderLearning(root, { makeChat, startVideo, channelId, ba
     if (view.activeError) {
       return `<div class="notice">The saved skill could not be read: ${esc(view.activeError)} ${button('Restore generated files', 'restoreActive', 'small')}</div>`;
     }
+    if (!saved.length && !proposal && single) {
+      return `<div class="st-skill"><section class="st-rules" aria-label="How this style is made">${singleHead(0)}
+          <p class="sub st-empty">No rules yet: ${esc(f.name)} uses the core ${esc(setupName(f))} workflow for now. ${TERMS.talk} to teach it from example videos, or add a rule yourself. Every change is a draft you review before it is saved as v1.</p>
+        </section>${singleSide()}</div>`;
+    }
     if (!saved.length && !proposal) {
       return `<div class="vf-skill-grid"><section class="vf-card vf-empty-card">
           <b>No skill yet</b>
@@ -580,6 +710,9 @@ export async function renderLearning(root, { makeChat, startVideo, channelId, ba
     const stale = proposal?.stale
       ? `<p class="notice vf-stale">This draft started from v${proposal.baseNumber || '—'}, but the skill is now v${activeNumber() || '—'}. Rebase it onto the current version before saving. ${button('Rebase draft', 'rebaseDraft', 'small')}</p>`
       : '';
+    if (single) {
+      return `<div class="st-skill"><section class="st-rules" aria-label="How this style is made">${singleHead(count)}${stale}${body}</section>${singleSide()}</div>`;
+    }
     return `<div class="vf-skill-grid">
       <section class="vf-card vf-rules" aria-label="Rules">
         <div class="vf-card-head">
@@ -592,6 +725,73 @@ export async function renderLearning(root, { makeChat, startVideo, channelId, ba
       </section>
       ${skillSide()}
     </div>`;
+  }
+
+  // ---- The style page's Skill tab (single mode): the rules' header and the side column ----
+
+  function singleHead(count) {
+    const draft = view.draft;
+    const review = count
+      ? `<button type="button" class="link-btn st-review" data-action="openDraft" title="In “${esc(draft.session.name)}”">${plural(count, 'change')} to review</button>`
+      : `<span class="sub">${view.active ? `${TERMS.skill} v${view.active.number}` : 'Basic · no saved skill yet'}</span>`;
+    return `<div class="st-rules-head">
+        <h2>How this style is made</h2>${review}<span class="gap"></span>
+        ${button('+ Rule', 'addRule', 'small')}
+        <button type="button" class="btn small${talking ? ' on' : ' primary'}" data-action="talk" aria-pressed="${Boolean(talking)}">${TERMS.talk}</button>
+      </div>`;
+  }
+
+  // Uses these skills (core always on; personal on/off for this style), Files, Insights, History, Videos and the
+  // generated skill folder. Files, Insights, History and Videos open side panels (data-action="panel:<name>").
+  function singleSide() {
+    const { format: f, active, skill } = view;
+    const items = view.inventory?.items || [];
+    const core = items.filter((x) => x.kind === 'core' && x.published && !x.disabled && !x.compatibilityBlocked);
+    const personal = items.filter((x) => x.kind === 'personal' && !x.name.startsWith('learned-') && x.published && !x.disabled && !x.compatibilityBlocked);
+    const chosen = new Set(f.skillIds || []);
+    const used = view.videos.get(f.id)?.length || 0;
+    const fileCount = view.files?.totals?.count || 0;
+    const insights = active?.learnings?.length || 0;
+    const latest = view.versions.at(-1);
+    const row = (text, action, link) => `<div class="st-side-row"><span>${text}</span><button type="button" class="link-btn" data-action="${action}">${link}</button></div>`;
+    let folder = 'Appears after the first saved version.';
+    if (skill?.problem) folder = `Needs attention: ${skill.problem}`;
+    else if (skill?.archived) folder = 'Not published while the style is archived.';
+    else if (skill?.published && skill.current) folder = `Published · v${skill.activeNumber}`;
+    else if (active) folder = 'Waiting to be rebuilt.';
+    return `<aside class="st-side" aria-label="About this style">
+      <section class="st-side-sec"><h3>Uses these skills</h3>
+        ${core.length ? `<p class="st-core">${esc(core.map((x) => `/${x.name}`).join(' · '))} <span class="sub">· always on</span></p>` : ''}
+        ${personal.map((x) => `<label class="st-skill-row"><span>/${esc(x.name)}</span><span class="sub">${chosen.has(x.id) ? 'On' : 'Off'}</span><input type="checkbox" class="switch-input" data-skill-toggle="${esc(x.id)}"${chosen.has(x.id) ? ' checked' : ''} aria-label="Use ${esc(x.name)} in this style"></label>`).join('')}
+        <button type="button" class="link-btn" data-action="chooseSkills">Choose skills</button>
+      </section>
+      <section class="st-side-sec"><h3>Files</h3>${row(`${plural(fileCount, 'file')} · assets and knowledge`, 'panel:files', 'Manage')}</section>
+      <section class="st-side-sec"><h3>Insights</h3>${row(plural(insights, 'insight'), 'panel:insights', 'See all')}</section>
+      <section class="st-side-sec"><h3>History</h3>${row(latest ? `v${latest.number} saved ${esc(shortDate(latest.created))} · ${esc(latest.name)}` : 'No saved versions yet', 'panel:history', 'See all versions')}</section>
+      <section class="st-side-sec"><h3>Videos</h3>${row(used ? plural(used, 'video') : 'No videos yet', 'panel:videos', used ? 'Show' : 'Open')}</section>
+      <section class="st-side-sec"><h3>Skill folder</h3><p class="sub">${esc(folder)}</p>
+        <div class="learn-actions">${skill?.path ? button('Show in Finder', 'revealSkill', 'small') : ''}${active && !skill?.current && !skill?.archived ? button('Rebuild', 'rebuildSkill', 'small') : ''}</div></section>
+    </aside>`;
+  }
+
+  // A side panel in the conversation panel's place: Files, Insights, History or Videos.
+  function sideMarkup() {
+    const title = SIDE_PANELS[sidePanel];
+    return `<aside class="vf3-chat vf3-side" id="vfSide" aria-label="${esc(title)}">
+      <div class="chat-head vf-chat-head vf-side-head">
+        <h2 class="vf-grow">${esc(title)}</h2>
+        ${sidePanel === 'videos' ? `<a class="btn small" href="#/?style=${encodeURIComponent(fid)}">Show in Projects</a>` : ''}
+        <button type="button" class="vf-icon" data-action="closeSide" aria-label="Close the ${esc(title.toLowerCase())} panel" title="Close">×</button>
+      </div>
+      <div class="vf-side-body" id="vfSideBody" data-scroll="side">${sideBody()}</div>
+    </aside>`;
+  }
+  function sideBody() {
+    if (sidePanel === 'files') return filesTab();
+    if (sidePanel === 'insights') return learningsTab();
+    if (sidePanel === 'history') return historyTab();
+    if (sidePanel === 'videos') return videosTab();
+    return '';
   }
 
   function skillSide() {
@@ -743,6 +943,19 @@ export async function renderLearning(root, { makeChat, startVideo, channelId, ba
   function examplesTab() {
     const cited = new Set((view.active?.rules || []).flatMap((r) => (r.evidence || []).map((e) => e.referenceId)).filter(Boolean));
     const frames = new Map((view.active?.examples || []).map((x) => [x.referenceId, x.frames?.length || 0]));
+    if (single) {
+      // One grid of example tiles in the style's orientation, each studied or not, from every conversation.
+      const tiles = view.conversations.flatMap((s) => s.references.map((r) => {
+        const studied = cited.has(r.id) || frames.get(r.id) || (s.approvedVersions?.length || s.approvedVersion);
+        const what = r.url ? new URL(r.url).hostname.replace(/^www\./, '') : r.note ? 'Written note' : `${Math.round((r.size || 0) / 1024)} KB · local copy`;
+        return `<li class="st-ex">
+          <button type="button" class="st-ex-pic ${orientation}" data-action="openConversation:${s.id}" aria-label="Open ${esc(r.name)} in its conversation"><span class="st-ex-frame" aria-hidden="true"></span><span class="st-ex-badge${studied ? ' on' : ''}">${studied ? 'Studied' : 'Not studied'}</span></button>
+          <span class="st-ex-t"><b>${esc(r.name)}</b><span class="sub">${esc(what)} · ${esc(s.name)}</span></span>
+        </li>`;
+      })).join('');
+      return `<div class="st-examples-head"><p class="sub">Videos this style learns from: yours or ones you admire. Add a link or a file, then study it.</p>${button('Add examples', 'addExamples', 'primary small')}</div>
+        ${tiles ? `<ul class="st-examples">${tiles}</ul>` : `<div class="st-examples-empty"><b>No examples yet</b><p class="sub">Drop example videos or paste links in ${TERMS.talk}. The originals stay in the conversation's folder; the skill keeps notes, links and a few key frames.</p></div>`}`;
+    }
     const groups = view.conversations.filter((s) => s.references.length).map((s) => {
       const saved = (s.approvedVersions || (s.approvedVersion ? [s.approvedVersion] : [])).map(versionNumber).filter(Boolean);
       const rows = s.references.map((r) => {
@@ -1228,7 +1441,7 @@ export async function renderLearning(root, { makeChat, startVideo, channelId, ba
 
   // Channel changes go through the shared dialogs above; the hub redraws (and the sidebar recounts) afterwards.
   function newChannel() {
-    newChannelDialog({ onCreated: (p) => { location.hash = channelHref(p.id, 'formats'); } });
+    newKitDialog({ onCreated: (p) => { location.hash = kitHref(p.id, 'styles'); } });
   }
 
   function archiveThisChannel(p, archive) {
@@ -1312,6 +1525,7 @@ export async function renderLearning(root, { makeChat, startVideo, channelId, ba
     }
     sid = s.id;
     talking = true;
+    sidePanel = null;
     await paint();
     revealPanel();
     $('#input', root)?.focus({ preventScroll: true });
@@ -1346,16 +1560,16 @@ export async function renderLearning(root, { makeChat, startVideo, channelId, ba
     const f = view.format;
     const inv = await api(`${E}/skills`);
     const list = inv.items.filter((s) => s.kind === 'personal' && !s.name.startsWith('learned-') && !s.disabled && s.published && !s.compatibilityBlocked);
-    dialog('Personal skills for this format', `<p>Enabled core workflows and this format's own skill are included automatically. Personal skills belong to your studio and can be selected in formats of any channel.</p>${list.map((s) => `<label class="learn-check"><input type="checkbox" name="skill-${s.id}"${f.skillIds?.includes(s.id) ? ' checked' : ''}>${esc(s.name)} — ${esc(s.summary || '')}</label>`).join('') || '<p>No enabled personal workflows available.</p>'}`, async (b) => {
-      await api(`/api/profiles/${pid}/skills`, { formatId: f.id, ids: Object.keys(b).filter((k) => k.startsWith('skill-')).map((k) => k.slice(6)), expected: f.skillIds || [] });
+    dialog(single ? 'Skills for this style' : 'Personal skills for this format', `<p>Enabled core workflows and this ${single ? 'style' : 'format'}'s own skill are included automatically. Personal skills belong to your studio and can be selected in any style.</p>${list.map((s) => `<label class="learn-check"><input type="checkbox" name="skill-${s.id}"${f.skillIds?.includes(s.id) ? ' checked' : ''}>${esc(s.name)} — ${esc(s.summary || '')}</label>`).join('') || '<p>No enabled personal workflows available.</p>'}`, async (b) => {
+      await api(`/api/profiles/${f.profileId}/skills`, { formatId: f.id, ids: Object.keys(b).filter((k) => k.startsWith('skill-')).map((k) => k.slice(6)), expected: f.skillIds || [] });
       await paint();
     });
   }
 
   // On narrow screens the panel sits below the format home: bring it into view when it opens.
   function revealPanel() {
-    if (!talking || !matchMedia('(max-width: 980px)').matches) return;
-    $('#vfChat', root)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if ((!talking && !sidePanel) || !matchMedia('(max-width: 980px)').matches) return;
+    $('#vfChat, #vfSide', root)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
   // ---- Events: one delegated handler, so repainting part of the page never loses its bindings. ----
@@ -1368,10 +1582,20 @@ export async function renderLearning(root, { makeChat, startVideo, channelId, ba
     editFormat: () => editFormat(),
     newVideo: () => startVideo(view.format),
     formatMenu: (el) => showMenu(el, formatMenuItems()),
-    talk: async () => { talking = !talking; if (!talking) sid = null; await paint(); revealPanel(); },
+    talk: async () => { talking = !talking; if (!talking) sid = null; sidePanel = null; await paint(); revealPanel(); },
+    panel: async (el, name) => { sidePanel = SIDE_PANELS[name] ? name : null; talking = false; sid = null; await paint(); revealPanel(); },
+    closeSide: async () => { sidePanel = null; await paint(); },
+    chooseSkills: () => chooseSkills(),
+    addExamples: async () => {
+      // Examples are added in a conversation: the newest open one, else a new one. Its panel takes files and links.
+      const open = view.conversations.find((s) => !['cancelled', 'running'].includes(s.status));
+      if (open) { sid = open.id; talking = true; sidePanel = null; await paint(); revealPanel(); }
+      else await newConversation();
+      toast('Drop example videos or files here, or paste links.');
+    },
     closePanel: async () => { talking = false; sid = null; await paint(); },
-    openDraft: async () => { sid = view.draft.session.id; talking = true; await paint(); revealPanel(); },
-    openConversation: async (el, id) => { sid = id; talking = true; await paint(); revealPanel(); },
+    openDraft: async () => { sid = view.draft.session.id; talking = true; sidePanel = null; await paint(); revealPanel(); },
+    openConversation: async (el, id) => { sid = id; talking = true; sidePanel = null; await paint(); revealPanel(); },
     addRule: () => ruleDialog(null),
     addFiles: () => addFilesDialog(),
     addFilesHere: () => addFilesDialog(sid),
@@ -1479,6 +1703,17 @@ export async function renderLearning(root, { makeChat, startVideo, channelId, ba
 
   root.onchange = async (e) => {
     const el = e.target;
+    if (el.matches('[data-skill-toggle]')) {
+      // A personal skill on or off for this style: the format's selection (existing POST /api/profiles/<kit>/skills).
+      const f = view.format, ids = new Set(f.skillIds || []);
+      if (el.checked) ids.add(el.dataset.skillToggle); else ids.delete(el.dataset.skillToggle);
+      el.disabled = true;
+      await run(async () => {
+        await api(`/api/profiles/${f.profileId}/skills`, { formatId: f.id, ids: [...ids], expected: f.skillIds || [] });
+        await paint();
+      })();
+      return;
+    }
     if (el.matches('[data-show-archived]')) {
       showArchived = el.checked;
       await run(paint)();
@@ -1541,7 +1776,7 @@ export async function projectLearningPanel(root,id,meta,{send}={}){
  const actions=h(`<div class="learn-actions">${button('Develop script','script')}${button('Review scene plan','plan')}${button('Study this project','recap')}${button('Review version upgrade','upgrade')}</div>`);el.append(actions);
  $('[data-action=script]',actions).onclick=()=>send?.('Develop or revise script.md using this project’s pinned format skill, direction and target duration. Show the script for review before recording or building. Preserve any existing draft until changes are agreed.');
  $('[data-action=plan]',actions).onclick=async()=>{try{const p=await api(`${E}/projects/${id}/plan-review`,{});dialog('Approve scene plan',`<p>Review the scene plan and timing. Approval applies to this exact plan, cut and guide version.</p><pre>${esc(JSON.stringify(p.plan,null,2))}</pre>`,async()=>{await api(`${E}/projects/${id}/approve-plan`,{token:p.token});toast('Scene plan approved. You can start the build.');});}catch(e){toast(e.message);}};
- $('[data-action=recap]',actions).onclick=()=>dialog('Study this project',field('What worked, what changed and why','note','','textarea'),async b=>{const s=await api(`${E}/projects/${id}/recap`,b);location.hash=channelHref('_','formats',{session:s.id});});
+ $('[data-action=recap]',actions).onclick=()=>dialog('Study this project',field('What worked, what changed and why','note','','textarea'),async b=>{const s=await api(`${E}/projects/${id}/recap`,b);location.hash=styleHref(s.formatId,'skill',{session:s.id});});
  $('[data-action=upgrade]',actions).onclick=async()=>{try{const all=await api(E),f=all.formats.find(f=>f.id===meta.learning.formatId);if(f.activeVersion===v.id){toast('This project already uses the active version.');return;}const diff=await api(`${E}/projects/${id}/upgrade-preview`,{versionId:f.activeVersion});dialog('Review format upgrade',`<h3>Current rules</h3><pre>${esc(diff.oldRules.map(r=>r.text).join('\n\n'))}</pre><h3>New rules</h3><pre>${esc(diff.newRules.map(r=>r.text).join('\n\n'))}</pre>${diff.notices?.length?`<div class="notice">${diff.notices.map(n=>`<p>${esc(n)}</p>`).join('')}</div>`:''}<p>Existing cuts, graphics and overrides stay as they are. Ask the agent to review changes before rebuilding.</p>`,async()=>{await api(`${E}/projects/${id}/upgrade`,{versionId:diff.to,expected:diff.from});location.reload();});}catch(e){toast(e.message);}};
 }
 

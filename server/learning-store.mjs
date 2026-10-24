@@ -22,6 +22,7 @@ const focusAreas = ['scripting','pacing','visuals','captions','sound','knowledge
 export const FOCUS_AREAS = focusAreas;
 const formatTypes = ['tutorial', 'faceless', 'short', 'explainer'];
 const openStatuses = ['draft', 'review', 'interrupted', 'failed'];
+export const UNBRANDED = 'unbranded';
 const VIDEO_REFERENCE = /\.(mp4|mov|m4v|webm)$/i;
 const KEY_FRAMES = 6;
 // Used when a creator's direct edit starts a format's first version: the creator still reviews it before saving.
@@ -139,15 +140,32 @@ export class LearningStore {
       versions: this.list('versions').map(({ package: ignored, ...v }) => v),
     };
   }
-  // A style's optional one-line description (design V2 §5): up to 200 characters, '' clears it.
+  // A brand kit's optional one-line description (design V2 §5): up to 200 characters, '' clears it.
+  // (In the UI a profile is a "brand kit" and a format is a "style"; ADDENDUM-styles-gallery.md, Flat 3.)
   profile(name, description = '') {
     return this.put('profiles', { id: id(), name: text(name), ...describe(description), revision: 1, created: now() });
   }
-  format(profileId, name, type, targetSeconds = 0) {
-    const profile = this.get('profiles', profileId);
-    if (profile.archived) fail('This channel is archived. Restore it before adding formats.');
+  // The one hidden built-in profile for styles without a brand ("No brand"): made the first time a style needs it,
+  // never listed as a kit, never renamed, archived or given a brand. Its id is an ordinary profile id.
+  unbrandedProfile() {
+    const found = this.list('profiles').find((p) => p.system === UNBRANDED);
+    if (found) return found;
+    return this.put('profiles', { id: id(), name: 'No brand', system: UNBRANDED, description: '', revision: 1, created: now() });
+  }
+  isUnbranded(profileId) {
+    if (!profileId) return false;
+    try { return this.get('profiles', profileId).system === UNBRANDED; } catch { return false; }
+  }
+  notUnbranded(profileId, what = 'This') {
+    if (this.isUnbranded(profileId)) fail(`${what} belongs to a brand kit. Pick or create a brand kit for this style first.`);
+  }
+  // profileId null (or '') puts the style under the hidden No brand profile.
+  format(profileId, name, type, targetSeconds = 0, description = '') {
+    const owner = profileId ? profileId : this.unbrandedProfile().id;
+    const profile = this.get('profiles', owner);
+    if (profile.archived) fail('This brand kit is archived. Restore it before adding styles.');
     if (!formatTypes.includes(type)) fail('Choose a supported production format.');
-    return this.put('formats', { id: id(), profileId, name: text(name), type, targetSeconds: clampTarget(targetSeconds), activeVersion: null, revision: 1, created: now() }, profileId);
+    return this.put('formats', { id: id(), profileId: owner, name: text(name), ...describe(description), type, targetSeconds: clampTarget(targetSeconds), activeVersion: null, revision: 1, created: now() }, owner);
   }
 
   // ---- Rename, setup changes and soft archive. Revisions catch stale edits; projects stay pinned. ----
@@ -161,20 +179,28 @@ export class LearningStore {
   }
   updateProfile(profileId, { expected, name, description } = {}) {
     return this.changeRecord('profiles', profileId, expected, 'This channel', (p) => {
+      if (p.system) fail('No brand is built in. It cannot be renamed.');
       if (name !== undefined) p.name = text(name);
       if (description !== undefined) Object.assign(p, describe(description));
     });
   }
-  archiveProfile(profileId, expected, archived = true) {
+  // refuseUsed: a brand kit that styles still use can't be archived until they move (the My styles UI, Flat 3).
+  archiveProfile(profileId, expected, archived = true, { refuseUsed = false } = {}) {
     return this.changeRecord('profiles', profileId, expected, 'This channel', (p) => {
+      if (p.system) fail('No brand is built in. It cannot be archived.');
+      if (archived && refuseUsed) {
+        const using = this.list('formats').filter((f) => f.profileId === p.id && !f.archived).map((f) => f.name);
+        if (using.length) fail(`${using.length === 1 ? 'A style uses' : `${using.length} styles use`} this brand kit: ${using.join(', ')}. Move ${using.length === 1 ? 'it' : 'them'} to another kit (Brand tab → Change kit) first.`);
+      }
       p.archived = Boolean(archived);
       p.archivedAt = archived ? now() : null;
     });
   }
   // Type and target length apply to future videos only: versions and pinned projects are untouched.
-  updateFormat(formatId, { expected, name, type, targetSeconds } = {}) {
+  updateFormat(formatId, { expected, name, type, targetSeconds, description } = {}) {
     return this.changeRecord('formats', formatId, expected, 'This format', (f) => {
       if (name !== undefined) f.name = text(name);
+      if (description !== undefined) Object.assign(f, describe(description));
       if (type !== undefined) {
         if (!formatTypes.includes(type)) fail('Choose a supported production format.');
         f.type = type;
@@ -187,6 +213,37 @@ export class LearningStore {
       if (!archived && this.get('profiles', f.profileId).archived) fail('Restore the channel before restoring its format.');
       f.archived = Boolean(archived);
       f.archivedAt = archived ? now() : null;
+    });
+  }
+  // Change kit (Flat 3): the style moves to another profile. Only the format row changes: its sessions, drafts,
+  // versions, files and skill selection go with it, and projects keep the brand, format and version they pinned.
+  // profileId null puts it under No brand. The format conversations' memories are rebound in the same transaction;
+  // the caller rebuilds the format skill (its title names the kit) and refuses while a conversation is working.
+  moveFormat(formatId, { profileId, expected } = {}) {
+    return this.tx(() => {
+      const f = this.get('formats', formatId);
+      if (revisionOf(f) !== expected) fail('This style changed. Reload before changing its kit.');
+      const target = profileId ? this.get('profiles', profileId) : this.unbrandedProfile();
+      if (target.archived) fail('That brand kit is archived. Restore it first.');
+      if (target.id === f.profileId) fail('This style already uses that brand kit.');
+      const moved = bump({ ...f, profileId: target.id, movedFrom: { profileId: f.profileId, at: now() } });
+      this.db.prepare('UPDATE formats SET profile_id=?, data=? WHERE id=?').run(target.id, json(moved), f.id);
+      this.rebindFormatMemory?.(f.id); // ProfileStore: the style's conversations follow it to the new kit's memories
+      return moved;
+    });
+  }
+  // Duplicate (the style page's … menu): a new style beside this one, same kit, setup, description and skills.
+  // With a saved skill the copy gets an independent v1 of it (copyFormat); without one it starts basic.
+  duplicateFormat(sourceId, { name, expected } = {}) {
+    const f = this.get('formats', sourceId);
+    if (revisionOf(f) !== expected) fail('This style changed. Reload before duplicating it.');
+    const copyName = name || `${f.name} copy`.slice(0, 200);
+    const made = f.activeVersion
+      ? this.copyFormat(f.id, { profileId: f.profileId, name: copyName, expected: f.activeVersion, reviewed: true })
+      : this.format(f.profileId, copyName, f.type, f.targetSeconds, f.description || '');
+    return this.tx(() => {
+      const fresh = this.get('formats', made.id);
+      return this.update('formats', { ...fresh, description: f.description || '', skillIds: [...(f.skillIds || [])] });
     });
   }
   // Archived formats, or formats of an archived channel, are hidden from New video and lose their generated skill.

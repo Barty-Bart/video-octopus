@@ -282,15 +282,15 @@ function levelsForProfile(s, profileId) {
   const videos = listProjects().map((x) => ({ id: x.id, name: x.name, profileId: s.projectIds(x.id).profileId })).filter((x) => x.profileId === profileId);
   return [
     { scope: 'global', level: 'global', label: 'All styles', items: listResources(s, ['global']) },
-    { scope: `profile:${profileId}`, level: 'profile', label: `This channel: ${p.name}`, items: listResources(s, [`profile:${profileId}`]) },
-    { scope: null, level: 'project', label: 'Videos in this channel', videos: videos.map((v) => ({ ...v, scope: `project:${v.id}`, items: listResources(s, [`project:${v.id}`]) })) },
+    { scope: `profile:${profileId}`, level: 'profile', label: `Brand kit: ${p.name}`, items: listResources(s, [`profile:${profileId}`]) },
+    { scope: null, level: 'project', label: 'Videos using this kit', videos: videos.map((v) => ({ ...v, scope: `project:${v.id}`, items: listResources(s, [`project:${v.id}`]) })) },
   ];
 }
 function levelsForProject(s, project) {
   const ids = s.projectIds(project), list = s.chainResources(project);
   return s.resourceChain(project).map((scope) => {
     const level = parseScope(scope).level;
-    const label = level === 'global' ? 'All styles' : level === 'profile' ? `Style: ${s.get('profiles', ids.profileId).name}` : 'This video';
+    const label = level === 'global' ? 'All styles' : level === 'profile' ? `Brand kit: ${s.get('profiles', ids.profileId).name}` : 'This video';
     return { scope, level, label, items: list.filter((r) => r.shownAt === scope) };
   });
 }

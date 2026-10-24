@@ -235,7 +235,7 @@ const rowsOf = (db, tables, table) => (tables.has(table)
 // formats and its videos).
 export function channelSummaries() {
  return readStudioDb((db, tables) => {
-  const profiles = rowsOf(db, tables, 'profiles').filter((p) => !p.archived);
+  const profiles = rowsOf(db, tables, 'profiles').filter((p) => !p.archived && !p.system); // No brand isn't a kit
   const formats = rowsOf(db, tables, 'formats');
   const entries = rowsOf(db, tables, 'memory_entries').filter((m) => m.status === 'pending');
   const chats = rowsOf(db, tables, 'memory_chats').filter((c) => c.project);

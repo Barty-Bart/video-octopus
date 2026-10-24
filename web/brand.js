@@ -321,7 +321,7 @@ export function brandSettings({ formats, ask }) {
   act.append(saved, save);
   const kit = brandKit({ onChange: (v) => drawNotes(v) });
   wrap.append(
-    sec('Brand library and video formats', 'Keep shared identity here. Learn pacing, captions and visual rules for a particular format in Video formats. Approved formats do not overwrite these files or switch brand kits automatically.', h('<a class="btn small" href="#/style/_/formats">Open formats</a>')),
+    sec('Brand library and video formats', 'Keep shared identity here. Learn pacing, captions and visual rules for a particular format in Video formats. Approved formats do not overwrite these files or switch brand kits automatically.', h('<a class="btn small" href="#/styles">Open formats</a>')),
     sec('About you', 'Your answers from Setup. They go into BRAND.md, which every chat in your studio reads.', about.el, act),
     sec('Brand files', 'Logos, photos of you, product images, fonts and examples you like, kept in your studio’s library (brand/).', kit.el),
     sec('Shared style notes', 'Optional studio-wide notes. For versioned, reviewed learning from references, use Video formats above.', notes),

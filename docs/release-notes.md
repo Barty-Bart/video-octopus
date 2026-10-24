@@ -1,3 +1,13 @@
+# v0.1.0-beta.15
+
+- **My styles is flat.** Each style is one kind of video (for example "Faceless reel" or "YouTube tutorial") shown as a card you click straight into. A style's page has one row of tabs: Skill (rules and Talk to this style, with skills, files, insights, history and videos alongside), Examples, Brand, People & places, and Memories.
+- **Brand kits.** Brand, website research, assets, people & places and memories live in brand kits, shown in a bar above the styles and at My styles › Brand kits. A style uses one kit; **Change kit** moves it to another (or to No brand) while videos already made keep what they were pinned to, and the style's conversations follow the new kit's memories. A kit still used by styles can't be archived.
+- **New style** asks what kind of video it is and which kit to use; New video and the editor's style picker show the same flat list. Styles without a brand use a hidden built-in "No brand" kit.
+- **Old links keep working,** including beta.14's style addresses and every earlier channel link.
+- Under the hood nothing moved: styles are formats and kits are the existing profiles.
+
+Verified with 334 unit tests on Node 24.22.1 and 22.22.1, the format-skill and learning runtimes, and 233 disposable browser checks (light and dark at 1440, 980 and 375 px). Not run: e2e suites, Windows UI. This is a source update on main; the downloadable tagged prerelease remains separate.
+
 # v0.1.0-beta.14
 
 - **Themes.** Appearance is now Light, Dark or Match system, with four accent colours (orange, blue, green, violet), replacing the ten looks. Your previous look is mapped automatically on first start (light looks → Light, dark looks → Dark, the default → Match system) and a one-time note says so. A light/dark switch sits in page headers. Unused looks and font families were removed.

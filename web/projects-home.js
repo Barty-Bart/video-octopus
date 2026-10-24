@@ -5,7 +5,7 @@
 import { $, esc, h, api, ago } from './ui.js';
 import { icon } from './icons.js';
 import { themeSwitch } from './appearance.js';
-import { styleHref } from './nav.js';
+import { styleHref, kitHref } from './nav.js';
 import { channelAvatar } from './shell.js';
 import { TERMS } from './terms.js';
 
@@ -28,8 +28,9 @@ export function wireThumb(box) {
 const stagePic = (p, lazy = true) => `<img alt="" decoding="async"${lazy ? ' loading="lazy"' : ''} src="${thumbUrl(p)}">`
   + `<span class="pv-ph" aria-hidden="true">${icon('recordings', 22)}</span>`;
 
-// Where a project is: its style (or No style), its stage, when it was edited.
-const styleOf = (p) => p.profileName || TERMS.noStyle;
+// Where a project is: its style (a format, Flat 3) or No style, its stage, when it was edited.
+const kitOf = (p) => (p.profileName && p.profileName !== TERMS.noBrand ? p.profileName : '');
+const styleOf = (p) => p.formatName || kitOf(p) || TERMS.noStyle; // a video with a kit but no style shows the kit
 const stageOf = (p) => (!p.type ? 'Earlier edit' : p.stage || (p.progress && !p.next ? 'Done' : 'Not started'));
 const inProgress = (p) => p.app && p.type && Boolean(p.next);
 
@@ -40,15 +41,20 @@ let homeFilter = (() => { try { return localStorage.getItem('studio.home.channel
 // Returns { teardown }.
 export function renderProjects(main, ctx) {
   const { projects, takes = [], counts = {}, query = null, notice = '', newVideo, recover } = ctx;
-  const styles = counts.channels || [];
+  const styles = counts.channels || []; // brand kits (their colours and memories)
+  // The pills: one per style (format) that has videos. #/?style=<id> filters by a style, or by a brand kit's id
+  // (beta.14's style addresses were kits; such a filter gets its own pill).
+  const used = new Map();
+  for (const p of projects) if (p.formatId && !used.has(p.formatId)) used.set(p.formatId, p.formatName || 'Style');
   const fromAddress = query?.get('style') || query?.get('channel');
   if (fromAddress) homeFilter = fromAddress;
-  if (!['all', 'progress'].includes(homeFilter) && !styles.some((c) => c.id === homeFilter)) homeFilter = 'all';
+  const kitFilter = styles.find((c) => c.id === homeFilter && !used.has(c.id));
+  if (!['all', 'progress'].includes(homeFilter) && !used.has(homeFilter) && !kitFilter) homeFilter = 'all';
   // Direction A's #/?channel=<id> is the same filter: the address says style now.
   if (query?.get('channel')) history.replaceState(null, '', homeFilter === 'all' ? '#/' : `#/?style=${encodeURIComponent(homeFilter)}`);
   const resume = projects.filter((p) => p.app).sort((a, b) => b.updated - a.updated)[0] || null;
 
-  const filterButtons = [['all', 'All'], ...styles.map((c) => [c.id, c.name]), ['progress', 'In progress']];
+  const filterButtons = [['all', 'All'], ...[...used].map(([id, name]) => [id, name]), ...(kitFilter ? [[kitFilter.id, kitFilter.name]] : []), ['progress', 'In progress']];
   main.replaceChildren(h(`<div class="pv">
     <header class="pv-head">
       <h1>Projects</h1>
@@ -87,7 +93,7 @@ export function renderProjects(main, ctx) {
       <span class="pv-hero-pic">${stagePic(resume, false)}</span>
       <div class="pv-hero-body">
         <div class="pv-hero-text">
-          <span class="pv-eyebrow">Continue · ${esc(styleOf(resume))}${resume.formatName ? ` · ${esc(resume.formatName)}` : ''} · edited ${esc(ago(resume.updated))}</span>
+          <span class="pv-eyebrow">Continue · ${esc(styleOf(resume))}${resume.formatName && kitOf(resume) ? ` · ${esc(kitOf(resume))}` : ''} · edited ${esc(ago(resume.updated))}</span>
           <h2 id="heroName"><a href="#/p/${encodeURIComponent(resume.id)}">${esc(resume.name)}</a></h2>
           <div class="pv-steps">${bar ? `<span class="pv-bar" aria-hidden="true">${bar}</span>` : ''}<span>${esc(where)}</span>
             ${resume.waiting ? `<span class="pv-hero-wait">${plural(resume.waiting, 'change')} waiting</span>` : ''}</div>
@@ -117,11 +123,11 @@ export function renderProjects(main, ctx) {
   const fresh = takes.filter((t) => !t.used);
   if (fresh.length) chips.push(`<a class="pv-chip" href="#/recordings">${icon('recordings', 14)}${plural(fresh.length, 'new take')} not in a video yet</a>`);
   const drafts = counts.waiting?.drafts;
-  if (drafts?.count) chips.push(`<a class="pv-chip" href="${styleHref('_', 'formats', drafts.formatId ? { format: drafts.formatId } : null)}">${icon('layers', 14)}${plural(drafts.count, 'format draft')} to review</a>`);
+  if (drafts?.count) chips.push(`<a class="pv-chip" href="${drafts.formatId ? styleHref(drafts.formatId, 'skill') : '#/styles'}">${icon('layers', 14)}${plural(drafts.count, 'style draft')} to review</a>`);
   const memories = (counts.waiting?.memories || 0) + styles.reduce((n, c) => n + (c.pendingMemories || 0), 0);
   if (memories) {
     const one = styles.find((c) => c.pendingMemories);
-    const href = !counts.waiting?.memories && one ? styleHref(one.id, 'memories') : '#/styles/memories';
+    const href = !counts.waiting?.memories && one ? kitHref(one.id, 'memories') : '#/styles/memories';
     chips.push(`<a class="pv-chip" href="${href}">${icon('skills', 14)}${plural(memories, 'memory')} to review</a>`);
   }
   if (chips.length) {
@@ -169,7 +175,7 @@ export function renderProjects(main, ctx) {
   const row = (p) => {
     const el = h(`<a class="pv-row" href="#/p/${encodeURIComponent(p.id)}">
       <span class="pv-thumb">${stagePic(p)}</span>
-      <span class="pv-row-name"><b>${esc(p.name)}</b><span class="pv-meta">${esc(p.formatName || (p.type ? STATUS_TYPES[p.type] || '' : ''))}</span></span>
+      <span class="pv-row-name"><b>${esc(p.name)}</b><span class="pv-meta">${esc(p.type ? STATUS_TYPES[p.type] || '' : '')}</span></span>
       <span class="pv-row-style">${p.profileId ? channelAvatar({ name: p.profileName, color: styles.find((c) => c.id === p.profileId)?.color }) : ''}${esc(styleOf(p))}</span>
       <span class="pv-row-stage${p.next ? ' next' : ''}">${esc(p.next ? `Next: ${p.next}` : stageOf(p))}${p.waiting ? ` · ${plural(p.waiting, 'change')} waiting` : ''}</span>
       <span class="pv-meta">${esc(ago(p.updated))}</span>
@@ -185,8 +191,8 @@ export function renderProjects(main, ctx) {
   };
   const draw = () => {
     const term = q.value.trim().toLowerCase();
-    const shows = (p) => (homeFilter === 'all' || (homeFilter === 'progress' ? inProgress(p) : p.profileId === homeFilter))
-      && (!term || p.name.toLowerCase().includes(term) || p.id.includes(term) || (p.profileName || '').toLowerCase().includes(term));
+    const shows = (p) => (homeFilter === 'all' || (homeFilter === 'progress' ? inProgress(p) : p.formatId === homeFilter || p.profileId === homeFilter))
+      && (!term || p.name.toLowerCase().includes(term) || p.id.includes(term) || [p.profileName, p.formatName].some((x) => (x || '').toLowerCase().includes(term)));
     const list = projects.filter(shows);
     for (const b of main.querySelectorAll('.pv-pill')) b.setAttribute('aria-pressed', String(b.dataset.f === homeFilter));
     for (const b of main.querySelectorAll('.view-seg button')) {

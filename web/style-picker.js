@@ -1,12 +1,13 @@
-// The editor's style picker (design V2 §6, board "New video B"): a button in the top bar with the style's colour, the
-// format's name and "· <style>", opening a listbox grouped by style → formats, then "No style · decide as I go" and
-// "+ New style from this video". Picking one calls POST /api/project-context/<id>/select, which re-pins the brand,
+// The editor's style picker (design V2 §6; Flat 3 §4): a button in the top bar with the kit's colour, the style's name
+// and "· <kit>", opening a flat listbox of styles (frame glyph, name, kit chip; no grouping by kit, Decision 6), then
+// "No style · decide as I go" and "+ New style from this video" (web/style-list.js pickerItems). Picking one calls POST /api/project-context/<id>/select, which re-pins the brand,
 // instructions, skills and format as New video does. Before a Build step that just happens; after one the server asks
 // for confirmation first (Videos keep the style they were built with).
 import { esc, h, api, toast, confirmBox } from './ui.js';
 import { icon } from './icons.js';
-import { newChannelDialog } from './learning.js';
+import { newStyleDialog } from './learning.js';
 import { TERMS } from './terms.js';
+import { styleEntries, pickerItems } from './style-list.js';
 
 const COLOR = /^#[0-9a-f]{6}$/i;
 const swatch = (color, size = '') => `<span class="sp-sw${size ? ` ${size}` : ''}${COLOR.test(color || '') ? ' branded' : ''}" aria-hidden="true"${COLOR.test(color || '') ? ` style="background:${color}"` : ''}></span>`;
@@ -35,8 +36,9 @@ export function makeStylePicker({ id, getP, formatInfo = {}, onChanged }) {
   const paint = () => {
     const c = current();
     const color = colors.get(c.profileId);
-    const main = c.formatName || c.profileName || TERMS.noStyle;
-    const sub = c.formatName && c.profileName ? `· ${c.profileName}` : c.profileName ? '· no format' : '· decide as I go';
+    const kit = c.profileName && c.profileName !== TERMS.noBrand ? c.profileName : '';
+    const main = c.formatName || kit || TERMS.noStyle;
+    const sub = c.formatName ? (kit ? `· ${kit}` : `· ${TERMS.noBrand}`) : kit ? '· no style' : '· decide as I go';
     btn.innerHTML = `${swatch(color)}<span class="sp-main">${esc(main)}</span><span class="sp-sub">${esc(sub)}</span><span class="sp-caret">${icon('chevron', 14)}</span>`;
   };
 
@@ -51,35 +53,23 @@ export function makeStylePicker({ id, getP, formatInfo = {}, onChanged }) {
   const outside = (e) => { if (!el.contains(e.target)) close(); };
 
   async function open() {
-    const [data, counts] = await Promise.all([api('/api/profiles'), api('/api/app/counts').catch(() => ({}))]);
+    const [data, counts, projects] = await Promise.all([api('/api/profiles'), api('/api/app/counts').catch(() => ({})), api('/api/projects').catch(() => [])]);
     colors = new Map((counts.channels || []).map((c) => [c.id, c.color]));
-    const c = current();
-    const styles = data.profiles.filter((p) => !p.archived || p.id === c.profileId);
-    const option = ({ profileId, formatId, label, kind = '', glyph = '', locked = false }) => {
-      const on = (profileId || null) === (c.profileId || null) && (formatId || null) === (c.formatId || null);
-      return `<button type="button" role="option" class="sp-opt${formatId ? ' fmt' : ''}" aria-selected="${on}"${locked ? ' aria-disabled="true" title="This video was built with another video setup. Pick a format with its setup, or No style."' : ''} data-profile="${esc(profileId || '')}" data-format="${esc(formatId || '')}">
-        ${glyph}<span class="sp-opt-t">${esc(label)}</span>${kind ? `<span class="sp-kind">${esc(kind)}</span>` : ''}${on ? icon('check', 14) : ''}</button>`;
+    const P = getP();
+    // After a Build step only styles with the video's own setup can be picked (the server refuses the others).
+    const built = Boolean(P.pipeline?.steps?.some((x) => x.stage === 'Build' && x.done));
+    const entries = styleEntries({ profiles: data.profiles, formats: data.formats, versions: data.versions, projects, formatInfo }, { archived: true });
+    const items = pickerItems(entries, { context: current(), built, type: P.type });
+    const row = (it) => {
+      if (it.kind === 'new') return '<button type="button" class="sp-new">+ New style from this video</button>';
+      const glyph = it.kind === 'style' ? `<span class="sp-orient ${it.tall ? 'tall' : 'wide'}" aria-hidden="true"></span>` : '<span class="sp-orient none" aria-hidden="true"></span>';
+      const chip = it.kind === 'none' ? '' : `<span class="sp-kit">${swatch(it.kitColor || colors.get(it.profileId), 'small')}${esc(it.kit || TERMS.noBrand)}</span>`;
+      return `${it.kind === 'none' ? '<hr class="sp-sep">' : ''}<button type="button" role="option" class="sp-opt${it.kind === 'style' ? ' fmt' : ''}" aria-selected="${it.selected}"${it.locked ? ' aria-disabled="true" title="This video was built with another video setup. Pick a style with its setup, or No style."' : ''} data-profile="${esc(it.profileId || '')}" data-format="${esc(it.formatId || '')}">
+        ${glyph}<span class="sp-opt-t">${esc(it.label)}</span>${it.locked ? '<span class="sp-kind">Other setup</span>' : chip}${it.selected ? icon('check', 14) : ''}</button>`;
     };
-    // After a Build step only formats with the video's own setup can be picked (the server refuses the others).
-    const built = getP().pipeline?.steps?.some((x) => x.stage === 'Build' && x.done);
-    const groups = styles.map((p) => {
-      const formats = data.formats.filter((f) => f.profileId === p.id && (!f.archived || f.id === c.formatId));
-      const color = colors.get(p.id) || p.brand?.brand?.colors?.[0] || null;
-      const rows = formats.map((f) => {
-        const tall = formatInfo[f.type]?.aspect === '9:16';
-        const locked = built && f.type !== getP().type;
-        return option({ profileId: p.id, formatId: f.id, label: f.name, kind: locked ? 'Other setup' : tall ? 'Short' : 'Long', locked,
-          glyph: `<span class="sp-orient ${tall ? 'tall' : 'wide'}" aria-hidden="true"></span>` });
-      }).join('');
-      // A style without formats can still be used on its own (its brand, research and memories).
-      const plain = formats.length ? '' : option({ profileId: p.id, formatId: null, label: 'This style, no format yet', glyph: '<span class="sp-orient none" aria-hidden="true"></span>' });
-      return `<div class="sp-group" role="group" aria-label="${esc(p.name)}"><div class="sp-gh">${swatch(color, 'small')}${esc(p.name)}</div>${rows}${plain}</div>`;
-    }).join('');
-    pop.innerHTML = `<p class="sp-hint">Style for this video. Change it any time${getP().pipeline?.steps?.some((s) => s.stage === 'Build' && s.done) ? '; after Build it affects only new steps' : ''}.</p>
-      ${groups || `<p class="sp-hint">No styles yet.</p>`}
-      <hr class="sp-sep">
-      ${option({ profileId: null, formatId: null, label: `${TERMS.noStyle} · decide as I go` })}
-      <button type="button" class="sp-new">+ New style from this video</button>`;
+    pop.innerHTML = `<p class="sp-hint">Style for this video. Change it any time${built ? '; after Build it affects only new steps' : ''}.</p>
+      ${items.some((it) => it.kind === 'style') ? '' : '<p class="sp-hint">No styles yet.</p>'}
+      ${items.map(row).join('')}`;
     pop.hidden = false;
     btn.setAttribute('aria-expanded', 'true');
     // Keep the list on screen on a narrow window (it opens under the button, which may sit far right).
@@ -124,7 +114,10 @@ export function makeStylePicker({ id, getP, formatInfo = {}, onChanged }) {
       close();
       // Prefilled from the video's name; it learns nothing by itself. The video then uses the new style.
       const P = getP();
-      newChannelDialog({ name: P.nameSource === 'auto' && !P.autoNamedBy ? '' : P.name, onCreated: (p) => choose(p.id, null) });
+      api('/api/profiles').then((data) => newStyleDialog({
+        profiles: data.profiles, name: P.nameSource === 'auto' && !P.autoNamedBy ? '' : P.name,
+        onCreated: (f) => choose(f.profileId, f.id),
+      })).catch((err) => toast(err.message));
     }
   });
   pop.addEventListener('keydown', (e) => {

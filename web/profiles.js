@@ -9,7 +9,11 @@ const when = (iso) => { const d = new Date(iso); return Number.isNaN(+d) ? Strin
 // version history for one channel, as cards. New videos keep the version they were made with.
 // onBrandChange(profile) runs after a brand version is approved, saved or restored, so the hub's tab status, avatar
 // and sidebar can follow.
-export function profileSettings({ makeChat, profileId, onBrandChange } = {}) {
+//
+// rows: the brand kit layout (Flat 3 §2.3 and §3): a summary strip (swatches, font, voice), the rows Brand (Edit opens
+// the full form) and Research (Research again), and Brand assets as a grid with Upload. The other resources (people
+// & places) have their own tab there, so they are not repeated here.
+export function profileSettings({ makeChat, profileId, onBrandChange, rows = false } = {}) {
  const root = h('<div class="brand-tab"><p class="sub">Loading the brand…</p></div>');
  let session = null, live = true, chat = null, events = null, resources = null;
  const cleanup = () => { events?.close(); chat?.destroy?.(); events = null; chat = null; };
@@ -20,23 +24,71 @@ export function profileSettings({ makeChat, profileId, onBrandChange } = {}) {
   const data = await api('/api/profiles');
   if (!live) return;
   const p = data.profiles.find((x) => x.id === profileId);
-  if (!p) { root.innerHTML = '<div class="vo-card"><p class="learn-error">This style no longer exists.</p></div>'; return; }
+  if (!p) { root.innerHTML = '<div class="vo-card"><p class="learn-error">This brand kit no longer exists.</p></div>'; return; }
   const brand = p.brand?.brand || {};
   const lead = p.brand ? '' : `<section class="vo-card brand-lead">
     <h2>No brand yet</h2>
-    <p class="sub">Research a website or fill it in yourself. New videos in this style load the approved brand.</p>
+    <p class="sub">Research a website or fill it in yourself. New videos in every style that uses this kit load the approved brand.</p>
     <div class="learn-actions"><button type="button" class="btn primary" data-go="research">Research a website</button><button type="button" class="btn" data-go="brand">Fill it in yourself</button></div>
    </section>`;
   const history = p.history.map((v) => `<li><span>${esc(when(v.created))} · ${esc(v.reason)}</span><button type="button" class="btn small" data-brand-version="${v.id}">Review version</button></li>`).join('');
   const sessions = p.research.map((r) => `<button type="button" class="btn small${r.id === session ? ' on' : ''}" data-research="${r.id}">${esc(r.url)} · ${esc(r.status)}</button>`).join('');
-  root.innerHTML = `${lead}
+  if (rows) {
+   const swatches = (brand.colors || []).map((c) => `<i style="background:${esc(c)}" title="${esc(c)}"></i>`).join('');
+   const last = p.research.at(-1);
+   const asset = (a) => {
+    const font = /\.(ttf|otf|woff2?)$/i.test(a.name);
+    const pic = font ? '<span class="kb-glyph" aria-hidden="true">Aa</span>' : `<img src="/api/resources/${encodeURIComponent(a.id)}/file" alt="" loading="lazy">`;
+    return `<li class="kb-asset"><span class="kb-pic">${pic}</span><span class="kb-asset-t"><b>${esc(a.name)}</b><span class="sub">${font ? 'Font' : 'Image'}${brand.assets?.includes(a.id) ? ' · in the brand' : ''}</span></span></li>`;
+   };
+   root.innerHTML = `${lead}
+    <div class="kb-sum">
+     <span class="kb-sw" role="img" aria-label="Brand colours: ${esc((brand.colors || []).join(', ') || 'none yet')}">${swatches || '<span class="sub">No colours yet</span>'}</span>
+     <span class="kb-sum-t"><b>${esc(String(brand.fonts || '').split(/\n/)[0].slice(0, 80) || 'No font set')}</b><span class="sub">${esc(String(brand.voice || '').split(/\n/)[0].slice(0, 140) || 'Voice not set yet')}</span></span>
+    </div>
+    <div class="kb-rows">
+     <div class="kb-row"><span class="kb-row-t"><b>Brand</b><span class="sub">${p.brand ? `Approved · ${esc(when(p.brand.created))}` : 'Not set yet'}</span></span><button type="button" class="btn small" data-open="brandCard" aria-expanded="false">Edit</button></div>
+     <div class="kb-row"><span class="kb-row-t"><b>Research</b><span class="sub">${last ? `${esc(last.url)} · ${esc(last.status)}` : 'No research yet'}</span></span><button type="button" class="btn small" data-open="researchCard" aria-expanded="false">${last ? 'Research again' : 'Research a website'}</button></div>
+    </div>
+    <section class="kb-panel" id="brandCard" aria-labelledby="brandCardTitle" hidden>
+     <div class="vo-card-head"><h2 id="brandCardTitle">Brand</h2><span class="sub">Saving makes a new version; videos already made keep theirs.</span></div>
+     <form id="brandForm" class="learn-page brand-form">${brandFields(brand, p.assets)}<div class="learn-actions"><button class="btn primary">Save brand version</button></div></form>
+    </section>
+    <section class="kb-panel" id="researchCard" aria-labelledby="researchTitle"${session ? '' : ' hidden'}>
+     <div class="vo-card-head"><h2 id="researchTitle">Research this brand</h2></div>
+     <p class="sub">Give the assistant a public website. It researches in a separate session and proposes a brand for your review. Running research uses your configured agent/provider.</p>
+     <form id="researchForm" class="learn-page brand-form"><label>Brand website<input type="url" name="url" placeholder="https://example.com" required></label>${field('Research direction', 'direction')}<div class="learn-actions"><button class="btn">Create research session</button></div></form>
+     ${sessions ? `<div class="learn-actions brand-sessions">${sessions}</div>` : ''}
+     <div id="researchDetail"></div>
+    </section>
+    <section class="kb-assets" aria-labelledby="assetsTitle">
+     <div class="kb-assets-head"><h3 id="assetsTitle">Brand assets</h3><label class="btn small kb-upload">Upload<input type="file" data-asset-upload multiple accept=".png,.jpg,.jpeg,.webp,.svg,.ttf,.otf,.woff,.woff2" hidden></label></div>
+     ${p.assets.length ? `<ul class="kb-grid">${p.assets.map(asset).join('')}</ul>` : '<p class="sub">Logos, images and fonts. Tick them in the brand (Edit) to include them in a brand version.</p>'}
+    </section>
+    <details class="brand-history"><summary>Version history${p.history.length ? ` · ${p.history.length}` : ''}</summary>${history ? `<ul>${history}</ul>` : '<p class="sub">No versions yet.</p>'}</details>`;
+   root.querySelectorAll('[data-open]').forEach((b) => b.onclick = () => {
+    const box = $(`#${b.dataset.open}`, root);
+    box.hidden = !box.hidden;
+    b.setAttribute('aria-expanded', String(!box.hidden));
+    if (!box.hidden) box.querySelector('input,textarea')?.focus({ preventScroll: true });
+   });
+   $('[data-asset-upload]', root).onchange = run(async (e) => {
+    for (const file of [...e.target.files]) {
+     const r = await fetch(`/api/profiles/${encodeURIComponent(profileId)}/upload?name=${encodeURIComponent(file.name)}`, { method: 'POST', headers: { 'X-Studio': '1' }, body: file });
+     const j = await r.json().catch(() => ({}));
+     if (!r.ok) throw new Error(j.error || `Could not add ${file.name}.`);
+    }
+    toast('Added. Tick it in the brand (Edit) to include it in the next brand version.');
+    await paint();
+   });
+  } else root.innerHTML = `${lead}
    <section class="vo-card" id="brandCard" aria-labelledby="brandCardTitle">
     <div class="vo-card-head"><h2 id="brandCardTitle">Brand</h2><span class="sub">${p.brand ? `Approved · ${esc(when(p.brand.created))}` : 'Not set'}</span></div>
     <form id="brandForm" class="learn-page brand-form">${brandFields(brand, p.assets)}<div class="learn-actions"><button class="btn primary">Save brand version</button></div></form>
    </section>
    <section class="vo-card" aria-labelledby="assetsTitle">
     <div class="vo-card-head"><h2 id="assetsTitle">Images &amp; files</h2></div>
-    <p class="sub">Images and fonts you add at “This style” can also be ticked in the brand above (save a brand version to include them).</p>
+    <p class="sub">Images and fonts you add at the brand kit level can also be ticked in the brand above (save a brand version to include them).</p>
     <div id="brandResources" class="rs-panel"></div>
    </section>
    <section class="vo-card" id="researchCard" aria-labelledby="researchTitle">
@@ -50,6 +102,7 @@ export function profileSettings({ makeChat, profileId, onBrandChange } = {}) {
 
   root.querySelectorAll('[data-go]').forEach((b) => b.onclick = () => {
    const target = b.dataset.go === 'research' ? $('#researchCard', root) : $('#brandCard', root);
+   target.hidden = false;
    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
    target.querySelector('input,textarea')?.focus({ preventScroll: true });
   });
@@ -63,7 +116,7 @@ export function profileSettings({ makeChat, profileId, onBrandChange } = {}) {
   // choice in the brand's asset list without losing what was typed there.
   resources?.teardown?.();
   resources = $('#brandResources', root);
-  mountResources(resources, { profileId, onChange: async () => {
+  if (resources) mountResources(resources, { profileId, onChange: async () => {
    const fresh = (await api('/api/profiles')).profiles.find((x) => x.id === profileId);
    const form = $('#brandForm', root), set = form?.querySelector('fieldset');
    if (!fresh || !set) return;

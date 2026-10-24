@@ -12,7 +12,7 @@ import { safeFile, formatSkillName, formatSkillId, pinnedFormatSkillName } from 
 import { generateFormatSkills, projectPublishedFiles } from './format-skills.mjs';
 import { FileStore, MAX_SKILL_FILES, MAX_SKILL_FILE_BYTES, formatBytes } from './file-store.mjs';
 import { beginMaintenance, endMaintenance, activityView } from './maintenance.mjs';
-import { settingsChanged } from './settings.mjs';
+import { settingsChanged, restartWhenIdle } from './settings.mjs';
 import { settings, reveal } from './util.mjs';
 import { createProject, projectDir, projectMeta, saveProjectMeta, lockedCut, listProjects, appendWorklog } from './studio.mjs';
 import { sqlSkillContent } from './skill-db.mjs';
@@ -242,6 +242,18 @@ function revealFile(studio, store, formatId, path) {
   reveal(target);
   return { ok: true, path: target };
 }
+// Change kit (Flat 3): POST /api/learning/formats/<id>/move { profileId|null, expected }. The style moves to another
+// profile (null: No brand); its conversations follow it to the new kit's memories and their idle agents restart with
+// the new brand; projects keep their pins. Refused (409) while a study, a reply or a frame extraction for this style
+// is running, because that work was started with the old kit's brand and memories.
+function moveFormat(studio,id,b){
+  const sessions=current(s=>{s.get('formats',id);return s.list('sessions').filter(x=>x.formatId===id).map(x=>x.id);});
+  const working=sessions.filter(sid=>chats.get(chatKey(studio,sid))?.busy||extractionStatus(studio,sid)?.status==='running');
+  if(working.length)throw Object.assign(Error('A conversation for this style is still working. Wait for it to finish (or stop it), then change the kit.'),{status:409});
+  const format=current(s=>s.moveFormat(id,b));
+  for(const sid of sessions)restartWhenIdle(chats.get(chatKey(studio,sid)));
+  return {...format,warning:rebuildFormatSkills(studio)};
+}
 export async function learningRoute(req,res,url,{send,body,serveFile}) {
   if(!url.pathname.startsWith('/api/learning')) return false;
   const reply=(data,status=200)=>{send(res,status,data);return true;};
@@ -307,12 +319,13 @@ export async function learningRoute(req,res,url,{send,body,serveFile}) {
       if(!id) return reply(current(s=>s.profile(b.name,b.description)));
       let profile;
       if(action==='update') profile=current(s=>s.updateProfile(id,b));
-      else if(action==='archive'||action==='unarchive') profile=current(s=>s.archiveProfile(id,b.expected,action==='archive'));
+      else if(action==='archive'||action==='unarchive') profile=current(s=>s.archiveProfile(id,b.expected,action==='archive',{refuseUsed:true}));
       else return reply({error:'Unknown learning endpoint.'},404);
       return reply({...profile,warning:rebuildFormatSkills(studio)});
     }
     if(group==='formats') {
-      if(!id) return reply(current(s=>s.format(b.profileId,b.name,b.type,b.targetSeconds)));
+      if(!id) return reply(current(s=>s.format(b.profileId||null,b.name,b.type,b.targetSeconds,b.description||'')));
+      if(action==='move') return reply(moveFormat(studio,id,b));
       if(action==='draft-rule') {
         if(b.sessionId&&extractionStatus(studio,b.sessionId)?.status==='running')throw Error('Stop reference extraction before editing the draft.');
         return reply(current(s=>{
@@ -330,6 +343,7 @@ export async function learningRoute(req,res,url,{send,body,serveFile}) {
       if(action==='skill') return reply({warning:rebuildFormatSkills(studio),skill:current(s=>formatSkillView(studio,s,id))});
       let format;
       if(action==='copy') format=current(s=>s.copyFormat(id,b));
+      else if(action==='duplicate') format=current(s=>s.duplicateFormat(id,b));
       else if(action==='activate') format=current(s=>s.activate(id,b.versionId,b.expected));
       else if(action==='update') format=current(s=>s.updateFormat(id,b));
       else if(action==='archive'||action==='unarchive') format=current(s=>s.archiveFormat(id,b.expected,action==='archive'));

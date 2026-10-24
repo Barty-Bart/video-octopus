@@ -65,7 +65,10 @@ export class MemoryStore extends LearningStore {
       const b = this.hasTable('project_context') && parse(this.db.prepare('SELECT data FROM project_context WHERE project=?').get(project));
       profileId = b?.profileId; formatId = b?.formatId;
     } else return null;
-    if (formatId) profileId = this.get('formats', formatId).profileId;
+    // A format conversation uses its style's current kit. A video uses the kit it pinned, even after its style moved to
+    // another kit (Change kit, Flat 3); older pins without a kit take the format's. No brand has no memory rung.
+    if (formatId && (!project || !profileId)) profileId = this.get('formats', formatId).profileId;
+    if (profileId && this.isUnbranded(profileId)) profileId = undefined;
     const scopes = scopeChain({ profileId, formatId, project }, { levels: MEMORY_LEVELS });
     const value = { id: chat, scopes, scope: scopes.at(-1), profileId, formatId, project };
     const existing = this.chat(chat);
@@ -152,11 +155,11 @@ export class MemoryStore extends LearningStore {
     if (source) return source.scopes.filter(selectable);
     const channel = this.channelOf(m.scope);
     if (channel) return ['global', `profile:${channel}`];
-    if (m.scope === 'global') return ['global', ...this.list('profiles').map(p => `profile:${p.id}`)];
+    if (m.scope === 'global') return ['global', ...this.list('profiles').filter(p => !p.system).map(p => `profile:${p.id}`)];
     return ['global'];
   }
   levelNames() {
-    return [{ id: 'global', name: 'Everything' }, ...this.list('profiles').map(p => ({ id: `profile:${p.id}`, name: p.name }))];
+    return [{ id: 'global', name: 'Everything' }, ...this.list('profiles').filter(p => !p.system).map(p => ({ id: `profile:${p.id}`, name: p.name }))];
   }
   // Every scope a level shows on the Memories page: the level itself plus older, narrower memories that belong to it
   // (a channel's formats and videos; Everything's channel-less videos). Each memory keeps its real scope.
@@ -205,7 +208,7 @@ export class MemoryStore extends LearningStore {
   // that level. Returns an approved twin already kept there (the caller closes this one in its favour); a pending twin
   // is closed in favour of this one.
   retarget(m, scope) {
-    if (!selectable(scope) || !this.levelsFor(m).includes(scope)) fail('Choose This style or Everything for this memory.');
+    if (!selectable(scope) || !this.levelsFor(m).includes(scope)) fail('Choose This brand kit or Everything for this memory.');
     this.scope(scope);
     const digest = `${scope}:${fingerprint(m.text)}`;
     if (this.dead('text', digest)) fail('This memory was forgotten or rejected at that level.');

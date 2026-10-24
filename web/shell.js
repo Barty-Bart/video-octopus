@@ -63,7 +63,7 @@ export function sidebarMarkup({ active, counts = {}, takes = [], agent = null, f
     ? dot(`${counts.skillUpdates} core update${counts.skillUpdates === 1 ? '' : 's'} to review`) : '';
   const settingsDot = counts.update ? dot('A new version of Video Octopus is ready (Settings › General › Updates)') : '';
   const askWarn = agent && !agent.ok ? dot(`${agent.name || 'The agent'}: ${agent.sub || 'needs attention'}`, 'warn') : '';
-  const stylesOn = active.page === 'styles' || active.page === 'style';
+  const stylesOn = active.page === 'styles' || active.page === 'style' || active.page === 'kit';
   const expanded = !forceIcons && currentAppearance().sidebar !== 'icons';
   return `<nav class="side-nav shell-nav${forceIcons ? ' force-icons' : ''}" id="shellNav" aria-label="Video Octopus">
       <div class="shell-nav-top">
@@ -96,7 +96,7 @@ export function topBarMarkup(pageName) {
     </header>
     <div class="shell-scrim" data-shell-scrim hidden></div>`;
 }
-export const pageName = (active, styleName) => (active.page === 'style' ? styleName || TERMS.channel : PAGE_NAMES[active.page] || 'Projects');
+export const pageName = (active, styleName) => (active.page === 'style' ? styleName || TERMS.style : active.page === 'kit' ? styleName || TERMS.kit : PAGE_NAMES[active.page] || 'Projects');
 
 // The rail's tooltips: with icons only, every item names itself on hover and keyboard focus; Ask Claude always shows
 // its agent and usage. One floating label on <body>, so the rail's own scrolling never clips it.

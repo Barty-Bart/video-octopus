@@ -14,7 +14,7 @@ import { makeUndo, tokens, lookKey as appearanceKey } from './tlcore.js';
 import { makeScenes, cutMap } from './scenes.js';
 import { makeCompare, previousOf, versionName } from './compare.js';
 import { appPage } from './settings.js';
-import { makeRouter, legacyRoute, parseRoute } from './nav.js';
+import { makeRouter, legacyRoute, parseRoute, routeNeedsLookup } from './nav.js';
 import { TERMS } from './terms.js';
 import { renderProjects, setTypeNames } from './projects-home.js';
 import { makeStartScreen } from './start-screen.js';
@@ -40,7 +40,7 @@ import { applyAppearance, onAppearance, cutLookParams, themeSwitch } from './app
 import { rememberMessage, reviewLessons } from './memory.js';
 import { projectLearningPanel } from './learning.js';
 import { renderSkills } from './skills.js';
-import { renderChannel, renderStyles } from './channel.js';
+import { renderStylePage, renderStyles, renderKit, renderKits } from './channel.js';
 import { sidebarMarkup, topBarMarkup, pageName, wireShell, askTip } from './shell.js';
 import { exportLooks, sceneKey, shotsSummary } from './exportshots.js';
 
@@ -128,8 +128,12 @@ addEventListener('scroll', () => { if ((scrollX || scrollY) && innerWidth > 980)
 // ({ signal, alive }) tells a page it has been left.
 const router = makeRouter(async (nav) => {
   // Old addresses (#/learning, #/memories, #/storage…) are rewritten in place first: no extra history entry.
-  const moved = legacyRoute(location.hash);
-  if (moved) history.replaceState(null, '', moved);
+  // Beta.14's profile-keyed style pages (#/style/<profileId>/…) are told from a style's own by looking the id up.
+  const lookup = routeNeedsLookup(location.hash) ? await api('/api/learning').catch(() => null) : null;
+  if (nav.alive()) {
+    const moved = legacyRoute(location.hash, lookup);
+    if (moved) history.replaceState(null, '', moved);
+  }
   // Settings, Setup (opens by itself the first time) and the Video Octopus assistant live in settings.js / setup.js.
   const page = await appPage(location.hash, {
     app, makeChat, loadStatus, nav, status: () => STATUS, railAgent: () => railAgent(),
@@ -146,7 +150,7 @@ window.addEventListener('hashchange', router);
 const TAKE_ICON = '<svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="3" width="11" height="8" rx="1.5"/><circle cx="13.5" cy="12.5" r="3" class="hole"/></svg>';
 const takeWhat = (t) => t.files.map((f) => (/_screen\./.test(f) ? 'screen' : /_webcam\./.test(f) ? 'camera' : isSound(f) ? 'mic only' : 'video')).join(' + ').replace(/^./, (c) => c.toUpperCase());
 let pendingRecord = null; // a video made with Record (or the start screen's Record now) opens its record panel
-const PAGE_TITLES = { scheduled: 'Scheduled', recordings: 'Recordings', skills: 'Skills', library: 'Library', styles: TERMS.myStyles, style: TERMS.channel };
+const PAGE_TITLES = { scheduled: 'Scheduled', recordings: 'Recordings', skills: 'Skills', library: 'Library', styles: TERMS.myStyles, style: TERMS.style, kit: TERMS.kit };
 
 // The shell (web/shell.js): the sidebar and one page beside it. route: parseRoute(location.hash), nav: { signal,
 // alive } from the router (web/nav.js). Pages: projects, recordings, library, scheduled, skills, style, styles.
@@ -161,7 +165,7 @@ async function home(route, nav = null) {
   const [projects, takes, counts] = await Promise.all([api('/api/projects'), api('/api/takes'), api('/api/app/counts').catch(() => ({}))]);
   const agent = agentView(STATUS);
   const active = { page: view };
-  const styleName = (counts.channels || []).find((c) => c.id === route.id)?.name;
+  const styleName = view === 'kit' ? (counts.channels || []).find((c) => c.id === route.id)?.name : null;
   const el = h(`<div class="home shell${view === 'library' ? ' with-side' : ''}">
     ${topBarMarkup(pageName(active, styleName))}
     ${sidebarMarkup({ active, counts, takes, agent: railAgent(agent) })}
@@ -170,17 +174,21 @@ async function home(route, nav = null) {
   </div>`);
   app.replaceChildren(el);
   const main = $('#homeMain', el);
-  // New video from a style's page starts in that style; a format's page passes the format.
+  // New video from a style's page starts in that style (its format); a brand kit's page in that kit.
   const startVideo = ({ profileId, format = null } = {}) => newVideo(format ? { formatId: format.id } : profileId !== undefined ? { profileId } : {});
-  const shell = wireShell(el, {
-    onNewVideo: () => startVideo(view === 'style' ? { profileId: parseRoute(location.hash).id } : {}),
-  });
+  const here = () => {
+    const r = parseRoute(location.hash);
+    if (r.page === 'style' && r.id !== '_') return { format: { id: r.id } };
+    if (r.page === 'kit' && r.id !== '_') return { profileId: r.id };
+    return {};
+  };
+  const shell = wireShell(el, { onNewVideo: () => startVideo(here()) });
   // N: New video, from any page of the shell (not while typing).
   const keys = (e) => {
     if (e.key !== 'n' && e.key !== 'N') return;
     if (e.metaKey || e.ctrlKey || e.altKey || e.target.closest?.('input, textarea, select, [contenteditable]') || !$('#modal').hidden) return;
     e.preventDefault();
-    startVideo(view === 'style' ? { profileId: parseRoute(location.hash).id } : {});
+    startVideo(here());
   };
   document.addEventListener('keydown', keys);
   // After a style is renamed, archived or restored the whole page redraws; a new or archived format, or a brand
@@ -199,16 +207,20 @@ async function home(route, nav = null) {
   if (view === 'scheduled') page = await renderSchedules(main, nav).catch((e) => { main.replaceChildren(h(`<div class="home-wrap"><div class="notice">${esc(e.message)}</div></div>`)); return null; });
   if (view === 'skills') page = await renderSkills(main, { counts });
   if (view === 'library') page = renderLibrary(main, $('#libSide', el));
+  const styleCtx = { makeChat, startVideo, counts, projects, onChannelsChange, onFormatsChange, formatInfo: STATUS.formatInfo || {}, nav };
   if (view === 'style') {
-    page = await renderChannel(main, { id: route.id, tab: route.tab, query: route.query, makeChat, startVideo, counts, projects, onChannelsChange, onFormatsChange });
-    // A `_` address was resolved to a real style: name it in the narrow top bar.
-    const real = parseRoute(location.hash);
-    if (real.page === 'style' && real.id !== route.id) {
-      const known = (counts.channels || []).find((c) => c.id === real.id);
-      if (known) $('.shell-page', el).textContent = known.name;
-    }
+    page = await renderStylePage(main, { ...styleCtx, id: route.id, tab: route.tab, panel: route.panel, query: route.query });
+    if (page?.name) $('.shell-page', el).textContent = page.name; // the narrow top bar names the style
   }
-  if (view === 'styles') page = await renderStyles(main, { tab: route.tab, counts, onChannelsChange, formatInfo: STATUS.formatInfo || {} });
+  if (view === 'kit') {
+    page = await renderKit(main, { ...styleCtx, id: route.id, tab: route.tab, query: route.query });
+    if (page?.name) $('.shell-page', el).textContent = page.name;
+  }
+  if (view === 'styles') {
+    page = route.tab === 'kits'
+      ? await renderKits(main, styleCtx)
+      : await renderStyles(main, { ...styleCtx, tab: route.tab, query: route.query });
+  }
   return { teardown: () => { page?.teardown?.(); shell.teardown(); document.removeEventListener('keydown', keys); document.body.classList.remove('in-home'); } };
 }
 

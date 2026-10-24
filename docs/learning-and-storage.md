@@ -315,21 +315,36 @@ copy a format to reuse its complete approved package. Source media stay in place
 
 ## Brand profiles, instructions and New video
 
-Since design V2 (23 Oct 2026) a profile is shown as a **style** (it was a "channel" in the Direction A shell); the
-rail links to **My styles** (`#/styles`). The My styles page lists every style with its optional one-line
-description and its formats as tiles, plus the shared **Studio instructions** (`#/styles/instructions`) and
-**Memories for everything** (`#/styles/memories`). Each style's hub (`#/style/<id>`) has **Formats**, **Brand** and
-**Memories** tabs. Old addresses (`#/channels…`, `#/channel/<id>/<tab>`, `#/learning`, `#/memories`,
-`#/settings/brand`, `#/settings/instructions`, `#/storage`, `#/dashboard`) redirect through
-`legacyRoute()` in `web/nav.js`. Code, the API and the SQLite tables keep the `profile` names.
+Since **Flat 3** (24 Oct 2026) the UI has one level of styles: a **style** is a format (one kind of video, e.g.
+"Faceless reel") and a **brand kit** is a profile (brand, research, assets, people & places and memories at
+`profile:<id>`), shared by every style that uses it (`format.profileId`). Nothing is migrated: existing profiles are
+kits, existing formats are styles. The rail links to **My styles** (`#/styles`): a brand kits bar, one flat card per
+style (cover in the kit's brand colour, Short/Long badge, kit chip, description, skill version, videos, changes to
+review; most recently used first; archived behind Show archived), **New style**, and the shared **Studio
+instructions** (`#/styles/instructions`) and **Memories for everything** (`#/styles/memories`). A style's page
+(`#/style/<formatId>/skill|examples|brand|people|memories`) has one tab row; the Skill tab's side column opens Files,
+Insights, History and Videos as panels (`?panel=files|insights|history|videos`) and **Talk to this style** opens the
+format conversation. Brand kits are listed at `#/styles/kits` and each has `#/styles/kit/<profileId>/brand|people|
+memories|styles`. Styles without a brand live under one hidden built-in profile (`system: 'unbranded'`, "No brand"),
+made the first time a style needs it; it is never listed as a kit and can't be renamed, archived, branded or
+researched, and it has no memory or resource rung. **Change kit** calls `POST /api/learning/formats/<id>/move
+{ profileId|null, expected }`: the format row moves (drafts, conversations, versions, files and skill selection go
+with it), its conversations' memory bindings follow it to the new kit, idle conversation agents restart, and the
+format skill is rebuilt; videos made before keep the kit, brand version and memories they pinned (a pin whose format
+later moved stays valid). It is refused while a study, reply or frame extraction of that style is running. A kit that
+non-archived styles use can't be archived from the app until they move. Beta.14's profile-keyed addresses
+(`#/style/<profileId>/formats?format=<F>&tab=…`, `…/brand`, `…/memories`) and every older address (`#/channels…`,
+`#/channel/<id>/<tab>`, `#/learning`, `#/memories`, `#/settings/brand`, `#/settings/instructions`, `#/storage`,
+`#/dashboard`) redirect through `legacyRoute(hash, lookup)` in `web/nav.js`, which tells profile ids from format ids
+with the `/api/learning` view. Code, the API and the SQLite tables keep the `profile` and `format` names.
 Settings has six groups (`#/settings/general|agent|recording|editing|export|storage`);
 the old one-section addresses (`#/settings/claude`, `#/settings/usage`…) land on their group, at the section.
 Storage & backups and Usage are sections of Settings › Storage.
 
-The style's **Brand** tab owns identity, audience, voice, colours, fonts, guidance and uploaded
-brand assets. A profile can have several learned formats. Each format can select
-additional enabled personal skills from the format's options (Personal skills for this format); enabled compatible
-core skills are included automatically. The approved learned package is selected
+The brand kit's **Brand** tab (also shown on each style using it) owns identity, audience, voice, colours, fonts,
+guidance and uploaded brand assets. A kit can be used by several styles. Each style can switch additional enabled
+personal skills on or off in its Skill tab's **Uses these skills**; enabled compatible core skills are included
+automatically. The approved learned package is selected
 separately and supplies its rules, workflow and reusable assets.
 
 Setup and the channel's Brand tab share the same optional profile onboarding. Enter a brand manually
@@ -352,8 +367,8 @@ edits under `.studio/instruction-recovery/`. Keep brand-specific prose in its pr
 **New video** (the rail, the Projects page, `N`, a style's or format's page) makes an **Untitled video** straight
 away and opens it. It uses the last-used style and format (settings `lastNewVideo`), the style or format it was
 started from, or no style. An empty video shows a start screen: **Record now**, **Drop footage** or **Idea &
-thumbnail first** (the Packaging stage). The editor's **style picker** (top bar) lists every style's formats, then
-**No style · decide as I go** and **+ New style from this video**. Changing it calls
+thumbnail first** (the Packaging stage). The editor's **style picker** (top bar) is a flat list of styles (frame
+glyph, name, kit chip; no grouping by kit), then **No style · decide as I go** and **+ New style from this video**. Changing it calls
 `POST /api/project-context/<id>/select { profileId, formatId, confirm }`, which re-pins brand, instructions, skills
 and format as New video does and rebuilds the context files; a format of another video setup also changes the video's
 setup. After a Build step has run it needs `confirm: true` ("Videos keep the style they were built with") and must keep

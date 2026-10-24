@@ -1,12 +1,12 @@
 import { $, esc, h, api, toast, confirmBox } from './ui.js';
-import { channelHref } from './nav.js';
+import { kitHref } from './nav.js';
 const E = '/api/memory';
 const options = (list, selected) => list.map(s => `<option value="${esc(s.id)}"${s.id === selected ? ' selected' : ''}>${esc(s.name)}</option>`).join('');
-const HINT = 'Only about one video? Choose Not a rule; it stays in that video’s chat. About one format? Add it to the format’s rules instead.';
-// The hint links "the format’s rules" to the channel's Formats tab when the channel is known.
+const HINT = 'Only about one video? Choose Not a rule; it stays in that video’s chat. About one style? Add it to the style’s rules instead.';
+// The hint links "the style’s rules" to the brand kit's styles when the kit is known.
 let hintChannel = null;
 const hintHTML = () => hintChannel
-  ? esc(HINT).replace('the format’s rules', `<a href="${channelHref(hintChannel, 'formats')}">the format’s rules</a>`)
+  ? esc(HINT).replace('the style’s rules', `<a href="${kitHref(hintChannel, 'styles')}">the style’s rules</a>`)
   : esc(HINT);
 // Video names for "You said, in …" (project ids otherwise).
 let projectNames = new Map();
@@ -18,7 +18,7 @@ function keepFor(name, levels, selected) {
   const channelFirst = [...levels].sort((a, b) => (levelId(a) === 'global') - (levelId(b) === 'global'));
   const choices = channelFirst.map(level => {
     const id = levelId(level), global = id === 'global';
-    return `<label class="memory-keep-choice"><input type="radio" name="${esc(name)}" value="${esc(id)}"${id === selected ? ' checked' : ''}><span><b>${global ? 'Everything' : 'This style'}</b><small>${global ? 'All channels' : esc(level.name)}</small></span></label>`;
+    return `<label class="memory-keep-choice"><input type="radio" name="${esc(name)}" value="${esc(id)}"${id === selected ? ' checked' : ''}><span><b>${global ? 'Everything' : 'This brand kit'}</b><small>${global ? 'Every style' : esc(level.name)}</small></span></label>`;
   }).join('');
   return `<fieldset class="memory-keep"><legend>Keep for</legend><div class="memory-keep-choices">${choices}</div><p class="sub memory-hint">${hintHTML()}</p></fieldset>`;
 }
@@ -92,8 +92,8 @@ export async function renderMemories(root, { profileId = null, profileName = '',
     ];
     const tabBar = `<div class="seg mem-tabs scroll-row" role="group" aria-label="Memory views">${tabs.map(([key, label, n]) => `<button type="button" data-tab="${key}" class="${tab === key ? 'on' : ''}" aria-pressed="${tab === key}">${esc(label)}${n ? ` <span class="pill accent">${n}</span>` : n === 0 ? ' <span class="seg-n">0</span>' : ''}</button>`).join('')}</div>`;
     const intro = profileId
-      ? `<p class="sub">Lessons for every video in ${esc(levelName())}. They win over an <a href="#/styles/memories">Everything</a> memory on the same topic. A format’s style belongs in <a href="${channelHref(profileId, 'formats')}">its rules</a>; notes about one video stay in that video’s chat.</p>`
-      : `<p class="sub">Two levels: <b>Everything</b> reaches every style and video; <b>This style</b> reaches every video in that style and wins when both cover the same topic. A format’s style belongs in its rules, and notes about one video stay in that video’s chat. Your current request and pinned project setup take precedence.</p>`;
+      ? `<p class="sub">Lessons for every video in ${esc(levelName())}. They win over an <a href="#/styles/memories">Everything</a> memory on the same topic. A style’s own pace and layout belong in <a href="${kitHref(profileId, 'styles')}">its Skill rules</a>; notes about one video stay in that video’s chat.</p>`
+      : `<p class="sub">Two levels: <b>Everything</b> reaches every style and video; <b>This brand kit</b> reaches every style that uses the kit and wins when both cover the same topic. A style’s own pace and layout belong in its Skill rules, and notes about one video stay in that video’s chat. Your current request and pinned project setup take precedence.</p>`;
     const head = embedded
       ? `<div class="tab-head"><div>${intro}</div><button class="btn primary" data-add>+ Memory</button></div>`
       : `<div class="home-head"><h1>Memories</h1><button class="btn primary" data-add>+ Memory</button></div><p>Preferences that carry into your next video. Review proposed lessons, choose where each one applies, and keep only what helps.</p>${intro}<label>Applies to<select data-scope>${options(data.scopes, scope)}</select></label>`;

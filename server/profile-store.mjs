@@ -71,7 +71,7 @@ export class ProfileStore extends LearningStore {
  importInstructions(expected){const prior=this.instructions(),files={...prior.files};for(const n of Object.keys(files)){const p=safeFile(this.root,n);if(existsSync(p))files[n]=text(read(p),100000);}return this.saveInstructions(files,expected,'Imported explicit instruction file edits');}
  brand(profileId,version){this.get('profiles',profileId);const row=version?this.db.prepare('SELECT data FROM brand_versions WHERE id=? AND profile_id=?').get(learningId(version),profileId):this.db.prepare('SELECT data FROM brand_versions WHERE id=(SELECT version FROM brand_heads WHERE profile_id=?)').get(profileId);if(!row)return null;const v=JSON.parse(row.data);if(hash(JSON.stringify(v.brand))!==v.hash)fail('Brand database integrity check failed.');return v;}
  saveBrand(profileId,input,expected,reason='Creator-approved brand'){
-  this.get('profiles',profileId);const brand=cleanBrand(input);for(const id of brand.assets)this.asset(profileId,id);
+  this.get('profiles',profileId);this.notUnbranded(profileId,'A brand');const brand=cleanBrand(input);for(const id of brand.assets)this.asset(profileId,id);
   return this.tx(()=>this.commitBrand(profileId,brand,expected,reason));
  }
  commitBrand(profileId,brand,expected,reason){if((this.brand(profileId)?.id||null)!==expected)fail('Brand changed. Reload and review before saving.');const v={id:randomUUID(),profileId,created:stamp(),reason,brand,hash:hash(JSON.stringify(brand))};this.db.prepare('INSERT INTO brand_versions VALUES(?,?,?)').run(v.id,profileId,JSON.stringify(v));this.db.prepare('INSERT INTO brand_heads VALUES(?,?) ON CONFLICT(profile_id) DO UPDATE SET version=excluded.version').run(profileId,v.id);return v;}
@@ -100,13 +100,13 @@ export class ProfileStore extends LearningStore {
   return a;
  }
  uploadAsset(profileId,name,bytes){
-  this.get('profiles',profileId);name=text(name,180);
+  this.get('profiles',profileId);this.notUnbranded(profileId,'A brand asset');name=text(name,180);
   if(!/\.(png|jpe?g|webp|svg|ttf|otf|woff2?)$/i.test(name)||/[\\/]/.test(name)||bytes.length>20*1024*1024)fail('Choose an image or font up to 20 MB.');
   if(this.assets(profileId).length>=100)fail('Profile asset limit is 100 files.');
   const r=addResource(this,{scope:`profile:${profileId}`,name,kind:/\.(ttf|otf|woff2?)$/i.test(name)?'font':'image',bytes,source:{via:'brand-upload'}});
   return {id:r.id,name:r.name};
  }
- research(profileId,url,direction=''){this.get('profiles',profileId);const r={id:randomUUID(),profileId,url:publicBrandURL(url),direction:text(direction),baseVersion:this.brand(profileId)?.id||null,revision:1,status:'draft',created:stamp()};this.db.prepare('INSERT INTO brand_research VALUES(?,?,?)').run(r.id,profileId,JSON.stringify(r));mkdirSync(join(this.researchDir(r.id),'work'),{recursive:true});return r;}
+ research(profileId,url,direction=''){this.get('profiles',profileId);this.notUnbranded(profileId,'Brand research');const r={id:randomUUID(),profileId,url:publicBrandURL(url),direction:text(direction),baseVersion:this.brand(profileId)?.id||null,revision:1,status:'draft',created:stamp()};this.db.prepare('INSERT INTO brand_research VALUES(?,?,?)').run(r.id,profileId,JSON.stringify(r));mkdirSync(join(this.researchDir(r.id),'work'),{recursive:true});return r;}
  researchDir(id){return safeFile(this.root,`.studio/brand-research/${learningId(id)}`);}
  researchGet(id){return this.get('brand_research',id);}
  researchChange(id,rev,patch){return this.tx(()=>{const r=this.researchGet(id);if(r.revision!==rev)fail('Research changed. Reload first.');if(r.status==='approved')fail('This research is already approved.');return this.update('brand_research',{...r,...patch,revision:rev+1});});}
@@ -147,7 +147,9 @@ export class ProfileStore extends LearningStore {
   if(!b||!this.instructions(b.instructionVersion))fail('Pinned instructions are missing.');
   if(b.profileId)this.get('profiles',b.profileId);
   if(b.brandVersion&&(!b.profileId||!this.brand(b.profileId,b.brandVersion)))fail('The pinned brand belongs to another channel.');
-  if(b.formatId&&this.get('formats',b.formatId).profileId!==b.profileId)fail('The pinned format belongs to another channel.');
+  // A pinned format may belong to another kit now: a style moved with Change kit keeps its earlier videos on the kit
+  // (brand version) they were made with. New pins come from bundle(), which still requires the format's own kit.
+  if(b.formatId)this.get('formats',b.formatId);
   if(b.versionId&&this.version(b.versionId).formatId!==b.formatId)fail('Version belongs to another format.');
   return b;
  }
@@ -168,7 +170,10 @@ export class ProfileStore extends LearningStore {
  // The project's Packaging chat (<project>.packaging) shares the project chat's memories and follows the same way.
  rebindProjectMemory(project,bundle){
   if(!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_chats'").get())return null;
-  const formatId=bundle?.formatId||null,profileId=formatId?this.get('formats',formatId).profileId:bundle?.profileId||null;
+  // The pinned kit (a style moved later keeps its videos on the kit they were made with); No brand has no rung.
+  const formatId=bundle?.formatId||null;
+  let profileId=bundle?.profileId||(formatId?this.get('formats',formatId).profileId:null);
+  if(this.isUnbranded(profileId))profileId=null;
   const scopes=scopeChain({profileId,formatId,project},{levels:MEMORY_LEVELS});
   let result=null;
   for(const chat of [project,`${project}.packaging`]){
@@ -184,6 +189,25 @@ export class ProfileStore extends LearningStore {
   }
   return result;
  }
+ // Change kit: the style's own conversations (_learning_<session>) follow it to the new kit's memories. Its videos
+ // don't: their chats stay on the kit they pinned (rebindProjectMemory is not called for them).
+ rebindFormatMemory(formatId){
+  if(!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_chats'").get())return 0;
+  const f=this.get('formats',formatId),profileId=this.isUnbranded(f.profileId)?null:f.profileId;
+  const scopes=scopeChain({profileId,formatId:f.id},{levels:MEMORY_LEVELS});
+  let changed=0;
+  for(const s of this.list('sessions').filter(x=>x.formatId===f.id)){
+   const chat=`_learning_${s.id}`,row=this.db.prepare('SELECT data FROM memory_chats WHERE id=?').get(chat);
+   if(!row)continue;
+   const old=JSON.parse(row.data);
+   if(JSON.stringify(old.scopes)===JSON.stringify(scopes))continue;
+   this.db.prepare('UPDATE memory_chats SET data=? WHERE id=?').run(JSON.stringify({...old,scopes,scope:scopes.at(-1),profileId:profileId||undefined,formatId:f.id}),chat);
+   const cached=safeFile(this.root,`.studio/memory-context/${hash(chat).slice(0,32)}/MEMORY.md`);
+   if(existsSync(cached))unlinkSync(cached);
+   changed++;
+  }
+  return changed;
+ }
  // A project whose pin can no longer be used (an upgrade before 0.1.0-beta.10 kept one channel's brand under another
  // channel): keep everything that is still valid and replace only what is not, with the reasons for the creator.
  repairedBundle(project){
@@ -196,9 +220,10 @@ export class ProfileStore extends LearningStore {
    Object.assign(next,{formatId:f.id,formatName:f.name,profileId:f.profileId,versionId:learning.versionId||null});
    changes.push(`Format: ${f.name}, as the project's pinned guide says.`);
   }
-  if(next.formatId){
+  // A style moved to another kit keeps its videos on the kit they pinned; only a pin without one takes the format's.
+  if(next.formatId&&!next.profileId){
    const f=this.get('formats',next.formatId);
-   if(f.profileId!==next.profileId){next.profileId=f.profileId;changes.push('Channel: the one the format belongs to.');}
+   next.profileId=f.profileId;changes.push('Brand kit: the one the style uses.');
   }
   if(next.profileId){
    const p=this.get('profiles',next.profileId);

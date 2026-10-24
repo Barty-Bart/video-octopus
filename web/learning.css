@@ -230,3 +230,51 @@
 .storage-backup { margin: 4px 0 0; }
 .storage-backup label { min-width: min(320px, 100%); }
 .storage-page { padding-bottom: 96px; }
+
+/* ---- The style page (Flat 3): renderLearning's single mode. The home is the Skill or Examples tab; the conversation
+   or a side panel (Files, Insights, History, Videos) takes the right at 1040px+ (it slides over below 1260px). ---- */
+.vf3.single { grid-template-columns: minmax(0, 1fr); }
+.vf3.single > .vf3-home { padding: 24px 32px 48px; }
+@container (min-width: 700px) { .vf3.single { grid-template-columns: minmax(0, 1fr); } }
+@container (min-width: 1040px) {
+  .vf3.single.talking { grid-template-columns: minmax(0, 1fr) minmax(360px, 440px); }
+}
+.vf-side-head h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.vf-side-body { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 16px 24px; display: flex; flex-direction: column; gap: 12px; container: vfhome / inline-size; }
+@media (max-width: 980px) { .vf3.single > .vf3-home { padding: 18px 16px 32px; } }
+
+.st-skill { display: grid; grid-template-columns: minmax(0, 1fr); gap: 28px; }
+@container vfhome (min-width: 760px) { .st-skill { grid-template-columns: minmax(0, 1fr) 260px; gap: 36px; } }
+.st-rules { min-width: 0; display: flex; flex-direction: column; }
+.st-rules-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 8px; }
+.st-rules-head h2 { margin: 0; font-size: 17px; font-weight: 600; }
+.st-review { color: var(--accent-text); font-weight: 500; }
+.st-empty { margin: 8px 0 0; max-width: 620px; }
+.st-rules .vf-area { padding: 6px 0 2px; border-top: 1px solid var(--line); }
+.st-rules .vf-area-name { margin: 10px 0 4px; }
+.st-side { min-width: 0; display: flex; flex-direction: column; gap: 18px; }
+.st-side-sec h3 { margin: 0 0 6px; font-size: 12px; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; color: var(--text-3); }
+.st-side-sec p { margin: 0 0 6px; }
+.st-core { color: var(--text-2); overflow-wrap: anywhere; }
+.st-side-row { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; color: var(--text-2); }
+.st-skill-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; cursor: pointer; }
+.st-skill-row > span:first-child { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.st-start { display: grid; gap: 6px; border: 0; margin: 0; padding: 0; }
+.st-start legend { padding: 0; margin-bottom: 4px; font-weight: 500; }
+
+.st-examples-head { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 18px; }
+.st-examples-head p { flex: 1 1 280px; margin: 0; }
+.st-examples { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(200px, 100%), 1fr)); gap: 20px 16px; }
+.st-ex { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.st-ex-pic { position: relative; display: grid; place-items: center; height: 150px; padding: 0; border: 0; border-radius: 14px; background: var(--surface-2); cursor: pointer; }
+.st-ex-pic:hover { background: var(--hover); }
+.st-ex-frame { display: block; border-radius: 6px; background: var(--active); box-shadow: inset 0 0 0 1px var(--line); }
+.st-ex-pic.tall .st-ex-frame { width: 64px; height: 114px; }
+.st-ex-pic.wide .st-ex-frame { width: 70%; aspect-ratio: 16 / 9; }
+.st-ex-badge { position: absolute; left: 10px; top: 10px; padding: 1px 8px; border-radius: 999px; font-size: 12px; background: var(--surface); color: var(--text-3); box-shadow: 0 0 0 1px var(--line); }
+.st-ex-badge.on { color: var(--ok-ink); background: var(--ok-soft); box-shadow: none; }
+.st-ex-t { display: flex; flex-direction: column; min-width: 0; }
+.st-ex-t b { font-weight: 500; overflow-wrap: anywhere; }
+.st-examples-empty { padding: 24px; border-radius: 14px; border: 1.5px dashed color-mix(in srgb, var(--text-3) 45%, transparent); }
+.st-examples-empty p { margin: 4px 0 0; }
+.vf-side-body .vf-files > .vf-card-head > h2 { display: none; } /* the panel head already says Files */
