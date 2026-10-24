@@ -15,6 +15,7 @@ import { icon } from './icons.js';
 import { updatesSection, markUpdateBadge } from './updates.js';
 import { support, browserName } from './recorder.js';
 import { usageView } from './plan-usage.js';
+import { trashSection } from './trash.js';
 
 let CTX = null;          // { app, makeChat, loadStatus, status, railAgent, newVideo } from app.js
 let askAvailable = false; // the Ask Claude drawer and ⌘J: every page but a project's (it has its own chat) and Setup
@@ -70,7 +71,7 @@ const GROUPS = [
   ['recording', 'Recording', 'Camera, mic, screen, transcription', ['recorder', 'transcribe']],
   ['editing', 'Editing & sound', 'Cuts, effects, video defaults', ['editing', 'sound', 'look']],
   ['export', 'Export', 'Rendering and output', ['render']],
-  ['storage', 'Storage', 'Folders, backups, usage', ['folders', 'storage', 'usage']],
+  ['storage', 'Storage', 'Folders, backups, trash, usage', ['folders', 'storage', 'trash', 'usage']],
 ];
 // Each section: its heading and one line about it.
 const SECTIONS = {
@@ -86,6 +87,7 @@ const SECTIONS = {
   render: ['Rendering', 'How videos are rendered, and the defaults for new exports.'],
   folders: ['Folders', 'The studio is the home for your local database, projects and media. Skills are managed in the app; you do not need to arrange their folders.'],
   storage: ['Storage & backups', 'Back up and restore the local database, and look after the skill file store.'],
+  trash: ['Trash', 'Deleted takes and media removed from videos wait here. Nothing is emptied automatically: put an item back, or empty the trash yourself.'],
   usage: ['Usage', 'What you’ve made with Video Octopus, counted from your own folders and a usage log that stays on this computer.'],
 };
 // More words the settings search finds a section by: its rows' labels and what people call them.
@@ -102,6 +104,7 @@ const FIND = {
   render: 'parallel jobs size 1080p 4k codec h.264 hevc prores object separation sam cut out rotoscope mask model',
   folders: 'studio folder projects folder library folder new studio skills learning database',
   storage: 'backup restore database sqlite skill files disk',
+  trash: 'trash bin deleted takes removed media put back restore empty trash free space disk delete permanently',
   usage: 'dashboard statistics stats made videos hours',
 };
 const groupOf = (section) => GROUPS.find((g) => g[3].includes(section));
@@ -741,6 +744,8 @@ DRAW.storage = () => {
   renderDatabaseRecovery(box).catch((e) => { box.replaceChildren(h(`<p class="notice">${esc(e.message)}</p>`)); });
   return box;
 };
+// Settings › Storage › Trash (web/trash.js): what's in the studio's trash, Put back, and Empty trash.
+DRAW.trash = () => trashSection({ row, group });
 DRAW.usage = () => {
   const box = h('<div class="set-embed"></div>');
   renderDashboard(box, { recordingsDir: tilde(CTX.status?.()?.recordingsDir || ''), embedded: true });

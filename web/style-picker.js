@@ -40,6 +40,9 @@ export function makeStylePicker({ id, getP, formatInfo = {}, onChanged }) {
     const main = c.formatName || kit || TERMS.noStyle;
     const sub = c.formatName ? (kit ? `· ${kit}` : `· ${TERMS.noBrand}`) : kit ? '· no style' : '· decide as I go';
     btn.innerHTML = `${swatch(color)}<span class="sp-main">${esc(main)}</span><span class="sp-sub">${esc(sub)}</span><span class="sp-caret">${icon('chevron', 14)}</span>`;
+    // The button may show only the start of a long name: the whole of it is in the tooltip and the accessible name.
+    btn.title = `Style: ${main} ${sub}. The style and format this video uses`;
+    btn.setAttribute('aria-label', `Style: ${main} ${sub}`);
   };
 
   const optionsOf = () => [...pop.querySelectorAll('[role="option"], .sp-new')];

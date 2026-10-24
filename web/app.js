@@ -39,7 +39,7 @@ import { STAGE_PANE, PANE_WORDS, paneOfTab, stageOfTab, stagesOf, stageForPane, 
 import * as rec from './recorder.js';
 import { HOTKEY } from './recorder.js';
 import { icon } from './icons.js';
-import { makeMediaActions, popMenu, addLayerMenu, currentCard, otherRows, removedRows, wireReorder, itemName } from './media.js';
+import { makeMediaActions, popMenu, addLayerMenu, currentCard, otherRows, removedRows, wireReorder, itemName, actionToast } from './media.js';
 import { applyAppearance, onAppearance, cutLookParams, themeSwitch } from './appearance.js';
 import { rememberMessage, reviewLessons } from './memory.js';
 import { projectLearningPanel } from './learning.js';
@@ -111,6 +111,11 @@ function showUsage(ev) {
   const set = (el, value) => { el.style.width = `${value ?? 0}%`; el.parentElement.hidden = value == null; el.parentElement.previousElementSibling.hidden = value == null; };
   set($('#u5'), v.fiveHour); set($('#u7'), v.sevenDay);
   meter.title = `${engineName(STATUS?.engine)} usage: ${v.note}`;
+  // In the editor the meter is two small bars without their 5h / 7d labels (the top bar's room goes to the stages):
+  // its name says the numbers.
+  const pct = (x) => `${Math.round(x)}%`;
+  const parts = [v.fiveHour != null ? `last 5 hours ${pct(v.fiveHour)}` : '', v.sevenDay != null ? `last 7 days ${pct(v.sevenDay)}` : ''].filter(Boolean);
+  meter.setAttribute('aria-label', `${engineName(STATUS?.engine)} plan usage: ${parts.join(', ') || 'not reported yet'}`);
   const ask = document.querySelector('.shell-nav [data-open-assistant]');
   if (ask && STATUS) ask.dataset.tip = askTip(railAgent());
 }
@@ -235,11 +240,34 @@ async function home(route, nav = null) {
   return { teardown: () => { page?.teardown?.(); shell.teardown(); document.removeEventListener('keydown', keys); document.body.classList.remove('in-home'); } };
 }
 
-function takeRow(t) {
+function takeRow(t, { reload } = {}) {
+  const where = t.projects?.length ? ` · in ${t.projects.map((n) => `“${n}”`).join(', ')}` : t.used ? ' · in a video' : '';
+  const delTip = t.used ? 'A video uses this take: remove it from that video first' : 'Move this take to the studio’s trash (Undo brings it back)';
   const row = h(`<div class="take-row"><span class="ti" aria-hidden="true">${TAKE_ICON}</span>
-    <span class="tt"><b>${esc(takeLabel(t.id))}</b><span class="sub">${esc(takeWhat(t))} · ${gb(t.bytes)}${t.used ? ' · in a video' : ''}</span></span>
-    <button class="btn small" title="Make an Untitled video with this take and open it">Start a video from it</button></div>`);
-  $('button', row).onclick = () => newVideo({ take: t.id });
+    <span class="tt"><b>${esc(takeLabel(t.id))}</b><span class="sub">${esc(takeWhat(t))} · ${gb(t.bytes)}${esc(where)}</span></span>
+    <span class="tr-acts"><button class="btn small" data-a="start" title="Make an Untitled video with this take and open it">Start a video from it</button>
+    <button class="btn ghost small danger icon-l" data-a="del" title="${esc(delTip)}" aria-label="${esc(`Delete the take of ${takeLabel(t.id)}`)}">${icon('trash', 14)}Delete</button></span></div>`);
+  $('[data-a=start]', row).onclick = () => newVideo({ take: t.id });
+  // Delete: the take's folder goes to the studio's trash (server/trash.mjs), with Undo. Refused while it records, or
+  // when a video uses it (the message names them).
+  const del = $('[data-a=del]', row);
+  del.onclick = async () => {
+    del.disabled = true;
+    try {
+      const r = await api('/api/takes/delete', { take: t.id });
+      await reload?.();
+      actionToast(`The take of ${takeLabel(t.id)} is in the studio’s trash.`, [['Undo', async () => {
+        try {
+          await api('/api/takes/restore', { trash: r.trash });
+          toast('The take is back in Recordings.');
+        } catch (e) { toast(e.message); }
+        await reload?.();
+      }]]);
+    } catch (e) {
+      del.disabled = false;
+      toast(e.message);
+    }
+  };
   return row;
 }
 
@@ -247,12 +275,16 @@ function renderRecordings(main, takes) {
   main.replaceChildren(h(`<div class="home-wrap">
     <div class="home-head"><div class="hh-title"><h1>Recordings</h1><div class="sub mono">${esc(tilde(STATUS.recordingsDir))}</div></div>
       <button class="btn rec" id="rec2"><span class="rec-dot"></span>Record a new take</button></div>
-    <p class="sub lead">Every take you've recorded, newest first. Start a video from one and Video Octopus copies it in.</p>
+    <p class="sub lead">Every take you've recorded, newest first. Start a video from one and Video Octopus copies it in. Deleted takes wait in Settings › Storage › Trash.</p>
     <div class="take-list wide" id="all"></div></div>`));
   $('#rec2', main).onclick = () => newVideo({ record: true });
   const all = $('#all', main);
+  const reload = async () => {
+    const fresh = await api('/api/takes').catch(() => null);
+    if (fresh && main.isConnected) renderRecordings(main, fresh);
+  };
   if (!takes.length) all.append(h(`<div class="empty"><b>No recordings yet</b><span class="sub">Press Record a new take to make one.</span></div>`));
-  for (const t of takes) all.append(takeRow(t));
+  for (const t of takes) all.append(takeRow(t, { reload }));
 }
 
 function setupScreen() {
@@ -749,11 +781,15 @@ async function openProject(id) {
     let more = host.querySelector('.rail-more');
     const moreSig = JSON.stringify((pl.more || []).map((m) => [m.id, m.done]));
     if (!more || (!more.open && more.dataset.sig !== moreSig)) {
-      more = h(`<details class="rail-more"><summary aria-label="More: learn from this project, other skills">${ICON.more}</summary>
+      // The theme switch lives here in the editor (Light / Dark; Settings › General has Match system too), so the top
+      // bar's room goes to the stages.
+      more = h(`<details class="rail-more"><summary aria-label="More: learn from this project, theme, other skills">${ICON.more}</summary>
       <div class="menu"><button class="mi learn" title="${esc(pl.learn.ask)}"><b>${esc(pl.learn.label)}</b><small>Save reusable pieces and lessons into your library</small></button>
+        <div class="menu-h">Theme</div><div class="mi-theme"></div>
         ${pl.more?.length ? `<div class="menu-h">${esc(pl.steps.find((x) => x.id === 'prepare')?.name || 'Clean up')}, one step at a time</div>${pl.more.map((m) => `<button class="mi step" data-step="${esc(m.id)}" title="${esc(m.what)}"><b>${m.done ? '✓ ' : ''}${esc(m.name)}</b><small>/${esc(m.skill || '')}${m.done ? ' · done' : ''}</small></button>`).join('')}` : ''}
         <div class="menu-h">Skills</div><div class="skill-list">Loading…</div></div></details>`);
       more.dataset.sig = moreSig;
+      $('.mi-theme', more).append(themeSwitch());
       $('.learn', more).onclick = () => { more.open = false; runStep({ id: 'learn', kind: 'claude' }); };
       more.querySelectorAll('[data-step]').forEach((x) => (x.onclick = () => { more.open = false; runStep({ id: x.dataset.step, kind: 'claude' }); }));
       more.addEventListener('toggle', async () => {
@@ -3593,6 +3629,4 @@ function takeMessage(ev) {
 
 // The look before anything else (the Settings page doesn't load the status itself).
 api('/api/status').then((st) => { setSystem(st); applyAppearance(st.appearance); }).catch(() => {});
-// The editor's top bar: the theme switch (design V2 §3). Home pages put their own in their headers.
-$('#barTheme')?.append(themeSwitch());
 router();

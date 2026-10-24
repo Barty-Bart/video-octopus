@@ -48,14 +48,12 @@
 }
 .rail-tip { position: fixed; z-index: 70; transform: translateY(-50%); max-width: 320px; padding: 6px 10px; border-radius: var(--r-s); background: var(--primary); color: var(--on-primary); font-size: 12px; line-height: 1.4; box-shadow: var(--shadow-pop); pointer-events: none; }
 
-/* ---------- the theme switch (§3): Light and Dark, in page headers and the editor's top bar ---------- */
+/* ---------- the theme switch (§3): Light and Dark, in page headers and the editor's ⋯ menu ---------- */
 .theme-switch { display: inline-flex; flex: none; gap: 2px; padding: 3px; border-radius: 10px; background: var(--surface-2); }
 .theme-switch button { width: 34px; height: 30px; display: inline-grid; place-items: center; padding: 0; border: 0; border-radius: var(--r-s); background: transparent; color: var(--text-3); transition: background var(--t) ease-out, color var(--t) ease-out; }
 .theme-switch button:hover { color: var(--text); }
 .theme-switch button[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: 0 0 0 1px var(--line); }
 :root[data-theme="dark"] .theme-switch button[aria-pressed="true"] { background: var(--active); box-shadow: none; }
-.bar-theme:empty { display: none; }
-.bar-theme .theme-switch button { height: 28px; width: 32px; }
 
 /* ---------- Settings (§8): six groups in the shell ---------- */
 .set-sheet.home-main { display: grid; grid-template-columns: 240px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); overflow: hidden; container-type: normal; }
@@ -101,9 +99,29 @@
 .usage-meter { display: flex; align-items: center; gap: 10px; }
 .usage-meter i { width: 160px; height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
 .usage-meter b { display: block; height: 100%; background: var(--accent); }
+/* Settings › Storage › Trash (web/trash.js) */
+.trash-acts { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.trash-where { overflow-wrap: anywhere; }
+.btn.trash-del { background: var(--bad); border-color: transparent; color: var(--on-primary); } /* white on red; near-black on the dark theme's lighter red */
+.btn.trash-del:hover:not(:disabled) { background: var(--bad-ink); }
+.btn.trash-del:disabled { opacity: 0.45; cursor: not-allowed; }
+.trash-list { display: flex; flex-direction: column; }
+.trash-item { display: flex; align-items: center; gap: 16px; padding: 12px 0; border-top: 1px solid var(--line); }
+.trash-l { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.trash-l b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trash-c { flex: none; max-width: 50%; text-align: right; }
+.trash-why { font-size: 12px; }
+.trash-more { align-self: flex-start; margin-top: 8px; }
+.trash-none { margin: 12px 0 0; }
+.trash-msg { margin: 8px 0 0; color: var(--bad-ink); }
+.trash-msg:empty { display: none; }
+.trash-warn { margin: 12px 0 0; padding: 10px 12px; border-radius: var(--r-m); background: var(--bad-soft); border: 1px solid var(--bad-line); color: var(--bad-ink); font-size: 13px; }
 @media (max-width: 720px) {
   .set-sec .set-row, .set-adv .set-row { grid-template-columns: minmax(0, 1fr); }
   .set-sec .set-c { justify-content: flex-start; }
+  .trash-acts { justify-content: flex-start; }
+  .trash-item { flex-wrap: wrap; }
+  .trash-c { max-width: 100%; text-align: left; }
 }
 
 /* A channel's avatar: its initial on the approved brand colour (set inline), else a quiet token. */

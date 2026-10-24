@@ -1,3 +1,12 @@
+# v0.1.0-beta.19
+
+- **Room for the stages.** The editor's top bar shows the logo alone, a narrower name and style picker (hover either for the whole name), and the plan-usage meter as two small bars (hover for the numbers). The Light/Dark switch moved to the bar's **⋯** menu (Settings › General › Theme still has Match system). With a long style name and the meter showing, the whole bar (segments and ▾) fits at 1440 px; at 1280 px only the segments go; at 1100 px the ▾ go too (Alt+↓ or a long press still opens a stage's steps); the one-button stage menu remains for 760 px and below.
+- **No sideways scroll on a phone.** At 375 px the canvas transport and the timeline's buttons wrap instead of widening the page.
+- **Settings › Storage › Trash.** See what deleted takes and removed media are in the studio's trash, their size, and **Put back** each one (refused if something with the same name is back, if its video is gone or archived, or while its video is busy). **Empty trash…** and **Delete items older than 30 days…** are the only permanent deletes in Video Octopus: each asks first, says how much goes and that it can't be undone. Nothing is ever emptied automatically.
+- **Delete in Recordings.** Each take has **Delete** (to the trash, with Undo). It's refused while the take is still recording or saving, and when a video uses it (the message names them).
+
+Verified with 381 unit tests on Node 24.22.1 and 22.22.1, the format-skill and learning runtimes, and a disposable browser run (54 of 54 checks: the header at 1440, 1280 and 1100 px with a long style and the meter, no sideways scroll at 375 px in the editor, Settings and Recordings, every Trash and Recordings path in light and dark). This is a source update on main; the downloadable tagged prerelease remains separate.
+
 # v0.1.0-beta.18
 
 - **Media in every video.** The Canvas inspector starts with a Media section, and a **Media ▾** button sits in the canvas toolbar.

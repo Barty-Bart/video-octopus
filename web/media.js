@@ -31,7 +31,7 @@ const how = (item) => (item.recorded ? 'Recorded' : 'Imported');
 
 // The toast with buttons ("Recording deleted · Undo"), like the shots' (web/shotsui.js).
 let toastT = 0;
-function actionToast(text, acts) {
+export function actionToast(text, acts) {
   const t = $('#toast');
   if (!t) return;
   t.replaceChildren(h(`<span>${esc(text)}</span>`), ...acts.map(([name, fn]) => {

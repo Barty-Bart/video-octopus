@@ -41,6 +41,7 @@ import { blocksRoute, blocksSummary, blocksContext, prepareState, stepBrief, not
 import { shotsRoute, readShotsAndZooms, shotsContext, onShotNotes } from './shots.mjs';
 import { recRoute, unfinishedTakes, recorderChoices, recorderBusy } from './browser-recorder.mjs';
 import { mediaRoute } from './media.mjs';
+import { trashRoute } from './trash.mjs';
 import { logUse, usageFromFiles, cutSaved, dashboard, backfill, catchUpUsage, getPlanUsage } from './usage.mjs';
 import { schedulesRoute, startScheduler, stopScheduler, readSchedules, schedulesBusy } from './schedules.mjs';
 import { inboxRoute, inboxItems } from './inbox.mjs';
@@ -554,6 +555,8 @@ async function route(req, res) {
     } catch (e) { return send(res, 400, { error: e.message }); }
   }
   if (p === '/api/takes') return send(res, 200, listTakes().map((t) => ({ ...t, duration: takeDuration(t) })));
+  // Settings › Storage › Trash (list, Put back, Empty trash) and the Recordings page's Delete with its Undo (server/trash.mjs).
+  if (await trashRoute(req, res, url, { send, body, busy: mediaBusy, emit: broadcast })) return;
   // Saved layouts (the canvas's "+ Save layout"), shared by every project of the studio (server/saved-layouts.mjs).
   if (p === '/api/layouts') return layoutsRoute(req, res, { send, body, touched: (pid) => uiTouched.set(pid, Date.now()) });
   // Built-in recorder takes that never got saved (the page closed mid-take), for every project: Home lists them.

@@ -427,6 +427,8 @@ const refuse = (message) => Object.assign(new Error(message), { status: 409 });
 // Delete take: everything moves to the trash, and the project goes back to the take it had before (an Undo puts it
 // all back). Refused while the take is recording or saving, when another project uses it too, and when its project
 // already has work made from it.
+// id: the project asking (the record panel's Delete take), or null for the Recordings page (/api/takes/delete): then
+// only the recordings folder's copy moves, and a take any project uses is refused, naming them.
 export function deleteTake(id, stamp) {
   if (!takeName(stamp)) throw new Error('Unknown take.');
   const dir = takeDir(stamp);
@@ -434,10 +436,14 @@ export function deleteTake(id, stamp) {
   const t = readTake(stamp);
   if (finishing.has(stamp) || (t?.recorder === 'browser' && !t.finished && !t.dismissed)) throw refuse('That take is still recording or saving.');
   const users = projectsUsing(stamp);
-  const mine = users.find((u) => u.id === id);
-  if (!mine && t?.project !== id) throw new Error('That take isn’t part of this project.');
+  const mine = id === null ? null : users.find((u) => u.id === id);
+  if (id !== null && !mine && t?.project !== id) throw new Error('That take isn’t part of this project.');
   const others = users.filter((u) => u.id !== id);
-  if (others.length) throw refuse(`This take is also used by ${others.map((u) => `“${u.name}”`).join(', ')}, so it wasn’t deleted. Remove it there first.`);
+  const names = others.map((u) => `“${u.name}”`).join(', ');
+  if (others.length && id === null) {
+    throw refuse(`This take is used by ${names}, so it wasn’t deleted. Remove it from ${others.length > 1 ? 'those videos' : 'that video'} first.`);
+  }
+  if (others.length) throw refuse(`This take is also used by ${names}, so it wasn’t deleted. Remove it there first.`);
   let arrived = t?.finished || 0;
   if (mine) for (const f of mine.files) { try { arrived = Math.max(arrived, statSync(join(mine.dir, 'source', f)).mtimeMs); } catch {} }
   const work = mine && mine.meta.activeTake === stamp ? workOnTake(mine, arrived) : null;

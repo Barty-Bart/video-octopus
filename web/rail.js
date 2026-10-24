@@ -219,18 +219,21 @@ export function makeRail({ root, id, getP, hooks }) {
   function fit() {
     const g = barHost?.querySelector('.stages'), crumbs = $('#crumbs'), barEl = $('.bar');
     if (!g || !crumbs || !barEl) return;
+    // The least the name area gives: the style picker keeps its width (style.css caps it), the name about 90 px.
+    const floor = () => Math.max(160, (crumbs.querySelector('.sp')?.offsetWidth || 0) + 100);
     crumbs.style.maxWidth = '';
     const over = () => barHost.scrollWidth > barHost.clientWidth + 1 || g.scrollWidth > g.clientWidth + 1;
     const narrow = innerWidth <= 760;
     for (const t of [0, 1, 2, 3, 4]) {
       if (narrow && t < 4) continue;
+      // Tight first: the style picker narrows with it, so the name's share is measured at its tight width.
+      barEl.classList.toggle('tight', t >= 2);
       if (t === 2) {
         const short = Math.max(barHost.scrollWidth - barHost.clientWidth, g.scrollWidth - g.clientWidth);
-        crumbs.style.maxWidth = `${Math.max(160, crumbs.offsetWidth - short - 8)}px`;
+        crumbs.style.maxWidth = `${Math.max(floor(), crumbs.offsetWidth - short - 8)}px`;
       }
       barHost.dataset.fit = String(t);
       g.dataset.fit = String(t);
-      barEl.classList.toggle('tight', t >= 2);
       if (t === 4 || !over()) break;
     }
     // The name gave more than the stages needed: hand the rest back.
@@ -238,7 +241,7 @@ export function makeRail({ root, id, getP, hooks }) {
       const used = [...barHost.children].reduce((sum, c) => sum + (c === g ? g.scrollWidth : c.offsetWidth), 0) + 4 * (barHost.children.length - 1);
       const slack = barHost.clientWidth - used - 8;
       if (slack > 0 && crumbs.style.maxWidth) crumbs.style.maxWidth = `${crumbs.offsetWidth + slack}px`;
-      if (over()) crumbs.style.maxWidth = `${Math.max(160, crumbs.offsetWidth - slack)}px`;
+      if (over()) crumbs.style.maxWidth = `${Math.max(floor(), crumbs.offsetWidth - slack)}px`;
     }
     if (barHost.dataset.fit !== '4' && menu) closeMenu();
   }

@@ -485,6 +485,12 @@ body.in-home main { height: 100%; }
 .tt { flex: 1; min-width: 0; }
 .tt b { display: block; font-weight: 500; }
 .tt .sub { display: block; }
+.take-row .tr-acts { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; flex: none; }
+@media (max-width: 560px) {
+  .take-row { flex-wrap: wrap; }
+  .take-row .tt { flex-basis: calc(100% - 46px); }
+  .take-row .tr-acts { flex: 1 1 100%; justify-content: flex-start; }
+}
 .skill-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
 .skill-card { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border-radius: var(--card-radius, 12px); background: var(--panel); border: var(--card-border, 1px solid var(--line)); box-shadow: var(--card-shadow, none); backdrop-filter: var(--panel-blur); }
 .skill-card b { font-family: var(--mono); font-size: 12px; font-weight: 500; }
@@ -1757,6 +1763,8 @@ button.style-card:hover { border-color: var(--line-2); box-shadow: 0 2px 8px -4p
 @container (max-width: 860px) { .tk-head .tl-note { display: none; } }
 @container (max-width: 700px) { .tk-snap-l, .tk-head .tl-range { display: none; } .tk-zs { width: 64px; } }
 @container (max-width: 560px) { .tk-zs, .tk-span { display: none; } }
+/* A phone (about 375 px): the head's buttons wrap onto a second line rather than pushing the page sideways. */
+@container (max-width: 420px) { .tk-head { flex-wrap: wrap; height: auto; min-height: 36px; padding-block: 4px; row-gap: 4px; } }
 .sc-el.hover span { opacity: 1; }
 /* the picture follows the timeline */
 .sc-el.hover, .eb.hover { border: 2px solid var(--sel); background: rgba(37, 99, 235, 0.06); }
@@ -2099,6 +2107,12 @@ button.style-card:hover { border-color: var(--line-2); box-shadow: 0 2px 8px -4p
 .tp-vol { display: flex; align-items: center; gap: 2px; flex: none; }
 .tp-vol input[type=range] { width: 72px; accent-color: var(--text); }
 .transport .time { flex: none; }
+/* A phone: tighter gaps and a shorter volume slider; anything still too wide wraps to a second line (never a sideways
+   page scroll). */
+@media (max-width: 480px) {
+  .transport { flex-wrap: wrap; gap: 8px; row-gap: 6px; }
+  .tp-vol input[type=range] { width: 56px; }
+}
 
 /* Picture size (tab bar): Fit · NN %, 50 %, 100 %; a bigger picture scrolls inside the stage. */
 .tools-row { display: flex; align-items: center; gap: 8px; }
@@ -2469,11 +2483,29 @@ iframe.cut.studio { margin: 0; width: 100%; border: 0; border-radius: 0; backgro
   body.in-project .bar .rail { order: 0; flex: none; container-type: normal; }
   body.in-project .bar .bar-right { order: 6; flex-basis: 100%; justify-content: flex-end; flex-wrap: wrap; }
 }
-/* fit level 2 and up (.bar.tight): the project name and the style picker give the stages room (fit sets the width) */
+/* fit level 2 and up (.bar.tight): the project name gives the stages room (fit sets the width). The style picker
+   doesn't shrink below its name's first words: it stops at 140 px (the tooltip has it all). */
 .bar.tight .crumbs .pt { flex: 0 1 auto; }
-.bar.tight .crumbs .sp { min-width: 0; flex: 0 1 auto; }
-.bar.tight .crumbs .sp-btn { max-width: 100%; min-width: 0; }
+.bar.tight .crumbs .sp { min-width: 0; flex: none; }
+.bar.tight .crumbs .sp-btn { max-width: 140px; min-width: 0; }
 .bar.tight .crumbs .sp-sub { display: none; }
+/* The editor's bar gives its room to the stages: the logo alone (it still says "Video Octopus" to screen readers and
+   in its tooltip) with no "/" after it, a narrower name and style picker (their tooltips have the whole names; the
+   picker's "· kit" is in its tooltip and its list), and
+   the plan-usage meter as two small bars (its name and tooltip have the numbers; at 1180 px and below it is hidden,
+   as before, and Settings › Agent shows it). The theme switch is in the ⋯ menu (app.js). */
+body.in-project .bar .brand { font-size: 0; gap: 0; }
+body.in-project .bar .crumbs > span:first-child { display: none; }
+body.in-project .bar { gap: 12px; }
+body.in-project .bar .pt { max-width: 184px; }
+body.in-project .bar .sp-btn { max-width: 180px; }
+body.in-project .bar .sp-sub { display: none; }
+@media (min-width: 1181px) {
+  body.in-project .usage { display: grid; gap: 3px; padding: 4px 2px; }
+  body.in-project .usage span { display: none; }
+  body.in-project .usage i { width: 22px; height: 3px; }
+}
+.rail-more .mi-theme { padding: 4px 10px 8px; }
 .rail-help { flex: none; width: 30px; height: 30px; margin-left: 2px; border: 0; border-radius: 50%; background: transparent; color: var(--muted); display: grid; place-items: center; cursor: pointer; }
 .rail-help:hover { background: var(--panel-3); color: var(--text); }
 .stg-menu { position: fixed; z-index: 30; overflow-y: auto; padding: 6px; border-radius: var(--dialog-radius, 16px); background: var(--pop-bg, var(--panel)); border: var(--dialog-border, 0); box-shadow: var(--pop); color: var(--text); }
