@@ -34,6 +34,8 @@ import { patchOf, applyPatch, reconcile, frameLooks, touches, rowKeys, hiddenOf,
 import { withoutKeys, shotsWithoutProposals, zoomsWithoutProposals, proposalsOf, proposalWhat, proposalWords } from './shots.js';
 import { makeZooms } from './zoomsui.js';
 import { makeRail } from './rail.js';
+import { STAGE_PANE, PANE_WORDS, paneOfTab, stageOfTab, stagesOf, stageForPane, parseProjectHash, stageHash, landingStage,
+  rememberStage, recallStage, recallLegacyTab, firstNotedScene } from './stages.js';
 import * as rec from './recorder.js';
 import { HOTKEY } from './recorder.js';
 import { applyAppearance, onAppearance, cutLookParams, themeSwitch } from './appearance.js';
@@ -140,11 +142,18 @@ const router = makeRouter(async (nav) => {
     newVideo: () => newVideo(),
   });
   if (page) return page;
-  const m = /^#\/p\/(.+)$/.exec(location.hash);
-  if (m) return openProject(decodeURIComponent(m[1]));
+  const proj = parseProjectHash(location.hash);
+  if (proj) return openProject(proj.id);
   return home(parseRoute(location.hash), nav);
 });
-window.addEventListener('hashchange', router);
+// The open project's page: an address change that only moves between its stages (#/p/<id>?stage=…) switches the stage
+// in place, so nothing on the page (the chat, a running step, an upload) starts again.
+let projectPage = null;
+window.addEventListener('hashchange', () => {
+  const proj = parseProjectHash(location.hash);
+  if (proj && projectPage?.id === proj.id && projectPage.route(proj.query)) return;
+  router();
+});
 
 // ---------- home: the shell (rail + one page): Projects, Recordings, My styles, Library, Skills, Scheduled ----------
 const TAKE_ICON = '<svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="3" width="11" height="8" rx="1.5"/><circle cx="13.5" cy="12.5" r="3" class="hole"/></svg>';
@@ -314,15 +323,6 @@ const ICON = {
   folder: '<svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 3.5h4l1.5 1.5h5.5v7.5h-11z"/></svg>',
   more: '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.5" cy="8" r="1.3"/><circle cx="8" cy="8" r="1.3"/><circle cx="12.5" cy="8" r="1.3"/></svg>',
 };
-// The project's tabs, with what each one is in plain words (the tooltip and the screen reader's description).
-const TABS = [
-  ['packaging', 'Packaging', 'Thumbnail ideas with Codex: generate, refine, pick the winners. Optional, any time'],
-  ['canvas', 'Canvas', 'Your video: layout, camera, screen and the timeline'],
-  ['scenes', 'Scenes', 'Claude’s scene-by-scene plan and the scenes it builds; review them and leave notes'],
-  ['cut', 'Cut', 'The cut, word by word; fix it by hand'],
-  ['renders', 'Renders', 'Finished videos'],
-  ['post', 'Post', 'Title, description and captions for each platform'],
-];
 
 function clearBar() {
   $('.bar').classList.remove('tight');
@@ -400,18 +400,20 @@ async function openProject(id) {
       <div class="composer"><label class="vh" for="input">Message Claude</label><textarea id="input" rows="1" placeholder="Ask Claude for a change…"></textarea>
         <button class="send" id="sendBtn" aria-label="Send"><span class="l-send">${ICON.send}</span><i class="stop-sq l-stop" aria-hidden="true"></i></button></div>
     </section>
-    <section class="col center" aria-label="Picture">
-      <div class="tabs">
-        <div class="seg tabseg" role="tablist" aria-label="View">${TABS.map(([k, n, about]) => `<button class="tab${k === 'canvas' ? ' on' : ''}" role="tab" data-tab="${k}" title="${esc(about)}" aria-description="${esc(about)}">${n}${['scenes', 'renders'].includes(k) ? ` <span class="count" id="${k}Count"></span>` : ''}<span class="vh tab-new-t"></span></button>`).join('')}</div>
+    <section class="col center" aria-label="Workspace">
+      <div class="ws-bar">
+        <h2 class="ws-name" id="wsName"><b id="wsTitle">Canvas</b><span class="ws-about" id="wsAbout"></span><span class="ws-count" id="wsCount"></span></h2>
         <span class="gap"></span><div id="tabTools"></div>
         <button class="btn ghost small icon-l" id="reveal" title="Show the project folder in ${fileManager()}">${ICON.folder}${fileManager(true)}</button></div>
-      <div class="tab-body"><div class="jobs" id="jobs"></div>
+      <div class="ws-pick" id="wsPick" hidden></div>
+      <div class="tab-body" id="wsBody" role="tabpanel" aria-labelledby="wsTitle"><div class="jobs" id="jobs"></div>
         <div class="pane packaging-pane" data-pane="packaging" hidden></div>
         <div class="pane" data-pane="canvas"></div>
         <div class="pane" data-pane="scenes" hidden></div>
         <div class="pane" data-pane="cut" hidden></div>
-        <div class="pane" data-pane="renders" hidden></div>
-        <div class="pane post-pane" data-pane="post" hidden></div></div>
+        <div class="pane publish-pane" data-pane="publish" hidden>
+          <section class="pub-sec pub-renders" aria-labelledby="pubRendersH"><h3 class="pub-h" id="pubRendersH">Renders <span class="ws-count" id="rendersCount"></span></h3><div data-pane="renders"></div></section>
+          <section class="pub-sec pub-post" aria-labelledby="pubPostH"><h3 class="pub-h" id="pubPostH">Post</h3><div data-pane="post"></div></section></div></div>
     </section>
     <aside class="col inspector" aria-label="Inspector"><div id="insCanvas" class="ins"></div><div id="insKit" class="ins" hidden></div><div id="insScenes" class="ins" hidden></div><div id="insOther" class="ins" hidden></div></aside></div>`);
   app.replaceChildren(el);
@@ -420,19 +422,31 @@ async function openProject(id) {
   $('.msgs', el).before(learnedPanel);
   projectLearningPanel(learnedPanel, id, P, {send: text => api(`/api/projects/${encodeURIComponent(id)}/chat`,{text})}).catch(e => { learnedPanel.textContent = e.message; });
 
-  // tabs
-  let tab = 'canvas';
+  // The stages are the navigation (web/stages.js, web/rail.js): `stage` is the one selected in the bar, `tab` the pane
+  // it opens (packaging, canvas, scenes, cut or publish; Renders and Post are the two sections of Publish).
+  let tab = 'canvas', stage = null;
+  let rail = null; // the stage bar and the dock (web/rail.js), made below
   let paintStart = () => {}; // the empty video's start screen, once it exists (below)
-  // A tab that got something new while you were on another one glows (and shows its count or a dot) until you open
-  // it: the first scenes, a new render, the cut after Clean up, the post kit written, or the tab a finished step's
-  // "Show me" points at (the strip's green done moment, web/rail.js).
-  const markTab = (t, why = 'new') => {
-    const b = $(`[data-tab=${t}]`, el);
-    if (!b || t === tab) return;
-    b.classList.add('new', 'glow');
-    $('.tab-new-t', b).textContent = `, ${why}`;
+  const stageNames = () => stagesOf(P.pipeline).map((x) => x.name);
+  // A pane that got something new while you were on another one puts a dot on its stage (and its reason in the
+  // stage's name for screen readers) until you open it: the first scenes, a new render, the cut after Clean up, the
+  // post kit written, or the pane a finished step's "Show me" points at (the strip's green done moment, web/rail.js).
+  const marks = {};
+  const markTab = (t, why = 'new', hint = null) => {
+    const pane = paneOfTab(t);
+    // Claude finishing notes is Polish's news; the rest goes to the pane's own stage (the canvas: Build).
+    const name = stageForPane(t, { hint: hint || (t === 'scenes' && /notes/.test(why) ? 'Polish' : null), hasTake: hasTake(), names: stageNames() });
+    if (!pane || !name || pane === tab) return;
+    marks[name] = why;
+    rail?.render();
   };
-  const unmarkTab = (t) => { const b = $(`[data-tab=${t}]`, el); if (!b) return; b.classList.remove('new', 'glow'); $('.tab-new-t', b).textContent = ''; };
+  // Opening a pane clears the dots of every stage that opens it.
+  const unmarkTab = (t) => {
+    const pane = paneOfTab(t);
+    let changed = false;
+    for (const k of Object.keys(marks)) if (STAGE_PANE[k] === pane) { delete marks[k]; changed = true; }
+    if (changed) rail?.render();
+  };
   // What each tab had when it was last open, kept by the server (project state tabSeen), so a tab's glow survives a
   // reload until you open it: the scenes' count, the newest render or export, the cut being ready, the post kit's time.
   let seenNews = null;
@@ -446,34 +460,110 @@ async function openProject(id) {
     if (!seenNews) { seenNews = P.tabSeen ? { ...now, ...P.tabSeen } : { ...now }; save = !P.tabSeen; }
     for (const k of Object.keys(NEWS)) {
       if (!(now[k] > (seenNews[k] ?? 0))) { if (now[k] < (seenNews[k] ?? 0)) { seenNews[k] = now[k]; save = true; } continue; }
-      if (k === tab) { seenNews[k] = now[k]; save = true; } else markTab(k, NEWS[k]);
+      if (paneOfTab(k) === tab) { seenNews[k] = now[k]; save = true; } else markTab(k, NEWS[k]);
     }
     if (save) saveTabSeen();
   }
-  const sawTab = (t) => { if (!seenNews || !(t in NEWS)) return; const v = tabNow()[t]; if (seenNews[t] !== v) { seenNews[t] = v; saveTabSeen(); } };
-  const setTab = (t) => {
+  const sawTab = (t) => {
+    if (!seenNews) return;
+    let save = false;
+    for (const k of Object.keys(NEWS)) {
+      if (paneOfTab(k) !== paneOfTab(t)) continue;
+      const v = tabNow()[k];
+      if (seenNews[k] !== v) { seenNews[k] = v; save = true; }
+    }
+    if (save) saveTabSeen();
+  };
+  // Each pane keeps where it was scrolled while you're on another stage (hiding a pane can drop its scroll offsets).
+  const scrollMem = new Map();
+  function keepScroll(pane) {
+    const box = pane && $(`.pane[data-pane=${pane}]`, el);
+    if (!box || box.hidden) return;
+    const kept = [];
+    for (const x of [box, ...box.querySelectorAll('*')]) if (x.scrollTop > 0 || x.scrollLeft > 0) kept.push([x, x.scrollTop, x.scrollLeft]);
+    scrollMem.set(pane, kept);
+  }
+  function restoreScroll(pane) {
+    const kept = scrollMem.get(pane);
+    if (!kept) return;
+    scrollMem.delete(pane);
+    requestAnimationFrame(() => { for (const [x, top, left] of kept) if (x.isConnected) { x.scrollTop = top; x.scrollLeft = left; } });
+  }
+  // Browser storage, or null where reading it throws (blocked site data).
+  const storage = (k) => { try { return window[k]; } catch { return null; } };
+  // The address and the memory follow the stage: #/p/<id>?stage=cut (replaced, no history entry) and localStorage, so
+  // a link or a reload lands on the same stage.
+  function saveStage() {
+    rememberStage(storage('localStorage'), id, stage);
+    const now = parseProjectHash(location.hash);
+    const next = stageHash(id, stage, now?.query);
+    if (now?.id === id && location.hash !== next) window.history.replaceState(window.history.state, '', next); // (history: the undo stack here)
+  }
+  // Open a stage's workspace. Switching never stops a running step, the chat, an upload or an export: it only shows
+  // another pane, and each pane keeps its state while hidden.
+  function goStage(name, { scroll = true } = {}) {
+    const names = stageNames();
+    if (!names.includes(name)) return;
+    const was = stage;
+    stage = name;
+    showPane(STAGE_PANE[name]);
+    saveStage();
+    rail?.render();
+    if (scroll && name === 'Polish' && was !== 'Polish') polishScene();
+  }
+  // Polish opens Scenes at the first scene with notes still open (once the scenes have loaded).
+  function polishScene(n = 0) {
+    const d = scenes.data();
+    if (!d?.scenes?.length) { if (n < 25 && stage === 'Polish') setTimeout(() => polishScene(n + 1), 120); return; }
+    const sid = firstNotedScene(d);
+    if (sid && stage === 'Polish') scenes.selectScene(sid);
+  }
+  // A pane by its old tab name (Show me, the dock, the steps, links in the panes): renders and post open Publish at
+  // that section. hint: the stage to select (the step's own stage), when it opens that pane.
+  const setTab = (t, hint = null) => {
+    const pane = paneOfTab(t);
+    if (!pane) return;
+    const name = stageForPane(t, { current: stage, hint, hasTake: hasTake(), names: stageNames() });
+    if (name && name !== stage) goStage(name, { scroll: false }); else showPane(pane);
+    if (t === 'renders' || t === 'post') {
+      const box = $('[data-pane=publish]', el);
+      if (t === 'renders') box.scrollTop = 0;
+      else requestAnimationFrame(() => $('.pub-post', el)?.scrollIntoView({ block: 'start', behavior: 'auto' }));
+    }
+  };
+  function paintWorkspace() {
+    const w = PANE_WORDS[tab] || PANE_WORDS.canvas;
+    $('#wsTitle', el).textContent = w.name;
+    $('#wsAbout', el).textContent = w.about;
+    $('#wsBody', el).setAttribute('aria-labelledby', stage ? `stg-${stage.toLowerCase()}` : 'wsTitle');
+  }
+  const showPane = (t) => {
+    const fresh = t !== tab;
+    if (fresh) keepScroll(tab);
     tab = t;
     unmarkTab(t);
     sawTab(t);
-    try { sessionStorage.setItem(`studio.tab.${id}`, t); } catch {} // a reload comes back to this tab
-    el.querySelectorAll('.tab').forEach((b) => { b.classList.toggle('on', b.dataset.tab === t); b.setAttribute('aria-selected', String(b.dataset.tab === t)); });
     el.querySelectorAll('.pane[data-pane]').forEach((p) => (p.hidden = p.dataset.pane !== t));
+    paintWorkspace();
+    paintCount();
     $('#tabTools', el).hidden = t !== 'canvas';
     $('#insCanvas', el).hidden = t !== 'canvas';
     $('#insKit', el).hidden = t !== 'canvas';
     $('#insScenes', el).hidden = t !== 'scenes';
     $('#insOther', el).hidden = t === 'canvas' || t === 'scenes';
     if (t === 'cut') renderCut();
-    if (t === 'renders') renderRenders();
+    if (t === 'publish') renderRenders();
     renderJobs();
-    if (t === 'post') post.show();
+    if (t === 'publish') post.show();
     if (t === 'packaging') packaging.show();
     renderOtherInspector();
     if (t === 'canvas') canvas.resume(); else canvas.pause();
-    if (t === 'scenes') scenes.show(); else scenes.hide();
+    if (t === 'scenes') { if (fresh || !scenesShown) scenes.show(); scenesShown = true; } else { scenes.hide(); scenesShown = false; }
     paintStart();
     applyFold();
+    if (fresh) restoreScroll(t);
   };
+  let scenesShown = false;
   // Claude folds to a rail: by itself on Scenes (where the list, picture and panel need the room), and ⌘J
   // toggles it; the choice is remembered for Scenes and for the other tabs separately.
   // Packaging has its own chat (Codex), so the project's chat folds there too by default.
@@ -489,7 +579,6 @@ async function openProject(id) {
   $('#chatOpen', el).onclick = () => setFold(false);
   const foldKeys = (e) => { if ((e.metaKey || e.ctrlKey) && (e.key === 'j' || e.key === 'J')) { e.preventDefault(); setFold(!isFolded()); } };
   document.addEventListener('keydown', foldKeys);
-  el.querySelectorAll('.tab').forEach((b) => (b.onclick = () => setTab(b.dataset.tab)));
   $('#reveal', el).onclick = () => api(`/api/projects/${encodeURIComponent(id)}/reveal`, {});
   $('#mode', el).onchange = async (e) => { await api('/api/settings', { permissionMode: e.target.value }); toast('Applies from your next message.'); };
 
@@ -558,7 +647,8 @@ async function openProject(id) {
   const scenes = makeScenes({
     pane: $('[data-pane=scenes]', el), inspector: $('#insScenes', el), id, getP: () => P, history,
     onCount: (c) => {
-      $('#scenesCount', el).textContent = c ? c.count : '';
+      sceneCount = c ? c.count : 0;
+      paintCount();
       // Claude finished notes while you were elsewhere: a dot on the tab.
       if (c && doneNotes >= 0 && c.done > doneNotes && tab !== 'scenes') markTab('scenes', 'Claude finished notes');
       if (c) doneNotes = c.done;
@@ -572,16 +662,17 @@ async function openProject(id) {
   const cutPanel = makeCutPanel({ id, getP: () => P, runLock: (s) => runStep(s), shots });
   // The step rail (web/rail.js): five stage chips in the bar, the next step docked on the message box, Show me, the
   // tabs' empty states and the first-time help, all from the steps' own words.
-  const rail = makeRail({ root: el, id, getP: () => P, hooks: {
-    runStep: (s) => runStep(s), setTab: (t) => setTab(t), glowTab: (t, why) => markTab(t, why), applyNotes: () => scenes.apply(), openCutList: () => { setTab('cut'); cutPanel.openList(); },
+  rail = makeRail({ root: el, id, getP: () => P, hooks: {
+    runStep: (s) => runStep(s), setTab: (t, hint) => setTab(t, hint), goStage: (name) => goStage(name), stage: () => stage, marks: () => ({ ...marks }),
+    glowTab: (t, why, hint) => markTab(t, why, hint), applyNotes: () => scenes.apply(), openCutList: () => { setTab('cut'); cutPanel.openList(); },
     learn: () => runStep({ id: 'learn', kind: 'claude' }), status: () => STATUS, composer: (name) => chat.setStep(name),
     readReply: (ts) => { setFold(false); requestAnimationFrame(() => chat.reveal(ts)); },
-    newestRender: () => { if (!P.renders.length) return null; renderSel = P.renders[0].file; renderRenders(true); return $('[data-pane=renders] .rd-main', el); },
+    newestRender: () => { if (!P.renders.length) return null; renderSel = P.renders[0].file; renderRenders(true); $('[data-pane=publish]', el).scrollTop = 0; return $('[data-pane=renders] .rd-main', el); },
   } });
   rail.dock($('#dock', el));
 
   // An empty video (no take yet) starts on the start screen (web/start-screen.js), and Claude asks what it's about.
-  const hasTake = () => Boolean(P.canvas?.screen || P.canvas?.cam || P.canvas?.audio || P.roles?.files?.length);
+  function hasTake() { return Boolean(P.canvas?.screen || P.canvas?.cam || P.canvas?.audio || P.roles?.files?.length); }
   const start = makeStartScreen({
     hotkey: HOTKEY,
     onRecord: () => $('#recBtn')?.click(),
@@ -601,7 +692,7 @@ async function openProject(id) {
       for (const b of hello.querySelectorAll('[data-ask]')) b.onclick = () => chat.send(b.dataset.ask);
     }
   };
-  $('#exportBtn').onclick = () => setTab('renders');
+  $('#exportBtn').onclick = () => setTab('renders', 'Publish');
   // No ffmpeg, no export: the button says where to get it (Setup's Tools card installs it after an OK).
   if (STATUS?.ffmpeg === false) Object.assign($('#exportBtn'), { disabled: true, title: 'Exporting needs ffmpeg: Setup → Tools installs it' });
   // Export kinds next to the MP4 (web/exportkinds.js): Layers and Timeline file, and their cards on the Renders tab.
@@ -623,10 +714,10 @@ async function openProject(id) {
     chat.paintProposals();
     scenes.update();
     sound.update();
-    post.update(tab === 'post');
+    post.update(tab === 'publish');
     blocks.update();
     if (tab === 'cut') renderCut();
-    if (tab === 'renders') renderRenders();
+    if (tab === 'publish') renderRenders();
     renderOtherInspector();
   }
   let refreshTimer;
@@ -636,13 +727,21 @@ async function openProject(id) {
   // steps Clean up runs in one go, and every other skill). A project without a format asks for one first.
   function renderSteps() {
     const host = $('#rail');
-    $('#rendersCount', el).textContent = P.renders.length || '';
+    paintCount();
+    // A project without a format: every stage still opens its pane (no steps yet), and a line over the workspace asks
+    // what kind of video it is.
+    const pick = $('#wsPick', el);
+    pick.hidden = Boolean(P.type);
     if (!P.type) {
-      host.replaceChildren(h(`<div class="rail-pick"><span>What kind of video is this?</span>${Object.entries(STATUS.formats).map(([k, v]) => `<button class="btn small" data-k="${k}">${esc(v)}</button>`).join('')}</div>`));
-      host.querySelectorAll('[data-k]').forEach((b) => (b.onclick = async () => { await api(`/api/projects/${encodeURIComponent(id)}/type`, { type: b.dataset.k }); refresh(); }));
+      if (!pick.firstChild) {
+        pick.replaceChildren(h(`<div class="rail-pick"><span>What kind of video is this?</span>${Object.entries(STATUS.formats).map(([k, v]) => `<button class="btn small" data-k="${k}">${esc(v)}</button>`).join('')}</div>`));
+        pick.querySelectorAll('[data-k]').forEach((b) => (b.onclick = async () => { await api(`/api/projects/${encodeURIComponent(id)}/type`, { type: b.dataset.k }); refresh(); }));
+      }
+      if (!host.querySelector('.stages')) rail.bar(host, null);
       rail.update();
       return;
     }
+    pick.replaceChildren();
     const pl = P.pipeline;
     let more = host.querySelector('.rail-more');
     const moreSig = JSON.stringify((pl.more || []).map((m) => [m.id, m.done]));
@@ -666,7 +765,8 @@ async function openProject(id) {
         }));
         if (!skills.length) list.textContent = 'No skills found in this studio.';
       });
-      host.querySelector('.rail-more')?.replaceWith(more);
+      const old = host.querySelector('.rail-more');
+      if (old) old.replaceWith(more); else if (host.querySelector('.stages')) host.append(more);
     }
     if (!host.querySelector('.stages')) rail.bar(host, more);
     rail.update();
@@ -676,13 +776,25 @@ async function openProject(id) {
   document.addEventListener('click', closeMenus);
   function closeMenus(e) { const m = $('#rail .rail-more'); if (m?.open && !m.contains(e.target)) m.open = false; }
 
-  // The inspector for the Cut and Renders tabs (the canvas fills its own).
+  // The inspector for Cut, Publish and Packaging (the canvas and Scenes fill their own). Publish: Export on top (the
+  // Renders section's), then the Post kit's (Write it with Claude, the Short's style, its files).
   function renderOtherInspector() {
     const box = $('#insOther', el);
     if (tab === 'cut') cutPanel.render(box);
-    else if (tab === 'renders') renderExportPanel(box);
-    else if (tab === 'post') post.inspector(box);
+    else if (tab === 'publish') {
+      let ex = $('#insPubEx', box), pk = $('#insPubPost', box);
+      if (!ex || !pk) { ex = h('<div id="insPubEx"></div>'); pk = h('<div id="insPubPost" class="ins-pub-post"></div>'); box.replaceChildren(ex, pk); }
+      renderExportPanel(ex);
+      post.inspector(pk);
+    }
     else if (tab === 'packaging') packaging.inspector(box);
+  }
+  // The scene and render counts beside the workspace's name and the Renders heading.
+  let sceneCount = 0;
+  function paintCount() {
+    const n = tab === 'scenes' ? sceneCount : tab === 'publish' ? P.renders.length : 0;
+    $('#wsCount', el).textContent = n ? String(n) : '';
+    $('#rendersCount', el).textContent = P.renders.length || '';
   }
 
   // ---------- Export panel (inspector of the Renders tab) ----------
@@ -763,11 +875,11 @@ async function openProject(id) {
 
   async function runStep(s) {
     rail.dismissDone(); // Run puts the strip's green "done" away
-    if (s.kind === 'app' && s.action === 'import') { setTab('canvas'); canvas.showImport(); return; }
-    if (s.kind === 'app' && s.action === 'open-cut') { setTab('cut'); return; }
-    if (s.kind === 'app' && s.action === 'open-scenes') { setTab('scenes'); return; }
-    if (s.kind === 'app' && s.action === 'open-packaging') { setTab('packaging'); return; }
-    if (s.id === 'post-kit') { setTab('post'); return; } // the Post tab writes the kit (work/post.json and post.md)
+    if (s.kind === 'app' && s.action === 'import') { setTab('canvas', s.stage); canvas.showImport(); return; }
+    if (s.kind === 'app' && s.action === 'open-cut') { setTab('cut', s.stage); return; }
+    if (s.kind === 'app' && s.action === 'open-scenes') { setTab('scenes', s.stage); return; }
+    if (s.kind === 'app' && s.action === 'open-packaging') { setTab('packaging', s.stage); return; }
+    if (s.id === 'post-kit') { setTab('post', 'Publish'); return; } // Publish's Post section writes the kit (work/post.json and post.md)
     try { await api(`/api/projects/${encodeURIComponent(id)}/step`, { step: s.id }); }
     catch (e) { toast(e.message); }
   }
@@ -925,7 +1037,7 @@ async function openProject(id) {
     });
     if ($('#rdScenes', view)) $('#rdScenes', view).onclick = () => setTab('scenes');
     libraryButtons($('.rd-lib', view), id, sel.file, () => video); // Save to library: the video, or the frame it's on (web/library.js)
-    view.querySelectorAll('.rcard').forEach((b) => (b.onclick = () => { renderSel = b.dataset.f; renderRenders(); $('[data-pane=renders]', el).scrollTop = 0; }));
+    view.querySelectorAll('.rcard').forEach((b) => (b.onclick = () => { renderSel = b.dataset.f; renderRenders(); $('[data-pane=publish]', el).scrollTop = 0; }));
     waveStop = miniWave($('.rd-wave canvas', view), video, `/api/projects/${encodeURIComponent(id)}/peaks?f=${encodeURIComponent(sel.file)}`);
     // Mark as final / unmark; the final one carries a tag in the grid too.
     $('#rdFinal', view).onclick = async () => {
@@ -953,7 +1065,7 @@ async function openProject(id) {
     return row;
   });
   const renderJobs = () => {
-    $('#jobs', el).replaceChildren(...recoverCards(), ...[...jobs.values()].filter((j) => !(j.id === 'export' && tab === 'renders')).map((j) => {
+    $('#jobs', el).replaceChildren(...recoverCards(), ...[...jobs.values()].filter((j) => !(j.id === 'export' && tab === 'publish')).map((j) => {
       const row = h(`<div class="job"><div class="job-top"><span>${esc(j.label)}</span>${j.cancel ? '<button class="btn ghost small" title="Stop this export">Stop</button>' : ''}</div><i><b style="width:${Math.round(j.progress * 100)}%"></b></i></div>`);
       const stop = $('button', row);
       if (stop) stop.onclick = () => api(`/api/projects/${encodeURIComponent(id)}/export-stop`, {});
@@ -997,7 +1109,7 @@ async function openProject(id) {
         }
       } else jobs.set(ev.id, ev);
       renderJobs();
-      if (tab === 'renders' && ev.id === 'export') renderOtherInspector();
+      if (tab === 'publish' && ev.id === 'export') { const ex = $('#insPubEx', el); if (ex) renderExportPanel(ex); }
       return;
     }
     // Folded away: a dot on the rail for news, and Claude unfolds by itself when it needs an answer.
@@ -1014,11 +1126,32 @@ async function openProject(id) {
   scenes.update();
   sound.update();
   blocks.update();
-  const lastTab = (() => { try { return sessionStorage.getItem(`studio.tab.${id}`); } catch { return null; } })();
-  setTab(pendingRecord !== id && TABS.some(([k]) => k === lastTab) ? lastTab : 'canvas');
+  // Where the project opens: ?stage= (or an old ?tab=) in the address, else the stage last used here, else the tab the
+  // old tab row remembered, else the stage of the next step. A video just made with Record opens on Record.
+  const steps0 = P.pipeline?.steps || [];
+  const landing = pendingRecord === id ? 'Record' : landingStage({
+    query: parseProjectHash(location.hash)?.query, remembered: recallStage(storage('localStorage'), id),
+    legacyTab: recallLegacyTab([storage('sessionStorage'), storage('localStorage')], id),
+    next: steps0.find((s) => s.id === P.pipeline?.current)?.stage || null,
+    allDone: steps0.length > 0 && !P.pipeline?.current, names: stageNames(), hasTake: hasTake(),
+  });
+  const oldTab = parseProjectHash(location.hash)?.query.get('tab');
+  goStage(landing);
+  if (oldTab === 'post' && landing === 'Publish') setTab('post');
   if (pendingRecord === id) { pendingRecord = null; setTimeout(() => $('#recBtn')?.click(), 250); }
   else setTimeout(() => rail.maybeHelp(), 300); // once, on the first project page after this shipped (settings help.stepsIntro)
-  return { teardown: () => { es.close(); picker.destroy(); chat.destroy(); railRO.disconnect(); rail.destroy(); waveStop?.(); rdCmp?.destroy(); canvas.destroy(); scenes.destroy(); sound.destroy(); post.destroy(); packaging.destroy(); recorder.destroy(); blocks.destroy(); document.removeEventListener('click', closeMenus); document.removeEventListener('keydown', foldKeys); removeEventListener('message', onCutMessage); cutPanel.destroy(); clearBar(); } };
+  projectPage = {
+    id,
+    // A stage address on this same page: switch in place (false: the router opens the page again).
+    route: (query) => {
+      const want = landingStage({ query, remembered: stage, names: stageNames(), hasTake: hasTake() });
+      if (want !== stage) goStage(want);
+      else saveStage();
+      if (query.get('tab') === 'post') setTab('post');
+      return true;
+    },
+  };
+  return { teardown: () => { if (projectPage?.id === id) projectPage = null; es.close(); picker.destroy(); chat.destroy(); railRO.disconnect(); rail.destroy(); waveStop?.(); rdCmp?.destroy(); canvas.destroy(); scenes.destroy(); sound.destroy(); post.destroy(); packaging.destroy(); recorder.destroy(); blocks.destroy(); document.removeEventListener('click', closeMenus); document.removeEventListener('keydown', foldKeys); removeEventListener('message', onCutMessage); cutPanel.destroy(); clearBar(); } };
 }
 
 // ---------- export receipt: prints out of a slot when an export finishes ----------
@@ -3275,15 +3408,20 @@ function makeRecordButton(root, id, getP) {
   // The recorder's session (it outlives this page: a take keeps recording while you open another project).
   function render() {
     clearInterval(timer);
-    btn.classList.remove('live');
+    btn.classList.remove('live', 'paused');
     btn.disabled = false;
     const S = rec.session(), here = !S.project || S.project === id;
     if (S.phase === 'starting') { text.textContent = 'Starting…'; btn.disabled = true; return; }
     if (S.phase === 'recording') {
       btn.classList.add('live');
-      const tick = () => { text.textContent = `Stop ${mmss(Math.max(0, (Date.now() - S.startedAt) / 1000))}`; };
+      // Paused (web/recorder.js pause, ⌥⌘P): "Paused m:ss", the time standing still (startedAt slides while paused), no
+      // blinking; a click still stops the take. Resumed, it counts on as "Stop m:ss".
+      btn.classList.toggle('paused', Boolean(S.paused));
+      const tick = () => { text.textContent = `${S.paused ? 'Paused' : 'Stop'} ${mmss(Math.max(0, (Date.now() - S.startedAt) / 1000))}`; };
       tick(); timer = setInterval(tick, 500);
-      btn.title = here ? `Stop recording (or press ${HOTKEY}). The take lands in this project.` : `Recording for another project. Stop it here or with ${HOTKEY}.`;
+      btn.title = S.paused
+        ? `Paused. Resume with ${rec.PAUSE_KEY} or the recording controls; click to stop (or press ${HOTKEY}).`
+        : here ? `Stop recording (or press ${HOTKEY}). The take lands in this project.` : `Recording for another project. Stop it here or with ${HOTKEY}.`;
       return;
     }
     if (S.phase === 'stopping') { text.textContent = 'Finishing…'; btn.disabled = true; btn.title = 'Sending the last seconds to Video Octopus.'; return; }

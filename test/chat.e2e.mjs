@@ -162,7 +162,7 @@ try {
     must(d.y === 0 && d.sh <= d.ih, `Settings after focus: ${JSON.stringify(d)}`);
     // The project: every tab, then the chat scrolled to its top and a Show me in it.
     await open(`#/p/${id}`); await page.waitForSelector('.marker.done .mk-show');
-    for (const t of ['scenes', 'cut', 'renders', 'post', 'canvas']) { await page.click(`[data-tab=${t}]`); await sleep(500); d = await docState(); must(d.sh <= d.ih && d.y === 0, `tab ${t}: ${JSON.stringify(d)}`); }
+    for (const t of ['scenes', 'cut', 'publish', 'canvas']) { await page.click(`[data-tab=${t}]`); await sleep(500); d = await docState(); must(d.sh <= d.ih && d.y === 0, `tab ${t}: ${JSON.stringify(d)}`); }
     await page.evaluate(() => { document.querySelector('#msgs').scrollTop = 0; });
     await page.click('.marker.done .mk-show');
     await sleep(900);
@@ -355,18 +355,18 @@ try {
     const pv = Object.values((await api(`/api/projects/${id}`)).proxies).find(Boolean);
     mkdirSync(P('renders'), { recursive: true });
     copyFileSync(P(pv), P('renders/chat-e2e_pip_v1.mp4')); // a new render while you're on Canvas
-    await page.waitForSelector('[data-tab=renders].glow', { timeout: 10000 });
+    await page.waitForSelector('[data-tab=publish].glow', { timeout: 10000 });
     await page.reload(); await page.waitForSelector('[data-tab=canvas].on');
-    await page.waitForSelector('[data-tab=renders].glow', { timeout: 10000 });
+    await page.waitForSelector('[data-tab=publish].glow', { timeout: 10000 });
     const tag = await page.textContent('#sessionInfo'), meter = await page.isVisible('#usage');
     must(/fake-1/.test(tag), `model tag after a reload: "${tag}"`);
     must(meter, 'the usage meter is gone after a reload');
     await shot('10-reload-glow');
-    await page.click('[data-tab=renders]');
+    await page.click('[data-tab=publish]');
     await sleep(400);
-    await page.reload(); await page.waitForSelector('[data-tab=renders].on', { timeout: 10000 });
+    await page.reload(); await page.waitForSelector('[data-tab=publish].on', { timeout: 10000 });
     await page.click('[data-tab=canvas]'); await sleep(300);
-    must(!(await page.$('[data-tab=renders].glow')), 'the glow came back after Renders was opened');
+    must(!(await page.$('[data-tab=publish].glow')), 'the glow came back after Renders was opened');
     return `tab kept, glow kept until opened, "${tag.trim()}", meter shown`;
   });
 

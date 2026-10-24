@@ -383,6 +383,8 @@ a.btn { text-decoration: none; }
 .rec.live { background: var(--bad-soft); border-color: var(--bad-line); color: var(--bad-ink); font-variant-numeric: tabular-nums; }
 .rec.live .rec-dot { border-radius: 2px; animation: blink 1s steps(2, start) infinite; }
 .rec.live kbd { display: none; }
+/* paused (web/recorder.js pause): the time stands still and the dot stops blinking */
+.rec.live.paused .rec-dot { animation: none; border-radius: 1px; background: linear-gradient(90deg, var(--bad) 0 35%, transparent 35% 65%, var(--bad) 65%); }
 @keyframes blink { to { visibility: hidden; } }
 
 .seg { display: inline-flex; gap: 2px; padding: 3px; border-radius: var(--ctl-radius); background: var(--panel-3); }
@@ -563,6 +565,24 @@ body.in-home main { height: 100%; }
 .center { background: var(--center-bg, var(--bg)); }
 .tabs { display: flex; align-items: center; gap: 10px; padding: 8px 14px; min-height: 48px; flex: none; }
 .tabs .seg { background: var(--seg); }
+/* The workspace toolbar (the stage bar replaced the tab row): the pane's name and what it is, its tools, the folder. */
+.ws-bar { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 4px 10px 4px 16px; flex: none; border-bottom: 1px solid var(--line); }
+.ws-name { display: flex; align-items: baseline; gap: 8px; min-width: 0; margin: 0; font-size: 13px; font-weight: 400; letter-spacing: 0; white-space: nowrap; overflow: hidden; }
+.ws-name b { font-weight: 600; color: var(--text); }
+.ws-about { color: var(--text-3); overflow: hidden; text-overflow: ellipsis; }
+.ws-about::before { content: "· "; }
+.ws-count { font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; font-weight: 400; }
+.ws-count:empty { display: none; }
+.ws-bar #tabTools { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ws-pick { padding: 8px 16px; border-bottom: 1px solid var(--line); background: var(--panel-2); }
+.ws-pick .rail-pick { flex-wrap: wrap; }
+@media (max-width: 760px) { .ws-about { display: none; } }
+/* Publish: Renders on top, then Post, in one scrolling pane. */
+.publish-pane { overflow-y: auto; }
+.pub-sec { flex: none; }
+.pub-post { border-top: 1px solid var(--line); margin-top: 6px; padding-top: 8px; }
+.pub-h { display: flex; align-items: baseline; gap: 8px; margin: 0; padding: 14px 14px 8px; font-size: 13px; font-weight: 600; letter-spacing: var(--label-track); text-transform: var(--label-case); color: var(--muted); }
+.ins-pub-post { border-top: 1px solid var(--line); }
 /* Phones: six tabs (Packaging first) and the folder button no longer fit one row; the tabs scroll sideways inside it. */
 @media (max-width: 600px) { .tabs { flex-wrap: wrap; } .tabs .tabseg { max-width: 100%; overflow-x: auto; } }
 .tab { height: 28px; padding: 0 12px; border: 0; border-radius: calc(var(--ctl-radius) * 7 / 9); background: transparent; color: var(--muted); font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
@@ -2378,44 +2398,96 @@ iframe.cut.studio { margin: 0; width: 100%; border: 0; border-radius: 0; backgro
 .marker b { color: var(--text); font-weight: 600; }
 .tool-t { margin-left: 6px; font-family: var(--mono); font-size: 11px; color: var(--faint); }
 
-/* ---------- Step rail v2, variant A ----------
-   The bar's five stage chips (the stage of the next step lit, with "Next: <step>" and a segment per step), a stage's
-   steps under its chip, the dock on the message box (below), Show me's outline, the tabs' empty
-   states and the first-time help. Every colour is a token, so both themes dress them. */
-.rail .stages { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; padding: 3px; flex: 0 1 auto; }
-.stg-sep { width: 14px; height: 1px; background: var(--line-2); flex: none; }
-.stg { flex: none; display: flex; flex-direction: column; justify-content: center; gap: 3px; min-width: 74px; padding: 4px 12px 5px; border: 0; border-radius: var(--ctl-radius); background: transparent; color: var(--muted); text-align: left; cursor: pointer; transition: background var(--t); }
-.stg:hover { background: var(--panel-3); }
-.st-n { display: flex; align-items: center; gap: 5px; font-size: 13px; line-height: 16px; font-weight: 500; color: var(--muted); white-space: nowrap; }
+/* ---------- Step rail v2, variant A, and the stage bar ----------
+   The bar's stages (the navigation), a stage's steps under its ▾, the dock on the message box (below), Show me's
+   outline, the panes' empty states and the first-time help. Every colour is a token, so both themes dress them. */
+/* The stage bar is the editor's navigation (ADDENDUM-stage-bar.md; web/rail.js renderBar, web/stages.js). Each stage
+   is a tab (role=tab) and a ▾ for its steps. The selected stage (where you are) is bold and underlined; the NEXT or
+   RUNNING badge (how far the video is) is an accent pill; the two can sit on different stages. */
+.rail .stages { display: flex; align-items: center; gap: 2px; min-width: 0; overflow: hidden; padding: 3px; flex: 0 1 auto; }
+.stg-sep { width: 6px; height: 1px; background: var(--line-2); flex: none; }
+.stg-w { flex: none; display: flex; align-items: stretch; border-radius: var(--ctl-radius); transition: background var(--t); }
+.stg-w:hover { background: var(--panel-3); }
+.stg { flex: none; display: flex; flex-direction: column; justify-content: center; gap: 4px; min-width: 0; padding: 4px 4px 5px 8px; border: 0; border-radius: var(--ctl-radius); background: transparent; color: var(--muted); text-align: left; cursor: pointer; }
+.stg-w:not(:has(.stg-more)) .stg { padding-right: 8px; }
+.st-n { position: relative; display: flex; align-items: center; gap: 5px; font-size: 13px; line-height: 18px; font-weight: 500; color: var(--muted); white-space: nowrap; }
+.st-t { position: relative; }
+.stg:hover .st-n { color: var(--text); }
 .stg.done .st-n { color: var(--text-2); }
-.stg.done .st-n svg { color: var(--ok); flex: none; }
-.stg.cur { background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent); }
-.stg.cur:hover { background: var(--accent-soft); }
-.stg.cur .st-n { color: var(--text); font-weight: 700; }
+.stg.done .st-n > svg, .stg-col > svg:first-child, .sm-ic svg { color: var(--ok); flex: none; }
+/* where you are: 600 with a 2px underline in the text colour */
+.stg.on .st-n { color: var(--text); font-weight: 600; }
+.stg.on .st-t::after { content: ""; position: absolute; left: 0; right: 0; bottom: -3px; height: 2px; border-radius: 1px; background: var(--text); }
 .stg.none { opacity: 0.6; }
-.st-x { display: flex; align-items: center; gap: 5px; font-size: 11px; line-height: 13px; font-weight: 600; color: var(--accent-text); white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
-.st-x .spin { width: 9px; height: 9px; border-width: 1.5px; }
+/* Package is optional: its name in the third text colour, its segment outlined (dashed) */
+.stg.opt:not(.on) .st-t { color: var(--text-3); }
+.stg.opt .d:not(.done):not(.next):not(.run) { background: transparent; box-shadow: none; outline: 1px dashed var(--todo-ring, var(--line-2)); outline-offset: -1px; }
+.stg.opt.skipped .st-t { text-decoration: line-through; text-decoration-color: var(--faint); }
+/* how far the video is: NEXT, or RUNNING with a spinner */
+.stg-badge { display: inline-flex; align-items: center; gap: 4px; height: 16px; padding: 0 6px; border-radius: 999px; background: var(--accent); color: var(--on-accent); font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; white-space: nowrap; flex: none; }
+.stg-badge .spin { width: 8px; height: 8px; border-width: 1.5px; border-color: var(--on-accent); border-right-color: transparent; }
+/* something new in that stage's pane since you last opened it (app.js markTab) */
+.stg-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--tab-new-dot, var(--accent)); flex: none; }
+.stg.glow { box-shadow: 0 0 0 1.5px var(--tab-glow-ring), 0 0 10px 1px var(--tab-glow); }
 .stg .dots { display: flex; gap: 3px; }
 .stg .d { width: 14px; height: 4px; border-radius: 2px; background: var(--line-2); flex: none; }
 .stg .d.done { background: var(--ok); }
 .stg .d.next { background: var(--accent); }
 .stg .d.run { background: var(--accent); animation: bk-pulse 1.2s ease-in-out infinite; }
 .stg .d.opt:not(.done):not(.next):not(.run) { background: transparent; box-shadow: inset 0 0 0 1px var(--todo-ring, var(--line-2)); }
-.stg .d.skip { background: linear-gradient(var(--faint), var(--faint)) center / 100% 1px no-repeat; box-shadow: inset 0 0 0 1px var(--faint); opacity: 0.8; }
+.stg .d.skip { background: linear-gradient(var(--faint), var(--faint)) center / 100% 1px no-repeat; box-shadow: inset 0 0 0 1px var(--faint); opacity: 0.6; }
 .stg-pill { font-size: 11px; font-weight: 500; line-height: 15px; padding: 0 6px; border-radius: var(--chip-radius); background: var(--panel-3); color: var(--muted); }
-.stg.cur .stg-pill { background: var(--panel); color: var(--text-2); }
 .stg-pill .pl-s { display: none; }
 .stg-warn { min-width: 16px; height: 16px; padding: 0 4px; border-radius: var(--chip-radius); background: var(--warn-ink); color: var(--warn-on); font-size: 10.5px; font-weight: 700; display: inline-grid; place-items: center; }
-/* fitting the bar (web/rail.js fit): 1 the "Next:" line goes, 3 the segments, 4 the chips tighten */
-.stages:not([data-fit="0"]) .st-x { display: none; }
-.stages:is([data-fit="3"], [data-fit="4"]) .dots { display: none; }
-.stages[data-fit="4"] { gap: 3px; }
-.stages[data-fit="4"] .stg { min-width: 0; padding: 4px 8px; }
-.stages[data-fit="4"] .stg-sep { width: 6px; }
-.stages[data-fit="4"] .stg-pill .pl-f { display: none; }
-.stages[data-fit="4"] .stg-pill .pl-s { display: inline; }
+/* a stage's steps: the ▾ beside it */
+.stg-more { flex: none; width: 20px; align-self: center; height: 26px; margin-right: 2px; border: 0; border-radius: calc(var(--ctl-radius) * 2 / 3); background: transparent; color: var(--faint); display: grid; place-items: center; cursor: pointer; }
+.stg-more:hover, .stg-more[aria-expanded="true"] { background: var(--panel-2); color: var(--text); }
+.stg-more[aria-expanded="true"] svg { transform: rotate(180deg); }
+/* the narrow bar: one button with the stage you're on, listing every stage */
+.stg-col { display: none; flex: 0 1 auto; min-width: 0; align-items: center; gap: 6px; height: 34px; padding: 0 10px; border: 1px solid var(--line-2); border-radius: var(--ctl-radius); background: var(--panel); color: var(--text); font-size: 13px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.stg-col:hover, .stg-col[aria-expanded="true"] { background: var(--panel-2); }
+.stg-col .st-t { overflow: hidden; text-overflow: ellipsis; }
+.stg-col .stg-badge { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.stg-col > svg:last-child { color: var(--muted); flex: none; }
+/* fitting the bar (web/rail.js fit): 1 the segments go, 2 the project name gives room (.bar.tight), 3 the ▾ go, 4 one button */
+.rail:is([data-fit="1"], [data-fit="2"], [data-fit="3"]) .stg .dots { display: none; }
+.rail:is([data-fit="3"], [data-fit="4"]) .stg-more { display: none; }
+.rail:is([data-fit="3"]) .stg { padding: 4px 7px 5px; }
+.rail:is([data-fit="3"]) .stg-sep { width: 2px; }
+.rail:is([data-fit="3"]) .stg-pill .pl-f { display: none; }
+.rail:is([data-fit="3"]) .stg-pill .pl-s { display: inline; }
+.rail[data-fit="4"] .stages { display: none; }
+.rail[data-fit="4"] .stg-col { display: inline-flex; }
+/* 760 px and below: the project's bar is one row of where you are (logo, the name, the one stage button, ?, ⋯) with
+   Record, Export and the rest on the row under it. */
+@media (max-width: 760px) {
+  body.in-project .bar .brand { font-size: 0; gap: 0; }
+  body.in-project .bar .crumbs { flex: 1 1 0; flex-wrap: nowrap; min-width: 0; max-width: none; gap: 8px; overflow: hidden; }
+  body.in-project .bar .crumbs .pt { flex: 0 1 auto; min-width: 0; }
+  body.in-project .bar .crumbs .sp { min-width: 0; flex: none; }
+  body.in-project .bar .crumbs :is(.sp-main, .sp-sub) { display: none; }
+  body.in-project .bar .rail { order: 0; flex: none; container-type: normal; }
+  body.in-project .bar .bar-right { order: 6; flex-basis: 100%; justify-content: flex-end; flex-wrap: wrap; }
+}
+/* fit level 2 and up (.bar.tight): the project name and the style picker give the stages room (fit sets the width) */
+.bar.tight .crumbs .pt { flex: 0 1 auto; }
+.bar.tight .crumbs .sp { min-width: 0; flex: 0 1 auto; }
+.bar.tight .crumbs .sp-btn { max-width: 100%; min-width: 0; }
+.bar.tight .crumbs .sp-sub { display: none; }
 .rail-help { flex: none; width: 30px; height: 30px; margin-left: 2px; border: 0; border-radius: 50%; background: transparent; color: var(--muted); display: grid; place-items: center; cursor: pointer; }
 .rail-help:hover { background: var(--panel-3); color: var(--text); }
+.stg-menu { position: fixed; z-index: 30; overflow-y: auto; padding: 6px; border-radius: var(--dialog-radius, 16px); background: var(--pop-bg, var(--panel)); border: var(--dialog-border, 0); box-shadow: var(--pop); color: var(--text); }
+.stg-menu:focus { outline: none; }
+.sm-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.sm-list li { display: flex; align-items: center; gap: 4px; }
+.sm-go { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 10px; border: 0; border-radius: 10px; background: transparent; color: var(--text-2); font-size: 13px; text-align: left; cursor: pointer; }
+.sm-go:hover { background: var(--panel-3); }
+.sm-go.on { background: var(--panel-3); color: var(--text); }
+.sm-go b { font-weight: 500; }
+.sm-go.on b { font-weight: 600; }
+.sm-go small { font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.sm-ic { width: 12px; flex: none; display: grid; place-items: center; }
+.sm-steps { flex: none; padding: 0 8px; }
 
 /* a stage's steps, under its chip */
 .stg-pop { position: fixed; z-index: 30; overflow-y: auto; padding: 12px 12px 10px; border-radius: var(--dialog-radius, 16px); background: var(--pop-bg, var(--panel)); border: var(--dialog-border, 0); box-shadow: var(--pop); color: var(--text); }

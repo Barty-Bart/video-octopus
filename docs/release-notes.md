@@ -1,3 +1,15 @@
+# v0.1.0-beta.17
+
+- **Click a stage to open its workspace.** The stages in the editor's top bar are now its tabs: Package → Packaging, Record and Build → the canvas, Cut → Cut, Plan → Scenes, Polish → Scenes at the first scene with open notes, and a new **Publish** stage with your renders and the post (title, description, captions) in one pane. The separate tab row is gone; a slim toolbar over the workspace keeps its name, its tools and Finder.
+- **Where you are vs. how far the video is.** The stage you're on is bold and underlined; a **NEXT** badge marks the stage of the next step, or **RUNNING** with a spinner while Claude works on one. Switch stages any time, even while a step, the chat, an upload or an export runs: nothing stops, and each pane keeps its state. Click the RUNNING stage to go back.
+- **Each stage's steps** (Run, Skip, Show me) are behind the small ▾ beside it (or Alt+↓). Show me opens the stage that owns the step. "New" dots moved from the tabs onto the stages.
+- **Links and reloads** keep the stage in the address (`#/p/<video>?stage=cut`), and each video remembers the stage you last used. Old `?tab=` links and the old remembered tab land on the matching stage.
+- **Narrow windows** fold the bar step by step; at 760 px and below it is one button with the current stage that lists every stage.
+- The Record button says **Paused m:ss** while a take is paused.
+
+Verified with 357 unit tests on Node 24.22.1 and 22.22.1, the format-skill and learning runtimes, and disposable browser checks (every stage, switching while a step runs, reloads and old links, light and dark at 1440 to 375 px). Known: with the usage meter showing, the header is tight below about 1440 px, so the bar folds earlier. This is a source update on main; the downloadable tagged prerelease remains separate.
+
+
 # v0.1.0-beta.16
 
 - **Pause and resume while recording** (⌥⌘P; Ctrl+Alt+P on Windows). Every recorder pauses, the timer stops, and the teleprompter pauses with it; the saved take leaves the pause out.

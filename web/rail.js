@@ -1,36 +1,47 @@
 // Step rail v2, variant A, with the next step docked on the
-// message box.
+// message box, and the stage bar as the editor's navigation (ADDENDUM-stage-bar.md, 24 Oct 2026).
 // Every word comes from the steps themselves (core/pipelines.json: stage, name, what, where, show; the done line
-// from the server), so the five stage chips in the bar, a stage's list of steps, the dock strip and its sheet, the
-// chat's done markers, the empty states and the first-time help all say the same thing.
-// - Bar: Record · Cut · Plan · Build · Polish. The stage of the step that's next is lit and says "Next: <step>" (the
-//   line drops below ~1280 px, then the segments), one segment per step (green done, accent next, dashed optional).
-//   A chip opens its stage's steps: what each does, where it shows, Run / Skip / Undo skip / Show me.
+// from the server), so the stages in the bar, a stage's list of steps, the dock strip and its sheet, the chat's done
+// markers, the empty states and the first-time help all say the same thing.
+// - Bar: Package · Record · Cut · Plan · Build · Polish · Publish (web/stages.js: Publish is the UI-only last stage, the
+//   Renders and Post pane). Each stage is a tab: clicking it opens its workspace (hooks.goStage). The selected stage is
+//   where you are (bold, underlined); a NEXT badge sits on the stage of the next step, RUNNING with a spinner on the stage
+//   whose step Claude is working on; the two can differ. One segment per step (green done, accent next, dashed
+//   optional), a tick when every step is done or skipped (Publish: once a render exists), and a dot for something new
+//   there (hooks.marks). The ▾ beside a stage opens its steps (what each does, where it shows, Run / Skip / Undo skip /
+//   Show me) without changing the pane; Alt+↓ or a long press on the stage opens it too. fit() folds the bar as it
+//   narrows: segments, the project name, the ▾ buttons, then (and always at 760 px and below) one button with the
+//   current stage that lists them all.
 // - Dock: a slim strip on the top edge of the message box, "Next · <step> · ⓘ · ▶ Run"; ⓘ opens it upwards into the
 //   step's words ("Step 3 of 9 · Cut", what it does, "You'll see it: …" with Show me where, the stage's checklist).
 //   While a step runs it says so ("Clean up · Rough cut, 2 of 3") and the composer says "Claude is working on <step>".
 // - Done: when a step goes from not done to done while the page is open, or since the page last looked (the server
 //   keeps what it last saw), the strip turns green for about 4 s with the step's line and Show me, and the chat keeps a
 //   one-line marker of it (the server writes it into the chat log).
-// - Show me: switches the tab, scrolls, and outlines the thing in the selection colour with "New · from <step>".
+// - Show me: opens the stage that owns the step, scrolls, and outlines the thing in the selection colour with
+//   "New · from <step>".
 // - Empty states for Scenes, Renders, Cut, Post (the Sections band draws its own, web/blocks.js), and the first-time
 //   help (once, saved in settings as help.stepsIntro; the ? next to the stages opens it again).
 import { $, h, esc, api, toast } from './ui.js';
+import { stagesOf, stageSlug, STAGE_PANE, PANE_WORDS } from './stages.js';
 
 const ICON = {
   tick: '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 6.2l2.4 2.4 4.6-5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   play: '<svg width="9" height="10" viewBox="0 0 9 10" aria-hidden="true"><path d="M1 1l7 4-7 4z" fill="currentColor"/></svg>',
   eye: '<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M1.5 7s2-4 5.5-4 5.5 4 5.5 4-2 4-5.5 4-5.5-4-5.5-4z" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="7" cy="7" r="1.8" fill="currentColor"/></svg>',
   help: '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M6.3 6.3a1.8 1.8 0 1 1 2.5 1.6c-.5.3-.8.6-.8 1.2v.3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="11.4" r=".8" fill="currentColor"/></svg>',
+  caret: '<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2.5 3.8L5 6.3l2.5-2.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   x: '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 3l6 6M9 3l-6 6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
   info: '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 7.2v4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="8" cy="4.9" r=".9" fill="currentColor"/></svg>',
 };
 // Where Show me goes, in words, by its target.
-const SHOW_WHERE = { sections: 'on the timeline', zooms: 'on the timeline', picture: 'on the canvas', cut: 'in the Cut tab', lock: 'in the Cut tab', scenes: 'in Scenes', newest: 'in Renders', post: 'in the Post tab' };
-const showLabel = (show) => `Show me ${SHOW_WHERE[show?.target] || { packaging: 'in Packaging', canvas: 'on the canvas', cut: 'in the Cut tab', scenes: 'in Scenes', renders: 'in Renders', post: 'in the Post tab' }[show?.tab] || 'where'}`;
+const SHOW_WHERE = { sections: 'on the timeline', zooms: 'on the timeline', picture: 'on the canvas', cut: 'in Cut', lock: 'in Cut', scenes: 'in Scenes', newest: 'in Publish', post: 'in Publish' };
+const showLabel = (show) => `Show me ${SHOW_WHERE[show?.target] || { packaging: 'in Packaging', canvas: 'on the canvas', cut: 'in Cut', scenes: 'in Scenes', renders: 'in Publish', post: 'in Publish' }[show?.tab] || 'where'}`;
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-// hooks: runStep(step), setTab(tab), applyNotes() (Save changes → Claude), openCutList() (what Clean up left for you),
+// hooks: runStep(step), setTab(tab, stage?) (a pane by its old tab name; stage: the stage to select when it opens that
+// pane), goStage(name) (open a stage's workspace), stage() (the selected stage), marks() ({ <stage>: why } for the "new"
+// dots), glowTab(tab, why, stage?), applyNotes() (Save changes → Claude), openCutList() (what Clean up left for you),
 // newestRender() (selects it on the Renders tab), learn(), status() → /api/status (help), composer(<the running step's
 // name> | null) → the message box says so and holds what you send until it finishes.
 export function makeRail({ root, id, getP, hooks }) {
@@ -77,83 +88,227 @@ export function makeRail({ root, id, getP, hooks }) {
   }
   const skip = (s, on = true) => railOp({ op: on ? 'skip' : 'unskip', step: s.id });
 
-  // ---------- the bar: five stage chips ----------
-  function stageState(st) {
-    if (st.current) return 'cur';
-    return st.done ? 'done' : 'todo';
+  // ---------- the bar: the stages are the navigation (ADDENDUM-stage-bar.md) ----------
+  // Each stage is a tab (it opens that stage's pane: web/stages.js STAGE_PANE) and a ▾ beside it (its steps). The
+  // selected stage is where you are (bold, underlined); the NEXT badge, or RUNNING with a spinner while Claude works on
+  // a step, is how far the video is. They are styled apart and can sit on different stages.
+  const stageList = () => stagesOf(pl());
+  const stepsOf = (st) => (st.steps || []).map(stepOf).filter(Boolean);
+  function stageInfo(st, cur, rs) {
+    const ss = stepsOf(st);
+    const nDone = ss.filter((s) => s.done).length;
+    // Publish has no steps: its tick is a render.
+    const tick = st.name === 'Publish' ? Boolean(getP().renders?.length) : ss.length > 0 && ss.every((s) => s.done || s.skipped);
+    const badge = rs ? (rs.stage === st.name ? 'run' : '') : cur?.stage === st.name ? 'next' : '';
+    const optional = ss.length > 0 && ss.every((s) => s.optional);
+    const skipped = optional && ss.some((s) => s.skipped) && ss.every((s) => s.skipped || s.done);
+    return { st, ss, nDone, tick, badge, optional, skipped };
   }
+  const badgeHtml = (badge, extra = '') => (badge === 'run'
+    ? `<span class="stg-badge run" aria-hidden="true"><span class="spin"></span>Running${extra}</span>`
+    : badge === 'next' ? `<span class="stg-badge" aria-hidden="true">Next${extra}</span>` : '');
   function dotOf(s, cur, runningStep) {
     const c = s.done ? 'done' : s === runningStep ? 'run' : s.skipped ? 'skip' : s === cur ? 'next' : 'todo';
     return `<i class="d ${c}${s.optional ? ' opt' : ''}" title="${esc(`${s.name}${s.optional ? ' (optional)' : ''}: ${s.done ? 'done' : s.skipped ? 'skipped' : s === cur ? 'next' : 'to do'}`)}"></i>`;
   }
+  // What a screen reader hears for a stage: "Record, next step: Record, 0 of 1 step done".
+  function stageLabel(i, cur, rs, extra) {
+    const { st, ss, nDone, tick, badge, optional, skipped } = i;
+    const parts = [st.name];
+    if (badge === 'run') parts.push(`running: ${runText(rs)}`);
+    if (badge === 'next') parts.push(`next step: ${cur.name}`);
+    if (ss.length) parts.push(`${nDone} of ${ss.length} step${ss.length > 1 ? 's' : ''} done`);
+    else if (st.name === 'Publish') parts.push(tick ? 'a render is ready' : 'nothing rendered yet');
+    else if (pl()) parts.push('no steps in this format');
+    if (optional) parts.push(skipped ? 'optional, skipped' : 'optional');
+    if (tick && st.name !== 'Publish') parts.push('done');
+    return [...parts, ...extra].join(', ');
+  }
+  const selected = () => hooks.stage?.() || null;
+  let menu = null, longPress = 0, longFired = false;
   function renderBar() {
     if (!barHost?.isConnected) return;
     const P = getP(), p = P.pipeline;
-    if (!p) return;
-    const cur = current(), rs = running(), sc = P.scenes?.count ? P.scenes : null, nd = needs();
-    const sig = JSON.stringify([p.steps.map((s) => [s.id, s.done, s.skipped, s.name]), p.current, rs?.id, rs && runText(rs), sc && [sc.approved, sc.count, sc.of], nd, popFor]);
+    const cur = p ? current() : null, rs = p ? running() : null, sc = P.scenes?.count ? P.scenes : null, nd = p ? needs() : 0;
+    const sel = selected(), marks = hooks.marks?.() || {};
+    const list = stageList().map((st) => stageInfo(st, cur, rs));
+    const sig = JSON.stringify([p && p.steps.map((s) => [s.id, s.done, s.skipped, s.name]), p?.current, rs?.id, rs && runText(rs), sc && [sc.approved, sc.count, sc.of], nd, popFor, sel, marks, Boolean(P.renders?.length), Boolean(menu)]);
     if (sig === barSig && barHost.querySelector('.stages')) return fit();
     barSig = sig;
-    const focused = document.activeElement?.closest?.('.stg')?.dataset.stage;
-    const chips = p.stages.map((st, k) => {
-      const ss = st.steps.map(stepOf).filter(Boolean), state = stageState(st);
-      const nDone = ss.filter((s) => s.done).length;
-      const isCur = state === 'cur' && cur;
-      const xline = isCur ? (rs && rs.stage === st.name ? (rs.subs ? `${rs.name} · ${Math.min(rs.subs.length, rs.subs.filter((x) => x.done).length + 1)} of ${rs.subs.length}` : `Running: ${rs.name}`) : `Next: ${cur.name}`) : '';
-      const pill = st.name === 'Polish' && sc ? `<span class="stg-pill" title="${sc.approved} of ${sc.of ?? sc.count} scenes approved in Scenes"><span class="pl-f">${sc.approved} of ${sc.of ?? sc.count} approved</span><span class="pl-s">${sc.approved}/${sc.of ?? sc.count}</span></span>` : '';
-      const warn = st.name === 'Cut' && nd ? `<span class="stg-warn" title="${nd} thing${nd > 1 ? 's' : ''} Clean up left for you to hear, in the Cut tab">${nd}</span>` : '';
-      const label = `${st.name}: ${ss.length ? `${nDone} of ${ss.length} step${ss.length > 1 ? 's' : ''} done` : 'no steps in this format'}${isCur ? `. ${xline}` : ''}${pill ? `. ${sc.approved} of ${sc.of ?? sc.count} scenes approved` : ''}${warn ? `. ${nd} need${nd > 1 ? '' : 's'} you` : ''}`;
-      return `${k ? '<i class="stg-sep" aria-hidden="true"></i>' : ''}<button type="button" class="stg ${state}${ss.length ? '' : ' none'}" data-stage="${esc(st.name)}" aria-haspopup="dialog" aria-expanded="${popFor === st.name}" aria-label="${esc(label)}">
-        <span class="st-n">${state === 'done' ? ICON.tick : ''}<span class="st-t">${esc(st.name)}</span>${warn}${pill}</span>
-        ${isCur ? `<span class="st-x">${rs && rs.stage === st.name ? '<span class="spin" aria-hidden="true"></span>' : ''}${esc(xline)}</span>` : ''}
-        <span class="dots" aria-hidden="true">${ss.map((s) => dotOf(s, cur, rs)).join('')}</span></button>`;
+    const fo = document.activeElement;
+    const focused = barHost.contains(fo) && fo?.dataset?.stage ? { cls: fo.classList.contains('stg-more') ? 'stg-more' : 'stg', stage: fo.dataset.stage } : fo?.classList?.contains('stg-col') ? { cls: 'stg-col' } : null;
+    const anySel = list.some((i) => i.st.name === sel);
+    const tabs = list.map((i, k) => {
+      const { st, ss } = i, name = st.name, on = name === sel || (!anySel && k === 0), slug = stageSlug(name), mark = marks[name];
+      const pill = name === 'Polish' && sc ? `<span class="stg-pill" title="${sc.approved} of ${sc.of ?? sc.count} scenes approved in Scenes"><span class="pl-f">${sc.approved} of ${sc.of ?? sc.count} approved</span><span class="pl-s">${sc.approved}/${sc.of ?? sc.count}</span></span>` : '';
+      const warn = name === 'Cut' && nd ? `<span class="stg-warn" title="${nd} thing${nd > 1 ? 's' : ''} Clean up left for you to hear, in Cut">${nd}</span>` : '';
+      const extra = [];
+      if (pill) extra.push(`${sc.approved} of ${sc.of ?? sc.count} scenes approved`);
+      if (warn) extra.push(`${nd} need${nd > 1 ? '' : 's'} you`);
+      if (mark) extra.push(mark);
+      const words = PANE_WORDS[STAGE_PANE[name]];
+      const tip = `${name}: opens ${words.name}${i.optional ? (i.skipped ? ' · optional, skipped' : ' · optional') : ''}`;
+      const cls = ['stg', on && 'on', i.tick && 'done', i.optional && 'opt', i.skipped && 'skipped', !ss.length && !st.ui && p && 'none', mark && 'new glow'].filter(Boolean).join(' ');
+      const more = ss.length ? `<button type="button" class="stg-more" data-stage="${esc(name)}" aria-label="${esc(`${name} steps`)}" aria-haspopup="dialog" aria-expanded="${popFor === name}" title="${esc(`${name}: its steps`)}">${ICON.caret}</button>` : '';
+      return `${k ? '<i class="stg-sep" aria-hidden="true"></i>' : ''}<div class="stg-w${on ? ' on' : ''}" role="none" data-w="${esc(name)}">
+        <button type="button" role="tab" id="stg-${esc(slug)}" class="${cls}" data-stage="${esc(name)}" data-tab="${STAGE_PANE[name]}" aria-selected="${on}" aria-controls="wsBody" tabindex="${on ? 0 : -1}" aria-label="${esc(stageLabel(i, cur, rs, extra))}" title="${esc(tip)}">
+          <span class="st-n">${i.tick ? ICON.tick : ''}<span class="st-t">${esc(name)}</span>${warn}${pill}${badgeHtml(i.badge)}${mark ? '<i class="stg-dot" aria-hidden="true"></i>' : ''}</span>
+          ${ss.length ? `<span class="dots" aria-hidden="true">${ss.map((s) => dotOf(s, cur, rs)).join('')}</span>` : ''}</button>${more}</div>`;
     }).join('');
-    const group = h(`<div class="stages" role="group" aria-label="${esc(`${p.format}: ${p.steps.filter((s) => s.done).length} of ${p.steps.length} steps done`)}">${chips}</div>`);
+    // The narrow bar (fit level 4, and always at 760 px and below): one button, the stage you're on, with the progress
+    // badge (on another stage, the badge names it), opening a list of every stage.
+    const si = list.find((i) => i.st.name === sel) || list[0], bi = list.find((i) => i.badge);
+    const colBadge = bi ? badgeHtml(bi.badge, bi === si ? '' : ` · ${esc(bi.st.name)}`) : '';
+    const colLabel = `Stage: ${si.st.name}${bi ? (bi.badge === 'run' ? `. Running: ${runText(rs)} in ${bi.st.name}` : `. Next step: ${cur.name} in ${bi.st.name}`) : ''}. Every stage`;
+    const group = h(`<div class="stages" role="tablist" aria-label="Stages${p ? `: ${esc(p.format)}, ${p.steps.filter((s) => s.done).length} of ${p.steps.length} steps done` : ''}">${tabs}</div>`);
+    const col = h(`<button type="button" class="stg-col${si.tick ? ' done' : ''}" aria-haspopup="dialog" aria-expanded="${Boolean(menu)}" aria-label="${esc(colLabel)}">${si.tick ? ICON.tick : ''}<span class="st-t">${esc(si.st.name)}</span>${colBadge}${Object.keys(marks).length ? '<i class="stg-dot" aria-hidden="true"></i>' : ''}${ICON.caret}</button>`);
     const help = h(`<button type="button" class="rail-help" aria-label="How the steps work" title="How the steps work">${ICON.help}</button>`);
     help.onclick = () => openHelp(true);
     const more = barHost.querySelector('.rail-more');
-    barHost.replaceChildren(group, help, ...(more ? [more] : []));
-    group.querySelectorAll('.stg').forEach((b) => {
-      b.onclick = (e) => { e.stopPropagation(); togglePop(b.dataset.stage, b); };
-      b.onkeydown = (e) => {
-        if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
-        const all = [...group.querySelectorAll('.stg')], i = all.indexOf(b);
-        all[(i + (e.key === 'ArrowRight' ? 1 : all.length - 1)) % all.length].focus();
-        e.preventDefault();
+    barHost.replaceChildren(group, col, help, ...(more ? [more] : []));
+    const tabEls = [...group.querySelectorAll('.stg')];
+    tabEls.forEach((b) => {
+      const name = b.dataset.stage;
+      b.onclick = (e) => {
+        e.stopPropagation();
+        if (longFired) { longFired = false; return; }
+        hooks.goStage?.(name);
       };
+      b.onkeydown = (e) => {
+        if (e.altKey && e.key === 'ArrowDown') { e.preventDefault(); return openPop(name); }
+        const i = tabEls.indexOf(b);
+        const to = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: tabEls.length - 1 }[e.key];
+        if (to === undefined) return;
+        e.preventDefault();
+        const t = tabEls[(to + tabEls.length) % tabEls.length];
+        tabEls.forEach((x) => (x.tabIndex = x === t ? 0 : -1));
+        t.focus();
+      };
+      // A long press opens the stage's steps (the way there when the ▾ buttons are hidden).
+      b.onpointerdown = (e) => {
+        if (e.button !== 0 || !stepsOf(stageList().find((x) => x.name === name) || {}).length) return;
+        clearTimeout(longPress);
+        longFired = false;
+        longPress = setTimeout(() => { longFired = true; openPop(name); }, 550);
+      };
+      b.onpointerup = b.onpointerleave = b.onpointercancel = () => clearTimeout(longPress);
     });
-    if (focused) group.querySelector(`.stg[data-stage="${CSS.escape(focused)}"]`)?.focus();
+    group.querySelectorAll('.stg-more').forEach((b) => (b.onclick = (e) => { e.stopPropagation(); togglePop(b.dataset.stage, anchorOf(b.dataset.stage)); }));
+    col.onclick = (e) => { e.stopPropagation(); menu ? closeMenu(true) : openMenu(); };
+    if (focused?.cls === 'stg-col') col.focus();
+    else if (focused) group.querySelector(`.${focused.cls}[data-stage="${CSS.escape(focused.stage)}"]`)?.focus();
     fit();
-    if (pop && popFor) placePop(group.querySelector(`.stg[data-stage="${CSS.escape(popFor)}"]`));
+    if (pop && popFor) placePop(anchorOf(popFor));
+    if (menu) { fillMenu(); placeMenu(); }
   }
   function bar(host, more) {
     barHost = host;
     barSig = '';
+    host.setAttribute('aria-label', 'Stages');
     host.replaceChildren(...(more ? [more] : []));
     renderBar();
   }
-  // Fit the bar: the "Next:" line goes first (always below ~1280 px), then the project name gives room, then the
-  // segments, then the chips tighten.
+  // Where a stage's list hangs: under the stage, or under the narrow bar's one button when the stages are folded away.
+  function anchorOf(name) {
+    const w = barHost?.querySelector(`.stg-w[data-w="${CSS.escape(name || '')}"]`);
+    if (w && w.getBoundingClientRect().width > 0) return w;
+    return barHost?.querySelector('.stg-col') || null;
+  }
+  // Fit the bar, in order until it fits: 1 the segments go, 2 the project name gives room, 3 the ▾ buttons go (a long
+  // press or Alt+↓ on a stage still opens its steps), 4 the stages fold into one button. At 760 px and below it is 4.
   function fit() {
     const g = barHost?.querySelector('.stages'), crumbs = $('#crumbs'), barEl = $('.bar');
     if (!g || !crumbs || !barEl) return;
     crumbs.style.maxWidth = '';
     const over = () => barHost.scrollWidth > barHost.clientWidth + 1 || g.scrollWidth > g.clientWidth + 1;
+    const narrow = innerWidth <= 760;
     for (const t of [0, 1, 2, 3, 4]) {
-      if (t === 0 && innerWidth < 1280) continue;
-      if (t === 2) crumbs.style.maxWidth = `${Math.max(160, crumbs.offsetWidth - (barHost.scrollWidth - barHost.clientWidth) - 8)}px`;
+      if (narrow && t < 4) continue;
+      if (t === 2) {
+        const short = Math.max(barHost.scrollWidth - barHost.clientWidth, g.scrollWidth - g.clientWidth);
+        crumbs.style.maxWidth = `${Math.max(160, crumbs.offsetWidth - short - 8)}px`;
+      }
+      barHost.dataset.fit = String(t);
       g.dataset.fit = String(t);
       barEl.classList.toggle('tight', t >= 2);
-      if (!over()) break;
+      if (t === 4 || !over()) break;
     }
+    // The name gave more than the stages needed: hand the rest back.
+    if (barHost.dataset.fit === '2' || barHost.dataset.fit === '3') {
+      const used = [...barHost.children].reduce((sum, c) => sum + (c === g ? g.scrollWidth : c.offsetWidth), 0) + 4 * (barHost.children.length - 1);
+      const slack = barHost.clientWidth - used - 8;
+      if (slack > 0 && crumbs.style.maxWidth) crumbs.style.maxWidth = `${crumbs.offsetWidth + slack}px`;
+      if (over()) crumbs.style.maxWidth = `${Math.max(160, crumbs.offsetWidth - slack)}px`;
+    }
+    if (barHost.dataset.fit !== '4' && menu) closeMenu();
   }
 
-  // ---------- a stage's steps (the popover under a chip) ----------
+  // ---------- the narrow bar's list of every stage ----------
+  function openMenu() {
+    closePop();
+    menu = h('<div class="stg-menu" role="dialog" aria-label="Stages" tabindex="-1"></div>');
+    document.body.append(menu);
+    barHost.querySelector('.stg-col')?.setAttribute('aria-expanded', 'true');
+    fillMenu();
+    placeMenu();
+    (menu.querySelector('.sm-go.on') || menu).focus({ preventScroll: true });
+    document.addEventListener('pointerdown', menuOutside, true);
+    document.addEventListener('keydown', menuKeys, true);
+  }
+  function fillMenu() {
+    if (!menu) return;
+    const cur = pl() ? current() : null, rs = pl() ? running() : null, sel = selected(), marks = hooks.marks?.() || {};
+    const had = menu.contains(document.activeElement) ? document.activeElement.dataset.go || document.activeElement.dataset.steps : null;
+    menu.innerHTML = `<ul class="sm-list">${stageList().map((st) => {
+      const i = stageInfo(st, cur, rs), on = st.name === sel;
+      const count = i.ss.length ? `${i.nDone} of ${i.ss.length}` : st.name === 'Publish' ? (i.tick ? 'rendered' : '') : '';
+      return `<li><button type="button" class="sm-go${on ? ' on' : ''}" data-go="${esc(st.name)}" aria-current="${on ? 'true' : 'false'}" aria-label="${esc(stageLabel(i, cur, rs, marks[st.name] ? [marks[st.name]] : []))}">
+          <span class="sm-ic" aria-hidden="true">${i.tick ? ICON.tick : ''}</span><b>${esc(st.name)}</b>${badgeHtml(i.badge)}${marks[st.name] ? '<i class="stg-dot" aria-hidden="true"></i>' : ''}<span class="gap"></span><small aria-hidden="true">${esc(count)}</small></button>
+        ${i.ss.length ? `<button type="button" class="nc-link sm-steps" data-steps="${esc(st.name)}" aria-label="${esc(`${st.name} steps`)}">Steps</button>` : ''}</li>`;
+    }).join('')}</ul>`;
+    menu.querySelectorAll('[data-go]').forEach((b) => (b.onclick = () => { closeMenu(); hooks.goStage?.(b.dataset.go); barHost?.querySelector('.stg-col')?.focus({ preventScroll: true }); }));
+    menu.querySelectorAll('[data-steps]').forEach((b) => (b.onclick = () => { const name = b.dataset.steps; closeMenu(); openPop(name); }));
+    if (had) menu.querySelector(`[data-go="${CSS.escape(had)}"], [data-steps="${CSS.escape(had)}"]`)?.focus({ preventScroll: true });
+  }
+  function placeMenu() {
+    const b = barHost?.querySelector('.stg-col');
+    if (!menu || !b) return;
+    const r = b.getBoundingClientRect(), w = Math.min(320, innerWidth - 24);
+    menu.style.width = `${w}px`;
+    menu.style.left = `${Math.max(12, Math.min(innerWidth - w - 12, r.left))}px`;
+    menu.style.top = `${r.bottom + 6}px`;
+    menu.style.maxHeight = `${innerHeight - r.bottom - 18}px`;
+  }
+  function closeMenu(refocus = false) {
+    if (!menu) return;
+    menu.remove();
+    menu = null;
+    document.removeEventListener('pointerdown', menuOutside, true);
+    document.removeEventListener('keydown', menuKeys, true);
+    const b = barHost?.querySelector('.stg-col');
+    b?.setAttribute('aria-expanded', 'false');
+    if (refocus) b?.focus();
+  }
+  const menuOutside = (e) => { if (menu && !menu.contains(e.target) && !e.target.closest?.('.stg-col')) closeMenu(); };
+  const menuKeys = (e) => {
+    if (!menu) return;
+    if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); return closeMenu(true); }
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    const all = [...menu.querySelectorAll('.sm-go')], i = all.indexOf(document.activeElement), n = all.length, down = e.key === 'ArrowDown';
+    all[i < 0 ? (down ? 0 : n - 1) : (i + (down ? 1 : n - 1)) % n]?.focus();
+    e.preventDefault();
+  };
+
+  // ---------- a stage's steps (the popover under its ▾; opening it never changes the pane) ----------
+  const moreBtn = (name) => barHost?.querySelector(`.stg-more[data-stage="${CSS.escape(name || '')}"]`) || null;
+  function openPop(name) { if (popFor !== name) togglePop(name, anchorOf(name)); }
   function togglePop(name, chip) {
     if (popFor === name) return closePop(true);
     closePop();
+    closeMenu();
+    if (!chip) return;
     popFor = name;
-    chip.setAttribute('aria-expanded', 'true');
+    moreBtn(name)?.setAttribute('aria-expanded', 'true');
     pop = h(`<div class="stg-pop" role="dialog" aria-label="${esc(name)}: its steps" tabindex="-1"></div>`);
     document.body.append(pop);
     fillPop();
@@ -198,8 +353,10 @@ export function makeRail({ root, id, getP, hooks }) {
       if (!s) return;
       if (a === 'skip' || a === 'unskip') return skip(s, a === 'skip');
       closePop();
-      if (a === 'show') return show(s.show, s.name, true);
+      if (a === 'show') return show(s.show, s.name, true, s.stage);
       if (a === 'again' && s.kind !== 'app' && s.id !== 'post-kit' && !confirm(`Run “${s.name}” again?`)) return;
+      // Run from a stage's list: the step's stage opens as it starts (Show me does the same).
+      hooks.goStage?.(s.stage);
       run(s);
     }));
     if (had) (pop.querySelector(`[data-a="${had.a}"]${had.s ? `[data-s="${CSS.escape(had.s)}"]` : ''}`) || pop).focus({ preventScroll: true });
@@ -218,11 +375,15 @@ export function makeRail({ root, id, getP, hooks }) {
     pop.remove(); pop = null; popFor = null; popSig = '';
     document.removeEventListener('pointerdown', outside, true);
     document.removeEventListener('keydown', popKeys, true);
-    const chip = barHost?.querySelector(`.stg[data-stage="${CSS.escape(name)}"]`);
-    chip?.setAttribute('aria-expanded', 'false');
-    if (refocus) chip?.focus();
+    const more = moreBtn(name);
+    more?.setAttribute('aria-expanded', 'false');
+    if (!refocus) return;
+    // Back to the ▾ it came from, else (▾ hidden) the stage itself, else the narrow bar's button.
+    const visible = (x) => x && x.getBoundingClientRect().width > 0;
+    const tab = barHost?.querySelector(`.stg[data-stage="${CSS.escape(name)}"]`);
+    (visible(more) ? more : visible(tab) ? tab : barHost?.querySelector('.stg-col'))?.focus();
   }
-  const outside = (e) => { if (pop && !pop.contains(e.target) && !e.target.closest?.('.stg')) closePop(); };
+  const outside = (e) => { if (pop && !pop.contains(e.target) && !e.target.closest?.('.stg-more')) closePop(); };
   const popKeys = (e) => { if (e.key === 'Escape' && pop) { e.stopPropagation(); e.preventDefault(); closePop(true); } };
 
   // ---------- the dock: the next step on the top edge of the message box (variation 2, "At the message box") ----------
@@ -368,8 +529,8 @@ export function makeRail({ root, id, getP, hooks }) {
       case 'needs': return hooks.openCutList();
       case 'info': return sheetOpen ? closeSheet(true) : openSheet();
       case 'close': return closeSheet(true);
-      case 'where': return s && show(s.show, s.name, false);
-      case 'show': return green && show(green.show, green.name, true);
+      case 'where': return s && show(s.show, s.name, false, s.stage);
+      case 'show': return green && show(green.show, green.name, true, stepOf(green.id)?.stage);
       case 'renders': return hooks.setTab('renders');
       case 'send': return hooks.applyNotes();
       case 'learn': return hooks.learn();
@@ -418,7 +579,7 @@ export function makeRail({ root, id, getP, hooks }) {
     clearTimeout(greenTimer);
     greenTimer = setTimeout(endGreen, GREEN_MS);
     // The tab its Show me points at glows until you open it (unless you're on it).
-    if (d.show?.tab) hooks.glowTab?.(d.show.tab, `new from ${d.name}`);
+    if (d.show?.tab) hooks.glowTab?.(d.show.tab, `new from ${d.name}`, stepOf(d.id)?.stage);
     const c = current();
     say(`${d.name} is done${d.line ? `: ${d.line}` : ''}.${c ? ` Next: ${c.name}.` : ''}`);
   }
@@ -436,7 +597,7 @@ export function makeRail({ root, id, getP, hooks }) {
   // The chat log's one-line marker of a finished step (server: /rail seen writes it; app.js's chat draws it here).
   function marker(ev) {
     const n = h(`<div class="marker done"><span class="mk-ic" aria-hidden="true">${ICON.tick}</span><span class="mk-t"><span class="vh">Done: </span><b>${esc(ev.text || '')}</b>${ev.line ? ` · ${esc(ev.line)}` : ''}${ev.show ? ` · <button type="button" class="nc-link mk-show">${esc(showLabel(ev.show))}</button>` : ''}</span></div>`);
-    n.querySelector('.mk-show')?.addEventListener('click', () => show(ev.show, ev.text || '', true));
+    n.querySelector('.mk-show')?.addEventListener('click', () => show(ev.show, ev.text || '', true, stepOf(ev.step)?.stage));
     return n;
   }
 
@@ -474,7 +635,7 @@ export function makeRail({ root, id, getP, hooks }) {
     }
     render();
   }
-  function render() { renderBar(); renderDock(); fillPop(); }
+  function render() { renderBar(); renderDock(); fillPop(); fillMenu(); }
 
   // ---------- Show me ----------
   // The thing a step makes, on its tab: an element, or a lane of the canvas timeline (labels + lanes on one row).
@@ -497,10 +658,11 @@ export function makeRail({ root, id, getP, hooks }) {
       default: return null;
     }
   }
-  function show(sh, name, isNew) {
+  // stage: the stage that owns the step; Show me opens it (the pane its show.tab names), then outlines the thing there.
+  function show(sh, name, isNew, stage = null) {
     if (!sh) return;
     closePop();
-    hooks.setTab(sh.tab);
+    hooks.setTab(sh.tab, stage);
     // Wait for the tab to draw (the canvas timeline lays its lanes out on its next frame).
     let tries = 0;
     const go = () => {
@@ -607,7 +769,7 @@ export function makeRail({ root, id, getP, hooks }) {
         <span class="vh">${c === 'done' ? 'Done.' : c === 'next' ? 'Next.' : ''}</span></div>`;
     }).join('');
     const d = h(`<div class="dialog rail-first" role="dialog" aria-modal="true" aria-labelledby="rfT" aria-describedby="rfD">
-      <div class="ft-head"><h2 id="rfT">How a video gets made here</h2><p id="rfD">The stages, left to right (Package is optional: do it now, later or never). The step that’s next is lit at the top and waits just above the message box: press Run and Claude does the work in the chat on the left, then tells you what changed and where.</p></div>
+      <div class="ft-head"><h2 id="rfT">How a video gets made here</h2><p id="rfD">The stages, left to right (Package is optional: do it now, later or never). Click a stage at the top to open its workspace, any time, even while Claude works; its ▾ lists its steps. The stage with the step that’s next says NEXT, and the step waits just above the message box: press Run and Claude does the work in the chat on the left, then tells you what changed and where.</p></div>
       <div class="ft-row">${cards}</div>
       <div class="ft-acts"><span class="ft-note">${again ? 'The' : 'This shows once. The'} <span class="ft-q">${ICON.help}</span> next to the stages brings ${again ? 'this back any time' : 'it back'}.</span><span class="gap"></span>
         <button type="button" class="btn ft-skip" data-a="ok">Got it</button>${cur ? `<button type="button" class="nc-run" data-a="start">${ICON.play}Start: ${esc(cur.name)}</button>` : ''}</div></div>`);
@@ -641,12 +803,12 @@ export function makeRail({ root, id, getP, hooks }) {
     try { await api('/api/app/settings', { section: 'help', values: { stepsIntro: 'dismissed' } }); } catch (e) { toast(e.message); }
   }
 
-  const onResize = () => { fit(); if (pop && popFor) placePop(barHost?.querySelector(`.stg[data-stage="${CSS.escape(popFor)}"]`)); };
+  const onResize = () => { fit(); if (pop && popFor) placePop(anchorOf(popFor)); if (menu) placeMenu(); };
   addEventListener('resize', onResize);
   return {
     bar, dock, update, render, fit, show, empty, marker, maybeHelp, openHelp, dismissDone, closePop,
     destroy: () => {
-      closePop(); overlay?.stop(); removeEventListener('resize', onResize); unlistenSheet(); dockRO?.disconnect(); clearTimeout(greenTimer); clearInterval(ticker);
+      closePop(); closeMenu(); clearTimeout(longPress); overlay?.stop(); removeEventListener('resize', onResize); unlistenSheet(); dockRO?.disconnect(); clearTimeout(greenTimer); clearInterval(ticker);
       if (helpOpen) { const m = $('#modal'); m.hidden = true; m.replaceChildren(); helpOpen = false; }
     },
   };

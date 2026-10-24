@@ -190,7 +190,7 @@ try {
   expect(!errors.length, 'no page errors on a reload with Scenes open or on leaving it', errors);
 
   // 5. Renders grouped by what they are, and the Export panel's Intro row.
-  await page.click('[data-tab=renders]');
+  await page.click('[data-tab=publish]');
   await page.waitForSelector('.rd-name', { timeout: 15000 });
   await sleep(500);
   const rd = await page.evaluate(() => ({ heads: [...document.querySelectorAll('.rd-head b')].map((b) => b.textContent), badge: document.querySelector('.rd-tags .badge')?.textContent || '',

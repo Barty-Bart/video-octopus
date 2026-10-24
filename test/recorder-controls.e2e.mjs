@@ -132,7 +132,7 @@ async function main() {
       const t2 = await page.textContent('.rc .rc-time'), sy2 = await scriptY(page);
       check(t1 === t2, `pause: the time stands still (${t1} → ${t2})`);
       check(sy1 === sy2, 'pause: the script pauses with the recording');
-      check(/Stop 0:0[12]/.test(await page.textContent('#recText')), `pause: the Record button's time stands still too (${await page.textContent('#recText')})`);
+      check(/Paused 0:0[12]/.test(await page.textContent('#recText')), `pause: the Record button says Paused and its time stands still (${await page.textContent('#recText')})`);
       check((await page.getAttribute('.rc', 'data-mode')) === 'paused', 'pause: the bar says Paused');
       await shot(page, '03-paused-1440');
       await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Alt+KeyP' : 'Control+Alt+KeyP');
