@@ -30,7 +30,7 @@ function confirmEmpty({ title, text, ok }) {
 }
 
 // ctx: the Settings page's { row, group } helpers. Returns the section's node (it loads its own data).
-export function trashSection({ row, group }) {
+export function trashSection({ row, group, pref = null }) {
   const box = h('<div class="trash-sec"><p class="sub">Loading…</p></div>');
   let all = false, busy = false;
 
@@ -77,7 +77,8 @@ export function trashSection({ row, group }) {
       list.append(more);
     }
     const msg = h('<p class="trash-msg sub" role="status" aria-live="polite"></p>');
-    box.replaceChildren(group('', head), list, msg);
+    const choice = pref ? row('When you delete a recording', 'In the editor’s Media section. Remove it from the video only: the take stays in Recordings. Delete it to the Bin: from the video and Recordings, to this computer’s own Bin.', pref) : null;
+    box.replaceChildren(group('', head), list, msg, ...(choice ? [group('', choice)] : []));
   }
 
   const say = (text) => { const m = $('.trash-msg', box); if (m) m.textContent = text || ''; };

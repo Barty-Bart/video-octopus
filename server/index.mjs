@@ -41,7 +41,8 @@ import { blocksRoute, blocksSummary, blocksContext, prepareState, stepBrief, not
 import { shotsRoute, readShotsAndZooms, shotsContext, onShotNotes } from './shots.mjs';
 import { recRoute, unfinishedTakes, recorderChoices, recorderBusy } from './browser-recorder.mjs';
 import { mediaRoute } from './media.mjs';
-import { trashRoute } from './trash.mjs';
+import { trashRoute, binEntry } from './trash.mjs';
+import { binName } from './os-trash.mjs';
 import { logUse, usageFromFiles, cutSaved, dashboard, backfill, catchUpUsage, getPlanUsage } from './usage.mjs';
 import { schedulesRoute, startScheduler, stopScheduler, readSchedules, schedulesBusy } from './schedules.mjs';
 import { inboxRoute, inboxItems } from './inbox.mjs';
@@ -81,7 +82,7 @@ const OPTIONAL_KIT_READS = new Set(['work/overrides.json', 'work/production.json
 
 // Settings, keys or the profile changed: each chat picks them up when it next starts (once it's idle).
 // Appearance is only how the app looks, and Updates only the app's own update check, so the chats carry on.
-onSettingsChange((what) => { if (what === 'appearance' || what === 'updates' || what === 'help') return; for (const c of chats.values()) restartWhenIdle(c); });
+onSettingsChange((what) => { if (['appearance', 'updates', 'help', 'storage'].includes(what)) return; for (const c of chats.values()) restartWhenIdle(c); });
 onSettingsChange((what) => { if (what === 'folders') activateStudioSkills(); });
 
 // The project's chat, for a POST (a message, a step, the sessions list, an answer): made on first use, and after an
@@ -524,6 +525,8 @@ async function route(req, res) {
       formats: formats(), formatInfo: formatInfo(), usage: modelSourceView() ? null : getPlanUsage(engineName()), modelSource: modelSourceView(), engine: engineName(), engineLabel: ENGINES[engineName()],
       appearance: section('appearance', s), // Settings → Appearance: how Video Octopus looks (web/appearance.js applies it)
       help: section('help', s), // first-time help seen (help.stepsIntro: 'dismissed')
+      // Settings › Storage: what Delete recording does, and the computer's Bin it uses (null: none, the studio's trash).
+      storage: { ...section('storage', s), bin: binName() },
       ffmpeg: await ffmpegReady(), // Export stays off without it (Setup installs it)
       // The computer, for the page: "Show in Finder" or "Show in File Explorer", and paths shortened to ~.
       platform: process.platform, home: homedir(),
@@ -660,9 +663,10 @@ async function route(req, res) {
   if (await layersRoute(req, res, { id, dir, action, send, body, emit: exportEmit(id) })) return;
   // The built-in recorder's chunks (raw bodies, so this comes before the JSON body), finish and recovery.
   if (await recRoute(req, res, { id, action, url, send, body, emit: (ev) => broadcast(id, ev), receiveTake: takeArrived })) return;
-  // The Media section (server/media.mjs): list, use an older take, add as a layer, remove to the trash, Undo.
+  // The Media section (server/media.mjs): list, use an older take, add as a layer, remove to the trash, Delete recording
+  // (this video and Recordings, to the computer's Bin: trash.mjs binEntry), Undo.
   if (await mediaRoute(req, res, { dir, action, send, body, emit: (ev) => broadcast(id, ev), busy: () => mediaBusy(id, dir),
-    frame: (file) => frameCamera(id, dir, { file }) })) return;
+    frame: (file) => frameCamera(id, dir, { file }), toBin: binEntry })) return;
   // Export → Audio / Transcript / Subtitles (server/export-audio.mjs, server/export-text.mjs).
   if (await audioRoute(req, res, { id, dir, action, url, send, body, emit: exportEmit(id) })) return;
   if (await textRoute(req, res, { id, dir, action, url, send, body })) return;

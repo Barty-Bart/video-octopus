@@ -23,6 +23,9 @@ let trashMod, media;
 before(async () => {
   trashMod = await import('../server/trash.mjs');
   media = await import('../server/media.mjs');
+  // The Recordings page's Delete sends its entry on to the computer's Bin: here no Bin takes it (never the real Trash),
+  // so it stays in the studio's trash as before (test/delete-to-bin.test.mjs covers the Bin).
+  (await import('../server/os-trash.mjs')).setBinMover(async () => null);
 });
 after(() => rmSync(tmp, { recursive: true, force: true }));
 
@@ -96,7 +99,7 @@ test('Recordings Delete moves an unused take to the trash; the list shows it; Un
   assert.equal((await call('/api/takes/restore', { trash: d.body.trash })).code, 400, 'an Undo only works once');
 });
 
-test('Recordings Delete is refused while any video uses the take, naming every one, and while it records', async () => {
+test('Recordings Delete asks first while any video uses the take, naming every one, and is refused while it records', async () => {
   clear();
   const stamp = '2026-10-24_09-30-00';
   recording(stamp);
@@ -105,8 +108,9 @@ test('Recordings Delete is refused while any video uses the take, naming every o
   writeFileSync(join(beta, 'source', `${stamp}_webcam.mp4`), 'copy');
   const d = await call('/api/takes/delete', { take: stamp });
   assert.equal(d.code, 409);
-  assert.match(d.body.error, /used by “ALPHA”, “BETA”/);
-  assert.match(d.body.error, /those videos/);
+  assert.equal(d.body.ok, false);
+  assert.match(d.body.confirm, /“ALPHA”, “BETA” use this take/);
+  assert.match(d.body.confirm, /Those videos keep their own copies/);
   assert.ok(existsSync(join(recordings, stamp)), 'nothing moved');
   assert.deepEqual(trashEntries(), []);
 
@@ -251,7 +255,7 @@ test('Delete items older than 30 days keeps the newer ones', async () => {
 test('web: Settings › Storage has Trash; Recordings rows have Delete with Undo', () => {
   const settings = readFileSync(new URL('../web/settings.js', import.meta.url), 'utf8');
   assert.match(settings, /\['folders', 'storage', 'trash', 'usage'\]/);
-  assert.match(settings, /DRAW\.trash = \(\) => trashSection/);
+  assert.match(settings, /DRAW\.trash = \(V, save\) => trashSection/);
   const trash = readFileSync(new URL('../web/trash.js', import.meta.url), 'utf8');
   assert.match(trash, /\/api\/trash\/empty', \{ confirm: true/);
   assert.match(trash, /\/api\/trash\/restore/);

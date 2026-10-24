@@ -68,3 +68,14 @@
 @media (max-width: 600px) {
   .md-menu { left: 16px; right: 16px; top: auto; bottom: 16px; width: auto; max-width: none; max-height: 70vh; }
 }
+
+/* Delete recording's question (media.js deleteChoice): two answers as big buttons, the Bin one in red words */
+.dc .dc-opts { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+.dc .dc-opt { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; padding: 10px 12px;
+  border: 1px solid var(--line); border-radius: var(--r-m); background: var(--panel-2); color: var(--text); cursor: pointer; font: inherit; }
+.dc .dc-opt:hover, .dc .dc-opt:focus-visible { border-color: var(--sel); background: var(--panel-3); outline: none; }
+.dc .dc-opt b { font-weight: 600; }
+.dc .dc-opt small { font-size: 12px; color: var(--muted); }
+.dc .dc-bin b { color: var(--bad); }
+.dc .dc-bin:hover, .dc .dc-bin:focus-visible { border-color: var(--bad-line); background: var(--bad-soft); }
+.dc .dc-remember { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 12px; color: var(--text-2); }

@@ -396,7 +396,7 @@ function discardTake(id, stamp) {
 }
 
 // The projects whose source/ holds this take's files (or whose project.json lists it), and what was made from it.
-function projectsUsing(stamp) {
+export function projectsUsing(stamp) {
   const out = [];
   let names = [];
   try { names = readdirSync(projectsRoot()); } catch { return out; }
@@ -424,26 +424,35 @@ function workOnTake(u, arrived) {
 
 const refuse = (message) => Object.assign(new Error(message), { status: 409 });
 
+// Why this recordings-folder take can't move now (it is recording or saving), or null. Also for a name that isn't a take.
+export function takeBusy(stamp) {
+  const t = readTake(stamp);
+  return finishing.has(stamp) || (t?.recorder === 'browser' && !t.finished && !t.dismissed) ? 'That take is still recording or saving.' : null;
+}
+export const takeFolder = (stamp) => (takeName(stamp) ? takeDir(stamp) : null);
+
 // Delete take: everything moves to the trash, and the project goes back to the take it had before (an Undo puts it
 // all back). Refused while the take is recording or saving, when another project uses it too, and when its project
 // already has work made from it.
 // id: the project asking (the record panel's Delete take), or null for the Recordings page (/api/takes/delete): then
 // only the recordings folder's copy moves, and a take any project uses is refused, naming them.
-export function deleteTake(id, stamp) {
+export function deleteTake(id, stamp, { confirm = false } = {}) {
   if (!takeName(stamp)) throw new Error('Unknown take.');
   const dir = takeDir(stamp);
   if (!existsSync(dir) || !statSync(dir).isDirectory()) throw new Error('That take isn’t in the recordings folder any more.');
   const t = readTake(stamp);
-  if (finishing.has(stamp) || (t?.recorder === 'browser' && !t.finished && !t.dismissed)) throw refuse('That take is still recording or saving.');
+  if (takeBusy(stamp)) throw refuse(takeBusy(stamp));
   const users = projectsUsing(stamp);
   const mine = id === null ? null : users.find((u) => u.id === id);
   if (id !== null && !mine && t?.project !== id) throw new Error('That take isn’t part of this project.');
   const others = users.filter((u) => u.id !== id);
   const names = others.map((u) => `“${u.name}”`).join(', ');
-  if (others.length && id === null) {
-    throw refuse(`This take is used by ${names}, so it wasn’t deleted. Remove it from ${others.length > 1 ? 'those videos' : 'that video'} first.`);
+  // From Recordings: each video has its own copy of the take in its source/, so they keep working; asked first.
+  if (others.length && id === null && !confirm) {
+    return { ok: false, projects: others.map((u) => u.name),
+      confirm: `${names} ${others.length > 1 ? 'use' : 'uses'} this take. ${others.length > 1 ? 'Those videos keep their own copies' : 'That video keeps its own copy'}, so ${others.length > 1 ? 'they' : 'it'} won’t change; only the take in Recordings goes.` };
   }
-  if (others.length) throw refuse(`This take is also used by ${names}, so it wasn’t deleted. Remove it there first.`);
+  if (others.length && id !== null) throw refuse(`This take is also used by ${names}, so it wasn’t deleted. Remove it there first.`);
   let arrived = t?.finished || 0;
   if (mine) for (const f of mine.files) { try { arrived = Math.max(arrived, statSync(join(mine.dir, 'source', f)).mtimeMs); } catch {} }
   const work = mine && mine.meta.activeTake === stamp ? workOnTake(mine, arrived) : null;

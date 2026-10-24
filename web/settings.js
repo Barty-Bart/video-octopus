@@ -745,7 +745,8 @@ DRAW.storage = () => {
   return box;
 };
 // Settings › Storage › Trash (web/trash.js): what's in the studio's trash, Put back, and Empty trash.
-DRAW.trash = () => trashSection({ row, group });
+DRAW.trash = (V, save) => trashSection({ row, group, pref: select([['ask', 'Ask each time'], ['video', 'Remove it from the video only'], ['bin', 'Delete it to the Bin']],
+  V.values.storage?.deleteRecording || 'ask', (x) => { save('storage', { deleteRecording: x }); const st = CTX.status?.(); if (st) st.storage = { ...(st.storage || {}), deleteRecording: x }; }) });
 DRAW.usage = () => {
   const box = h('<div class="set-embed"></div>');
   renderDashboard(box, { recordingsDir: tilde(CTX.status?.()?.recordingsDir || ''), embedded: true });

@@ -9,6 +9,7 @@ import { cpus, totalmem } from 'node:os';
 import { join, isAbsolute } from 'node:path';
 import { execFile } from 'node:child_process';
 import { settings, saveSettings, readJSON, writeJSON, expandHome, hfHub, IS_MAC, LOCAL_DIR } from './util.mjs';
+import { EFFORTS, validModel } from './agent-choices.mjs';
 import { hasKey, readKey, KEY_STORE } from './keychain.mjs';
 import { SAM2_MODELS, SAM2_SIZES, sam2Have, sam2Recommend, sam2Machine } from './sam2.mjs';
 import { FAMILIES, downloaded, sources, sourceLine } from './hfmodels.mjs';
@@ -61,7 +62,10 @@ const SECTIONS = {
     // default), model, context window (0 = 32K for a local model, Claude Code's own idea for a provider's).
     ccSource: 'plan', ccUrl: '', ccModel: '', ccContext: 0,
     // Clean chats: Claude Code with only the studio's own skills and settings (claude.mjs). On by default.
-    lean: true },
+    lean: true,
+    // The studio-wide defaults the chat panel's pickers start from (server/agent-choices.mjs): '' = the agent's own.
+    // Claude's model is the top-level `model` (older settings files have it there).
+    claudeEffort: '', codexEffort: '', piThinking: '' },
   // whisperEngine: the Whisper build on this computer: mlx (Apple Silicon's GPU) or faster-whisper; auto = the recommended one.
   transcribe: { engine: 'local', model: 'auto', whisperEngine: 'auto', provider: 'deepgram', language: 'auto', vocab: [] },
   render: { engine: 'local', jobs: 0, size: '1080p', codec: 'h264' },
@@ -82,6 +86,9 @@ const SECTIONS = {
   // First-time help that shows once (in settings, not the browser, so it never comes back): stepsIntro = the
   // "How a video gets made here" dialog on the first project page (web/rail.js); 'dismissed' after Got it or Start.
   help: { stepsIntro: '' },
+  // Settings › Storage: what Delete recording does. ask = the two-choice question each time; video = Remove from this
+  // video (the take stays in Recordings); bin = Delete recording (this video and Recordings, to the computer's Bin).
+  storage: { deleteRecording: 'ask' },
 };
 export const section = (name, s = settings()) => {
   if (name === 'recorder') return recorderSection(s);
@@ -142,7 +149,8 @@ export function recorderSection(s = settings()) {
 const RULES = {
   claude: { useApiKey: 'bool', engine: ['claude', 'codex', 'pi'], codexProvider: ['chatgpt', 'lmstudio', 'ollama'], codexModel: 'str',
     piSource: ['pi', 'endpoint'], piModel: 'str', piBaseUrl: 'str', piVision: 'bool', piContext: [4096, 4000000],
-    ccSource: ['plan', 'ollama', 'lmstudio', 'provider'], ccUrl: 'url', ccModel: 'str', ccContext: [0, 4000000], lean: 'bool' },
+    ccSource: ['plan', 'ollama', 'lmstudio', 'provider'], ccUrl: 'url', ccModel: 'str', ccContext: [0, 4000000], lean: 'bool',
+    claudeEffort: ['', ...EFFORTS.claude], codexEffort: ['', ...EFFORTS.codex], piThinking: ['', ...EFFORTS.pi] },
   transcribe: { engine: ['local', 'cloud'], model: ['auto', ...MODELS], whisperEngine: ['auto', 'mlx', 'faster-whisper'], provider: Object.keys(PROVIDERS), language: Object.keys(LANGS), vocab: 'words' },
   render: { engine: ['local'], jobs: [0, 64], size: ['1080p', '4k'], codec: ['h264', 'hevc', 'prores'] },
   recorder: { screen: ['screen', 'none'], camera: 'str', mic: 'str', target: ['replace', 'layer'], countdown: [0, 10] },
@@ -154,6 +162,7 @@ const RULES = {
   setup: { done: 'bool', agent: ['', 'claude', 'codex', 'pi', 'lmstudio', 'ollama'] },
   updates: { auto: 'bool' },
   help: { stepsIntro: ['', 'dismissed'] },
+  storage: { deleteRecording: ['ask', 'video', 'bin'] },
 };
 
 function clean(rule, v) {
@@ -181,7 +190,8 @@ export function saveSection(name, patch = {}) {
   if (name === 'claude') {
     const modes = ['manual', 'acceptEdits', 'auto', 'bypassPermissions'];
     if ('permissionMode' in patch) { if (!modes.includes(patch.permissionMode)) throw new Error('Unknown permission mode.'); top.permissionMode = patch.permissionMode; }
-    if ('model' in patch) { if (!/^[\w.[\]-]{0,60}$/.test(patch.model)) throw new Error('Bad model name.'); top.model = patch.model; }
+    if ('model' in patch) { if (patch.model && !validModel('claude', patch.model)) throw new Error('Bad model name.'); top.model = patch.model; }
+    if ('codexModel' in patch && patch.codexModel && !validModel('codex', String(patch.codexModel).trim())) throw new Error('Bad model name.');
     delete patch.permissionMode; delete patch.model;
   }
   if (name === 'folders') return saveFolders(patch);
@@ -446,7 +456,7 @@ export async function settingsView() {
       recorder: { ...section('recorder', s), recordingsDir: s.recordingsDir },
       sound: section('sound', s), look: section('look', s), appearance: section('appearance', s), editing: section('editing', s), objsep: section('objsep', s),
       folders: { studio: s.studio, projectsDir: s.projectsDir, libraryDir: s.libraryDir || 'library', recordingsDir: s.recordingsDir },
-      setup: section('setup', s), updates: section('updates', s),
+      setup: section('setup', s), updates: section('updates', s), storage: section('storage', s),
     },
     keys: await keyStatus(), keyStore: KEY_STORE,
     keyInfo: Object.fromEntries(Object.entries(KEYS).map(([k, v]) => [k, { label: v.label, test: Boolean(v.test) }])),

@@ -240,29 +240,47 @@ async function home(route, nav = null) {
   return { teardown: () => { page?.teardown?.(); shell.teardown(); document.removeEventListener('keydown', keys); document.body.classList.remove('in-home'); } };
 }
 
+// Delete recording's "Don't ask again" (Settings › Storage › Trash shows and changes it).
+async function rememberDelete(choice) {
+  try {
+    await api('/api/app/settings', { section: 'storage', values: { deleteRecording: choice } });
+    STATUS.storage = { ...(STATUS.storage || {}), deleteRecording: choice };
+    toast(`Delete recording will ${choice === 'bin' ? 'delete to the Bin' : 'remove it from the video only'} from now on. Settings › Storage › Trash changes it.`);
+  } catch (e) { toast(e.message); }
+}
+
 function takeRow(t, { reload } = {}) {
   const where = t.projects?.length ? ` · in ${t.projects.map((n) => `“${n}”`).join(', ')}` : t.used ? ' · in a video' : '';
-  const delTip = t.used ? 'A video uses this take: remove it from that video first' : 'Move this take to the studio’s trash (Undo brings it back)';
+  const bin = STATUS.storage?.bin || null;
+  const delTip = bin ? `Move this take to ${bin} (videos that use it keep their own copies)` : 'Move this take to the studio’s trash (Undo brings it back)';
   const row = h(`<div class="take-row"><span class="ti" aria-hidden="true">${TAKE_ICON}</span>
     <span class="tt"><b>${esc(takeLabel(t.id))}</b><span class="sub">${esc(takeWhat(t))} · ${gb(t.bytes)}${esc(where)}</span></span>
     <span class="tr-acts"><button class="btn small" data-a="start" title="Make an Untitled video with this take and open it">Start a video from it</button>
     <button class="btn ghost small danger icon-l" data-a="del" title="${esc(delTip)}" aria-label="${esc(`Delete the take of ${takeLabel(t.id)}`)}">${icon('trash', 14)}Delete</button></span></div>`);
   $('[data-a=start]', row).onclick = () => newVideo({ take: t.id });
-  // Delete: the take's folder goes to the studio's trash (server/trash.mjs), with Undo. Refused while it records, or
-  // when a video uses it (the message names them).
+  // Delete: the take's folder goes to the computer's Bin (server/trash.mjs; the studio's trash when there's no Bin), with
+  // Undo while it can. Refused while it records. When videos use it, they're named and it asks first: each keeps its own
+  // copy, so they don't change.
   const del = $('[data-a=del]', row);
   del.onclick = async () => {
     del.disabled = true;
     try {
-      const r = await api('/api/takes/delete', { take: t.id });
+      let r = await api('/api/takes/delete', { take: t.id });
+      if (r.ok === false && r.confirm) {
+        if (!(await confirmBox({ title: 'Delete this take from Recordings?', text: r.confirm, ok: 'Delete take' }))) { del.disabled = false; return; }
+        r = await api('/api/takes/delete', { take: t.id, confirm: true });
+      }
       await reload?.();
-      actionToast(`The take of ${takeLabel(t.id)} is in the studio’s trash.`, [['Undo', async () => {
-        try {
-          await api('/api/takes/restore', { trash: r.trash });
-          toast('The take is back in Recordings.');
-        } catch (e) { toast(e.message); }
+      const undoTrash = async () => {
+        try { await api('/api/takes/restore', { trash: r.trash }); toast('The take is back in Recordings.'); } catch (e) { toast(e.message); }
         await reload?.();
-      }]]);
+      };
+      const undoBin = async () => {
+        try { await api('/api/trash/from-bin', { token: r.bin.undo }); toast('The take is back in Recordings.'); } catch (e) { toast(e.message); }
+        await reload?.();
+      };
+      if (r.bin) actionToast(`The take of ${takeLabel(t.id)} is in ${r.bin.where}.${r.bin.putBack ? ' Put Back there brings it back later.' : ''}`, r.bin.undo ? [['Undo', undoBin]] : []);
+      else actionToast(`The take of ${takeLabel(t.id)} is in the studio’s trash.`, [['Undo', undoTrash]]);
     } catch (e) {
       del.disabled = false;
       toast(e.message);
@@ -275,7 +293,7 @@ function renderRecordings(main, takes) {
   main.replaceChildren(h(`<div class="home-wrap">
     <div class="home-head"><div class="hh-title"><h1>Recordings</h1><div class="sub mono">${esc(tilde(STATUS.recordingsDir))}</div></div>
       <button class="btn rec" id="rec2"><span class="rec-dot"></span>Record a new take</button></div>
-    <p class="sub lead">Every take you've recorded, newest first. Start a video from one and Video Octopus copies it in. Deleted takes wait in Settings › Storage › Trash.</p>
+    <p class="sub lead">Every take you've recorded, newest first. Start a video from one and Video Octopus copies it in. ${STATUS.storage?.bin ? `Delete moves a take to ${esc(STATUS.storage.bin)}.` : 'Deleted takes wait in Settings › Storage › Trash.'}</p>
     <div class="take-list wide" id="all"></div></div>`));
   $('#rec2', main).onclick = () => newVideo({ record: true });
   const all = $('#all', main);
@@ -1873,7 +1891,8 @@ function makeCanvas(pane, { inspector, tools }, id, getP, hooks = {}) {
     $('#mdNoteT', n).textContent = text || '';
     if (text) { n.scrollIntoView({ block: 'nearest' }); toast(text.length > 90 ? `${text.slice(0, 88)}…` : text); }
   };
-  const mediaActions = makeMediaActions({ id, refresh: () => loadMedia(), note: mediaNote, openRecord: (target) => hooks.openRecord?.(target) });
+  const mediaActions = makeMediaActions({ id, refresh: () => loadMedia(), note: mediaNote, openRecord: (target) => hooks.openRecord?.(target),
+    prefs: () => STATUS.storage || {}, remember: rememberDelete });
   function loadMedia() {
     if (mediaLoading) { mediaAgain = true; return mediaLoading; }
     mediaLoading = api(`/api/projects/${encodeURIComponent(id)}/media-items`)
@@ -1919,7 +1938,7 @@ function makeCanvas(pane, { inspector, tools }, id, getP, hooks = {}) {
     const items = [
       { head: cur ? `Recording · ${itemName(cur.id)}` : 'No recording yet' },
       { label: cur ? 'Record again' : 'Record', sub: cur ? 'A new take replaces this one (this one stays in the video)' : 'Screen, camera and mic', run: () => mediaActions.recordAgain() },
-      ...(cur ? [{ label: 'Delete recording', sub: mediaData.work?.length ? `It has ${mediaData.work.join(', ')}: put another take on first` : 'Its files go to the studio’s trash; Undo brings it back', danger: true, run: () => mediaActions.remove(cur, { recording: true }) }] : []),
+      ...(cur ? [{ label: 'Delete recording…', sub: mediaData.work?.length ? `It has ${mediaData.work.join(', ')}: put another take on first` : 'Remove it from this video, or delete it to the Bin', danger: true, run: () => mediaActions.deleteRecording(cur, { recording: true }) }] : []),
       { label: 'Add a layer…', sub: cur ? 'Record, import a file, or pick a recording' : 'Record or import the recording first', disabled: !cur, run: () => addLayerMenu(anchor, mediaActions, { layerCount: layerCount(), canLayer: true }) },
       ...(older.length ? [{ head: 'Use an older take' }, ...older.map((x) => ({ label: itemName(x.id), sub: 'Put it back on the canvas as the recording', run: () => mediaActions.use(x) }))] : []),
       { label: 'Show all media', sub: 'In the inspector: layers, order, show and hide, older takes', run: () => showMedia() },

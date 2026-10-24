@@ -3,7 +3,11 @@
 // Three things move files to <studio>/.trash/<when>-<name>/, each with a manifest.json saying where everything was:
 // - the record panel's Delete take and the Recordings page's Delete (kind "deleted", browser-recorder.mjs deleteTake);
 // - the record panel's Restart (kind "discarded": the parts of a take that was never saved);
-// - the editor's Media section, Remove and Delete recording (kind "media-removed", media.mjs removeMedia).
+// - the editor's Media section, Remove from this video and Delete recording (kind "media-removed", media.mjs; a deleted
+//   recording's entry also holds the recordings folder's copy, as take/).
+// Delete recording and the Recordings page's Delete then send their entry on to the computer's own Bin (os-trash.mjs):
+// the Trash on a Mac, the Recycle Bin on Windows. When no Bin takes it, it stays here and the toast says so; Finder's
+// Put Back returns an entry here, where Put back works as usual.
 // Nothing in Video Octopus deletes them by itself. Here the creator sees what's there and how big it is, puts an item
 // back (the same Undo as where it came from, so a target that exists again is refused and the canvas take only goes
 // back if nobody changed it since), and empties the trash: the only permanent delete in the app, and only on an
@@ -13,15 +17,19 @@
 // - GET /api/trash: { items, count, bytes, where }.
 // - /api/trash/restore { trash }: put one item back.
 // - /api/trash/empty { confirm: true, olderThanDays? }: delete for good; { removed, bytes }.
-// - /api/takes/delete { take }: the Recordings page's Delete. The take's folder moves to the trash; refused while it is
-//   recording or saving, and when any video uses it (they're named).
-// - /api/takes/restore { trash }: its Undo.
+// - /api/takes/delete { take, confirm }: the Recordings page's Delete. The take's folder moves to the trash and from there
+//   to the computer's Bin; refused while it is recording or saving. When videos use it they're named and it asks first
+//   (409 { ok: false, confirm }): each keeps its own copy in its source/.
+// - /api/takes/restore { trash }: its Undo (while it's still in the studio's trash).
+// - /api/trash/from-bin { token }: the Undo of a delete that went to the Bin, for a few minutes, when the Bin said where
+//   it put it: the entry comes back here, then is put back as above.
 import { existsSync, readdirSync, lstatSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, basename } from 'node:path';
 import { readJSON } from './util.mjs';
 import { projectDir, projectMeta } from './studio.mjs';
 import { trashRoot, TRASH_NAME, deleteTake, restoreTake } from './browser-recorder.mjs';
 import { restoreMedia } from './media.mjs';
+import { sendToBin, binName, rememberUndo, undoFromBin } from './os-trash.mjs';
 
 const DAY = 86400000;
 const refuse = (message) => Object.assign(new Error(message), { status: 409 });
@@ -59,7 +67,7 @@ function describe(n) {
     if (m.project && !video) item.why = 'Its video is gone or archived, so it can’t go back there.';
     else if (!existsSync(join(root, 'take')) && !m.project) item.why = 'Its files aren’t in the trash any more.';
   } else if (m?.kind === 'media-removed') {
-    item.what = `Removed from “${video || m.project}”`;
+    item.what = m.take ? `Deleted recording, was in “${video || m.project}” and Recordings` : `Removed from “${video || m.project}”`;
     if (!video) item.why = 'Its video is gone or archived, so it can’t go back there.';
   } else if (m?.kind === 'discarded') {
     item.what = 'Dropped by Restart while recording';
@@ -114,10 +122,21 @@ export function emptyTrash({ confirm = false, olderThanDays = null } = {}) {
   return { ok: true, removed, bytes };
 }
 
+// Delete recording's and Recordings' last step: the whole entry goes to the computer's Bin. null when no Bin took it (it
+// stays in the studio's trash); else { where: 'the Trash', how, undo: a token for /api/trash/from-bin or null }.
+export async function binEntry(entry) {
+  if (!isEntry(String(entry || ''))) return null;
+  const root = join(trashRoot(), entry);
+  let r = null;
+  try { r = await sendToBin(root); } catch (e) { console.error(`Moving to the Bin failed: ${e.message}`); }
+  if (!r || existsSync(root)) return null;
+  return { where: r.where || binName() || 'the Bin', how: r.how || null, putBack: Boolean(r.putBack), undo: rememberUndo(r, root) };
+}
+
 // ---- routes; true when answered. ctx.busy(id, dir): why that project's files can't change now, or null. ----
-export async function trashRoute(req, res, url, { send, body, busy = () => null, emit = () => {} }) {
+export async function trashRoute(req, res, url, { send, body, busy = () => null, emit = () => {}, toBin = binEntry }) {
   const p = url.pathname;
-  if (!['/api/trash', '/api/trash/restore', '/api/trash/empty', '/api/takes/delete', '/api/takes/restore'].includes(p)) return false;
+  if (!['/api/trash', '/api/trash/restore', '/api/trash/empty', '/api/trash/from-bin', '/api/takes/delete', '/api/takes/restore'].includes(p)) return false;
   try {
     if (p === '/api/trash' && req.method === 'GET') return send(res, 200, trashView()), true;
     if (req.method !== 'POST') return send(res, 405, { error: 'POST only' }), true;
@@ -128,7 +147,17 @@ export async function trashRoute(req, res, url, { send, body, busy = () => null,
       return send(res, 200, r), true;
     }
     if (p === '/api/trash/empty') return send(res, 200, emptyTrash({ confirm: b.confirm === true, olderThanDays: b.olderThanDays ?? null })), true;
-    if (p === '/api/takes/delete') return send(res, 200, deleteTake(null, String(b.take || ''))), true;
+    if (p === '/api/takes/delete') {
+      const r = deleteTake(null, String(b.take || ''), { confirm: b.confirm === true });
+      if (r.ok === false) return send(res, 409, r), true;
+      return send(res, 200, { ...r, bin: await toBin(r.trash) }), true;
+    }
+    if (p === '/api/trash/from-bin') {
+      const entry = basename(undoFromBin(b.token, binName() || 'the Bin'));
+      const r = putBack(entry, { busy });
+      if (r.project) emit(r.project, { t: 'files' });
+      return send(res, 200, r), true;
+    }
     if (p === '/api/takes/restore') {
       const entry = String(b.trash || '');
       const m = isEntry(entry) ? readJSON(join(trashRoot(), entry, 'manifest.json'), null) : null;

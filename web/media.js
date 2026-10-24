@@ -6,8 +6,11 @@
 //     shows or hides; ⋯ has Sound, Take off the canvas and Remove from the video.
 //   - Also in this video: older takes and imported files in source/: Use as the recording, Add as a layer, Remove.
 //   - Recently removed: what went to the studio's trash, with Put back (the toast's Undo does the same).
-// Nothing is ever deleted: Remove and Delete recording move the files to the trash, and the server refuses them while
-// Claude or an export uses the files, or once a transcript, cut, scene plan or render was made from the recording.
+// Delete recording asks one question with two answers (deleteChoice): Remove from this video (the files go to the
+// studio's trash, the take stays in Recordings, Undo) or Delete recording (this video and Recordings, the files go to the
+// computer's own Bin: the Trash or the Recycle Bin). "Don't ask again" remembers the answer (Settings › Storage › Trash
+// changes it). Nothing is ever deleted outright, and the server refuses both while Claude or an export uses the files,
+// while the take records or saves, or once a transcript, cut, scene plan or render was made from the recording.
 import { $, esc, h, api, toast, confirmBox, ago } from './ui.js';
 import { icon } from './icons.js';
 
@@ -44,8 +47,34 @@ export function actionToast(text, acts) {
   toastT = setTimeout(() => { if (t.querySelector('.toast-a')) t.hidden = true; }, 9000);
 }
 
+// Delete recording's question. Resolves { choice: 'video' | 'bin', remember } or null (Cancel, Esc, a click outside).
+// bin: where the computer's Bin is ('the Trash', 'the Recycle Bin'), or null when there is none (then it says the
+// studio's trash). inRecordings: the take is in the Recordings folder too.
+export function deleteChoice({ name, recording = true, inRecordings = true, bin = null }) {
+  return new Promise((done) => {
+    const where = bin ? `${bin} on this computer` : 'the studio’s trash (this computer has no Bin Video Octopus can use)';
+    const m = h(`<div class="modal cf-modal"><div class="dialog cf dc" role="dialog" aria-modal="true" aria-labelledby="dcT" aria-describedby="dcD">
+      <h3 id="dcT">${esc(recording ? 'Delete this recording?' : `Delete ${name}?`)}</h3>
+      <p class="sub cf-text" id="dcD">${esc(recording ? name : 'Pick what happens to it.')}</p>
+      <div class="dc-opts" role="group" aria-label="What to delete">
+        <button type="button" class="dc-opt" data-c="video"><b>Remove from this video</b><small>${esc(inRecordings ? 'It stays in Recordings, so you can use it again. Undo brings it back here.' : 'Its files go to the studio’s trash. Undo brings it back here.')}</small></button>
+        <button type="button" class="dc-opt dc-bin" data-c="bin"><b>Delete recording</b><small>${esc(`${inRecordings ? 'Removes it from this video and from Recordings' : 'Removes it from this video'}, and moves the files to ${where}.`)}</small></button>
+      </div>
+      <label class="dc-remember"><input type="checkbox" id="dcRemember"> Don’t ask again (Settings › Storage › Trash changes it)</label>
+      <div class="actions"><button type="button" class="btn ghost" data-a="no">Cancel</button></div></div></div>`);
+    const close = (v) => { document.removeEventListener('keydown', key); m.remove(); done(v); };
+    const key = (e) => { if (e.key === 'Escape') close(null); };
+    document.addEventListener('keydown', key);
+    $('[data-a=no]', m).onclick = () => close(null);
+    m.querySelectorAll('.dc-opt').forEach((b) => (b.onclick = () => close({ choice: b.dataset.c, remember: $('#dcRemember', m).checked })));
+    m.onclick = (e) => { if (e.target === m) close(null); };
+    document.body.append(m);
+    $('[data-c=video]', m).focus();
+  });
+}
+
 // The actions, shared by the section and the toolbar menu. ctx: { id, refresh(), note(text|null), openRecord(target),
-// layerCount() }.
+// layerCount(), prefs(): { deleteRecording: 'ask' | 'video' | 'bin', bin }, remember(choice) }.
 export function makeMediaActions(ctx) {
   const base = `/api/projects/${encodeURIComponent(ctx.id)}`;
   let busy = false;
@@ -69,6 +98,12 @@ export function makeMediaActions(ctx) {
       ctx.refresh();
     }
   }
+  // The Undo of a delete that went to the Bin: it comes back out of the Bin, then back into the video and Recordings.
+  async function fromBin(token, name) {
+    ctx.note(null);
+    try { await api('/api/trash/from-bin', { token }); toast(`${name} is back.`); } catch (e) { ctx.note(e.message); }
+    ctx.refresh();
+  }
   async function restore(trash, name) {
     ctx.note(null);
     try {
@@ -87,12 +122,36 @@ export function makeMediaActions(ctx) {
       const r = await run('/media-layer', { item: item.id }, { title: 'Add as a layer?', ok: 'Add' });
       if (r) toast(`${itemName(item.id)} is on top as a layer. Drag its handle in Media to reorder.`);
     },
+    // Remove from this video: the files go to the studio's trash; the take stays in Recordings.
     async remove(item, { recording = false } = {}) {
       const name = recording ? 'Recording' : itemName(item.id);
-      const r = await run('/media-remove', { item: item.id }, { title: recording ? 'Delete this recording?' : 'Remove from this video?', ok: recording ? 'Delete recording' : 'Remove' });
+      const r = await run('/media-remove', { item: item.id }, { title: recording ? 'Remove this recording from the video?' : 'Remove from this video?', ok: 'Remove' });
       if (!r) return;
       const after = r.canvas ? (r.activeTake ? ` The recording is ${itemName(r.activeTake)} again.` : ' The video has no recording now.') : '';
-      actionToast(`${name} ${recording ? 'deleted' : 'removed'}: moved to the studio’s trash.${after}`, [['Undo', () => restore(r.trash, recording ? 'The recording' : name)]]);
+      actionToast(`${name} removed from this video: moved to the studio’s trash${item.inRecordings ? ', and it’s still in Recordings' : ''}.${after}`, [['Undo', () => restore(r.trash, recording ? 'The recording' : name)]]);
+    },
+    // Delete recording: the question (or the remembered answer), then Remove from this video or Delete to the Bin.
+    async deleteRecording(item, { recording = true } = {}) {
+      const prefs = ctx.prefs?.() || {};
+      let choice = ['video', 'bin'].includes(prefs.deleteRecording) ? prefs.deleteRecording : null;
+      if (!choice) {
+        const a = await deleteChoice({ name: itemName(item.id), recording, inRecordings: item.inRecordings !== false, bin: prefs.bin || null });
+        if (!a) return;
+        choice = a.choice;
+        if (a.remember) ctx.remember?.(choice);
+      }
+      if (choice === 'video') return this.remove(item, { recording });
+      const r = await run('/media-delete', { item: item.id }, { title: 'This take is in other videos too', ok: 'Delete recording' });
+      if (!r) return;
+      const name = recording ? 'Recording' : itemName(item.id);
+      const after = r.canvas ? (r.activeTake ? ` The recording is ${itemName(r.activeTake)} again.` : ' The video has no recording now.') : '';
+      const gone = r.recordings ? 'from this video and Recordings' : 'from this video';
+      if (r.bin) {
+        const back = r.bin.putBack ? ` To get it back later, open ${r.bin.where} and use Put Back.` : '';
+        actionToast(`${name} deleted ${gone}: moved to ${r.bin.where}.${after}${back}`, r.bin.undo ? [['Undo', () => fromBin(r.bin.undo, name)]] : []);
+      } else {
+        actionToast(`${name} deleted ${gone}. No Bin took it, so it’s in the studio’s trash (Settings › Storage › Trash).${after}`, [['Undo', () => restore(r.trash, recording ? 'The recording' : name)]]);
+      }
     },
     recordAgain: () => ctx.openRecord('replace'),
     recordLayer: () => ctx.openRecord('layer'),
@@ -207,9 +266,9 @@ export function currentCard(data, actions) {
   const card = h(`<div class="md-current"><div class="md-ct"><span class="md-kicker">Current recording</span><b>${esc(itemName(item.id))}</b>
       <small>${esc(`${how(item)} · ${itemWhat(item)}`)}</small>${work.length ? `<small class="md-work">Has ${esc(work.join(', '))}</small>` : ''}</div>
     <div class="md-btns"><button type="button" class="btn small" data-a="rec" title="Record a new take that replaces this one (this one stays under Also in this video)"><span class="rec-dot"></span>Record again</button>
-      <button type="button" class="btn small md-del" data-a="del" title="${esc(work.length ? `It already has ${work.join(', ')}: put another take on the canvas first` : 'Move this recording’s files to the studio’s trash (Undo brings it back)')}">${icon('trash', 14)}Delete recording</button></div></div>`);
+      <button type="button" class="btn small md-del" data-a="del" title="${esc(work.length ? `It already has ${work.join(', ')}: put another take on the canvas first` : 'Remove it from this video, or delete it from this computer (it goes to the Bin)')}">${icon('trash', 14)}Delete recording</button></div></div>`);
   $('[data-a=rec]', card).onclick = () => actions.recordAgain();
-  $('[data-a=del]', card).onclick = () => actions.remove(item, { recording: true });
+  $('[data-a=del]', card).onclick = () => actions.deleteRecording(item, { recording: true });
   return card;
 }
 
@@ -229,7 +288,8 @@ export function otherRows(data, actions, { layerCount = 0 } = {}) {
       popMenu(e.currentTarget, [
         { label: 'Use as the recording', sub: item.take ? 'It replaces the current recording on the canvas' : 'A sound file can’t be the recording', run: () => actions.use(item), disabled: !item.take || item.blocks.length > 0 },
         { label: 'Add as a layer', sub: !item.picture ? 'Sound only: no picture to put in a box' : layerCount >= 8 ? 'A video has at most 8 layers' : 'On top, in its own box', run: () => actions.addLayer(item), disabled: !item.picture || layerCount >= 8 },
-        { label: 'Remove from this video…', sub: 'Its files go to the studio’s trash (Undo brings them back)', run: () => actions.remove(item), danger: true },
+        { label: 'Remove from this video…', sub: item.inRecordings ? 'Its files go to the studio’s trash; it stays in Recordings' : 'Its files go to the studio’s trash (Undo brings them back)', run: () => actions.remove(item), danger: true },
+        { label: 'Delete recording…', sub: item.inRecordings ? 'From this video and Recordings, to the Bin' : 'This video’s copy, to the Bin', run: () => actions.deleteRecording(item, { recording: false }), danger: true },
       ], { label: `${itemName(item.id)} actions` });
     };
     return row;
