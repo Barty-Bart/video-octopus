@@ -452,10 +452,11 @@ export function takeBusy(stamp) {
 export const takeFolder = (stamp) => (takeName(stamp) ? takeDir(stamp) : null);
 
 // Delete take: everything moves to the trash, and the project goes back to the take it had before (an Undo puts it
-// all back). Refused while the take is recording or saving, when another project uses it too, and when its project
-// already has work made from it.
+// all back). Refused while the take is recording or saving. When other projects use it too, or its project already has
+// work made from it, it asks first ({ ok: false, confirm, videos: [{ id, name }] }, the same flow as Recordings and
+// Media), and goes ahead with confirm: the other videos keep their own copies, and the work stays in the project.
 // id: the project asking (the record panel's Delete take), or null for the Recordings page (/api/takes/delete): then
-// only the recordings folder's copy moves, and a take any project uses is refused, naming them.
+// only the recordings folder's copy moves.
 export function deleteTake(id, stamp, { confirm = false } = {}) {
   if (!takeName(stamp)) throw new Error('Unknown take.');
   const dir = takeDir(stamp);
@@ -468,15 +469,20 @@ export function deleteTake(id, stamp, { confirm = false } = {}) {
   const others = users.filter((u) => u.id !== id);
   const names = others.map((u) => `“${u.name}”`).join(', ');
   // From Recordings: each video has its own copy of the take in its source/, so they keep working; asked first.
+  const videos = others.map((u) => ({ id: u.id, name: u.name }));
   if (others.length && id === null && !confirm) {
-    return { ok: false, projects: others.map((u) => u.name),
+    return { ok: false, projects: others.map((u) => u.name), videos,
       confirm: `${names} ${others.length > 1 ? 'use' : 'uses'} this take. ${others.length > 1 ? 'Those videos keep their own copies' : 'That video keeps its own copy'}, so ${others.length > 1 ? 'they' : 'it'} won’t change; only the take in Recordings goes.` };
   }
-  if (others.length && id !== null) throw refuse(`This take is also used by ${names}, so it wasn’t deleted. Remove it there first.`);
   let arrived = t?.finished || 0;
   if (mine) for (const f of mine.files) { try { arrived = Math.max(arrived, statSync(join(mine.dir, 'source', f)).mtimeMs); } catch {} }
   const work = mine && mine.meta.activeTake === stamp ? workOnTake(mine, arrived) : null;
-  if (work) throw refuse(`This take is already ${work} in “${mine.name}”, so it wasn’t deleted. Record a new take to replace it.`);
+  // From the record panel: asked first, with the other videos named (they keep their own copies) and the work said.
+  const asks = id === null ? [] : [
+    ...(others.length ? [`${names} ${others.length > 1 ? 'also use' : 'also uses'} this take. ${others.length > 1 ? 'They keep their own copies' : 'It keeps its own copy'}, so ${others.length > 1 ? 'they' : 'it'} won’t change.`] : []),
+    ...(work ? [`This take is already ${work} in “${mine.name}”. That work stays in the project, but it belongs to this take: the video goes back to the take it had before.`] : []),
+  ];
+  if (asks.length && !confirm) return { ok: false, confirm: asks.join(' '), videos, projects: others.map((u) => u.name) };
 
   const entry = newTrashEntry(stamp), root = join(trashRoot(), entry);
   const manifest = { v: 1, kind: 'deleted', take: stamp, at: Date.now(), from: dir, project: mine ? id : null, projectName: mine?.name || null, files: [], proxies: [] };
@@ -593,8 +599,8 @@ export async function recRoute(req, res, { id, action, url, send, body, emit, re
     if (action === '/rec-pause') return send(res, 200, pauseTake(id, String(b.take || ''), Boolean(b.paused))), true;
     if (action === '/rec-discard') return send(res, 200, discardTake(id, String(b.take || ''))), true;
     if (action === '/rec-delete') {
-      const r = deleteTake(id, String(b.take || ''));
-      emit({ t: 'files' });
+      const r = deleteTake(id, String(b.take || ''), { confirm: b.confirm === true });
+      if (r.ok !== false) emit({ t: 'files' });
       return send(res, 200, r), true;
     }
     if (action === '/rec-restore') {

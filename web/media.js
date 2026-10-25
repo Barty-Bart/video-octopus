@@ -86,7 +86,7 @@ export function makeMediaActions(ctx) {
     try {
       let r = await api(base + path, b);
       if (r.ok === false && r.confirm) {
-        if (!(await confirmBox({ title, text: r.confirm, ok }))) return null;
+        if (!(await confirmBox({ title, text: r.confirm, ok, videos: r.videos }))) return null;
         r = await api(base + path, { ...b, confirm: true });
       }
       return r.ok ? r : null;

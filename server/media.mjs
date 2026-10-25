@@ -257,7 +257,7 @@ export async function deleteRecording(dir, key, { confirm = false, busy = null, 
   const others = stamp ? projectsUsing(stamp).filter((u) => u.id !== id) : [];
   const ask = others.length ? [`${others.map((u) => `“${u.name}”`).join(', ')} ${others.length > 1 ? 'also use' : 'also uses'} this take. ${others.length > 1 ? 'They keep their own copies' : 'It keeps its own copy'}; this video’s copy and the one in Recordings go to the Bin.`] : [];
   const c = checkRemove(dir, key, { confirm, busy, ask });
-  if (c.ok === false) return { ...c, others: others.map((u) => u.name) };
+  if (c.ok === false) return { ...c, others: others.map((u) => u.name), videos: others.map((u) => ({ id: u.id, name: u.name })) };
   const r = moveOut(dir, key, c, { stamp });
   const bin = await toBin(r.trash);
   return { ...r, bin, others: others.map((u) => u.name) };

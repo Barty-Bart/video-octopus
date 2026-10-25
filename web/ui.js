@@ -14,10 +14,12 @@ export async function api(path, data) {
 let toastTimer;
 // A yes/no dialog for anything that installs, downloads, connects or switches: resolves true only on the OK button.
 // `body`: an element shown under the text (a model picker); `onOk(body)` may return false to keep it open.
-export function confirmBox({ title, text = '', ok = 'OK', cancel = 'Cancel', body = null, onOk = null } = {}) {
+// `videos`: [{ id, name }] the text names, as links to open each (the dialog closes, as Cancel).
+export function confirmBox({ title, text = '', ok = 'OK', cancel = 'Cancel', body = null, onOk = null, videos = [] } = {}) {
   return new Promise((done) => {
+    const links = (videos || []).filter((v) => v?.id).map((v) => `<a href="#/p/${encodeURIComponent(v.id)}">${esc(v.name || v.id)}</a>`).join(', ');
     const m = h(`<div class="modal cf-modal"><div class="dialog cf" role="dialog" aria-modal="true" aria-labelledby="cfTitle">
-      <h3 id="cfTitle">${esc(title)}</h3>${text ? `<p class="sub cf-text">${esc(text)}</p>` : ''}<div class="cf-body"></div>
+      <h3 id="cfTitle">${esc(title)}</h3>${text ? `<p class="sub cf-text">${esc(text)}</p>` : ''}${links ? `<p class="sub cf-links">Open ${links}</p>` : ''}<div class="cf-body"></div>
       <div class="actions"><button type="button" class="btn ghost" data-a="no">${esc(cancel)}</button><button type="button" class="btn primary" data-a="ok">${esc(ok)}</button></div></div></div>`);
     if (body) m.querySelector('.cf-body').append(body);
     const close = (v) => { document.removeEventListener('keydown', key); m.remove(); done(v); };
@@ -26,6 +28,7 @@ export function confirmBox({ title, text = '', ok = 'OK', cancel = 'Cancel', bod
     m.querySelector('[data-a=no]').onclick = () => close(false);
     m.querySelector('[data-a=ok]').onclick = async () => { if (onOk && (await onOk(body)) === false) return; close(true); };
     m.onclick = (e) => { if (e.target === m) close(false); };
+    m.querySelectorAll('.cf-links a').forEach((a) => a.addEventListener('click', () => close(false)));
     document.body.append(m);
     m.querySelector('[data-a=ok]').focus();
   });

@@ -269,7 +269,7 @@ function takeRow(t, { reload } = {}) {
     try {
       let r = await api('/api/takes/delete', { take: t.id });
       if (r.ok === false && r.confirm) {
-        if (!(await confirmBox({ title: 'Delete this take from Recordings?', text: r.confirm, ok: 'Delete take' }))) { del.disabled = false; return; }
+        if (!(await confirmBox({ title: 'Delete this take from Recordings?', text: r.confirm, ok: 'Delete take', videos: r.videos }))) { del.disabled = false; return; }
         r = await api('/api/takes/delete', { take: t.id, confirm: true });
       }
       await reload?.();
@@ -2005,7 +2005,7 @@ function makeCanvas(pane, { inspector, tools }, id, getP, hooks = {}) {
     if (!n) { if (text) toast(text); return; }
     n.hidden = !text;
     $('#mdNoteT', n).textContent = text || '';
-    if (text) { n.scrollIntoView({ block: 'nearest' }); toast(text.length > 90 ? `${text.slice(0, 88)}…` : text); }
+    if (text) { n.scrollIntoView({ block: 'nearest' }); toast(text); }
   };
   const mediaActions = makeMediaActions({ id, refresh: () => loadMedia(), note: mediaNote, openRecord: (target) => hooks.openRecord?.(target),
     prefs: () => STATUS.storage || {}, remember: rememberDelete });

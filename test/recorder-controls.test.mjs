@@ -212,30 +212,44 @@ test('Delete take of a layer or a block take takes the layer out or empties the 
   assert.deepEqual(readJ(join(pdir, 'work', 'blocks.json')).blocks[0].source, { file: `source/${stamp}_webcam.mp4` });
 });
 
-test('Delete take is refused for a take another project uses, one already cut, or one still recording', async () => {
+test('Delete take asks first for a take another project uses or one already cut (naming the videos), and goes ahead on confirm', async () => {
   const stamp = '2026-10-24_12-00-00';
   const pdir = project('own', { takes: [stamp], activeTake: stamp });
-  project('other', { name: 'Other video', takes: [stamp] });
+  const odir = project('other', { name: 'Other video', takes: [stamp] });
+  writeFileSync(join(odir, 'source', `${stamp}_webcam.mp4`), 'other copy');
   const finished = Date.now() - 10 * 60000;
   savedTake(stamp, 'own', { finished });
   const before = JSON.stringify(readJ(join(pdir, 'project.json')));
 
   let d = await call('own', '/rec-delete', { take: stamp });
-  assert.equal(d.code, 409);
-  assert.match(d.body.error, /also used by “Other video”/);
-  assert.ok(existsSync(join(recordings, stamp, `${stamp}_webcam.mp4`)), 'nothing moved');
+  assert.equal(d.code, 200);
+  assert.equal(d.body.ok, false);
+  assert.match(d.body.confirm, /^“Other video” also uses this take\. It keeps its own copy, so it won’t change\.$/);
+  assert.deepEqual(d.body.videos, [{ id: 'other', name: 'Other video' }], 'the video is named with its id, for a link');
+  assert.ok(existsSync(join(recordings, stamp, `${stamp}_webcam.mp4`)), 'nothing moved before the answer');
   assert.ok(existsSync(join(pdir, 'source', `${stamp}_webcam.mp4`)));
   assert.equal(JSON.stringify(readJ(join(pdir, 'project.json'))), before);
 
-  // Only its own project now, but it has a cut made after the take arrived.
-  rmSync(join(projects, 'other'), { recursive: true, force: true });
+  // Also a cut made after the take arrived: both said in one question, untruncated.
   utimesSync(join(pdir, 'source', `${stamp}_webcam.mp4`), new Date(finished), new Date(finished));
   writeJ(join(pdir, 'work', 'edl_manual.json'), { cuts: [] });
   d = await call('own', '/rec-delete', { take: stamp });
-  assert.equal(d.code, 409);
-  assert.match(d.body.error, /already cut in “OWN”/);
-  assert.ok(existsSync(join(recordings, stamp)));
+  assert.equal(d.body.ok, false);
+  assert.match(d.body.confirm, /also uses this take\. .* This take is already cut in “OWN”\. That work stays in the project, but it belongs to this take: the video goes back to the take it had before\.$/);
   assert.equal(trashEntries().filter((n) => n.endsWith(stamp)).length, 0);
+
+  // Confirmed: this video's copy and the take in Recordings go to the trash; the other video keeps its own copy.
+  d = await call('own', '/rec-delete', { take: stamp, confirm: true });
+  assert.equal(d.code, 200, JSON.stringify(d.body));
+  assert.equal(d.body.ok, true);
+  assert.ok(!existsSync(join(recordings, stamp)));
+  assert.ok(!existsSync(join(pdir, 'source', `${stamp}_webcam.mp4`)));
+  assert.ok(existsSync(join(odir, 'source', `${stamp}_webcam.mp4`)), 'the other video keeps its copy');
+  assert.ok(existsSync(join(pdir, 'work', 'edl_manual.json')), 'the work stays in the project');
+  assert.equal(readJ(join(pdir, 'project.json')).activeTake, undefined);
+  assert.equal((await call('own', '/rec-restore', { trash: d.body.trash })).code, 200);
+  assert.ok(existsSync(join(recordings, stamp, `${stamp}_webcam.mp4`)), 'Undo brings it back');
+  rmSync(join(projects, 'other'), { recursive: true, force: true });
 
   // A take still recording can't be deleted (Restart is the way to drop it).
   project('live');

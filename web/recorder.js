@@ -8,7 +8,7 @@
 // drops the take: the dropped take goes to the studio's trash and never becomes a take, and a new one starts after a
 // 3-second countdown with the same screen, camera and mic. After a take is saved the bar offers Delete take, which
 // moves it to the studio's trash (with Undo); see server/browser-recorder.mjs for what is refused.
-import { $, esc, h, api, toast, isMac } from './ui.js';
+import { $, esc, h, api, toast, isMac, confirmBox } from './ui.js';
 import { scriptCard, prompterForTake, syncWithRecorder } from './prompter.js';
 
 export const HOTKEY = isMac ? '⌥⌘R' : 'Ctrl+Alt+R';
@@ -395,9 +395,10 @@ function afterTake(id, take) {
 }
 
 // Moves the take to the studio's trash and out of its project (the project goes back to its take before). Returns the
-// server's answer, or throws with why it was refused (another project uses it, it's already transcribed or cut…).
-export async function deleteTake(id, take) {
-  return api(projectApi(id, 'rec-delete'), { take });
+// server's answer: { ok: false, confirm, videos } when it asks first (another video uses it, it's already transcribed or
+// cut…), or throws with why it can't (still saving).
+export async function deleteTake(id, take, { confirm = false } = {}) {
+  return api(projectApi(id, 'rec-delete'), { take, ...(confirm ? { confirm: true } : {}) });
 }
 export async function restoreTake(id, trash) {
   return api(projectApi(id, 'rec-restore'), { trash });
@@ -409,7 +410,16 @@ async function deleteFromBar() {
   a.busy = true; renderCtl();
   clearTimeout(ui.afterT);
   try {
-    const r = await deleteTake(a.id, a.take);
+    let r = await deleteTake(a.id, a.take);
+    // Asked first, as Recordings and Media do: the other videos named (links), the work it already has said in full.
+    if (r.ok === false && r.confirm) {
+      if (!(await confirmBox({ title: 'Delete this take?', text: r.confirm, ok: 'Delete take', videos: r.videos }))) {
+        Object.assign(a, { busy: false });
+        ui.afterT = setTimeout(() => { if (ui.after === a && a.mode === 'saved') { ui.after = null; renderCtl(); } }, 15000);
+        return renderCtl();
+      }
+      r = await deleteTake(a.id, a.take, { confirm: true });
+    }
     Object.assign(a, { mode: 'deleted', trash: r.trash, busy: false });
     ui.afterT = setTimeout(() => { if (ui.after === a) { ui.after = null; renderCtl(); } }, 10000);
   } catch (e) {
