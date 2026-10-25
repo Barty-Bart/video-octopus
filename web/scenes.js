@@ -11,6 +11,7 @@ import { makeSceneTimeline } from './scenetimeline.js';
 import { makeCutTrim, cutMapper, sec } from './cuttrim.js';
 import { makeCompare, previousOf, versionName } from './compare.js';
 import { sandboxURL } from './sandbox-painter.js';
+import { TONE_LABEL, TONE_DOT, sceneTone, sceneRow } from './scene-tone.js';
 
 const LS = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch {} return null; };
 const mmss = (s) => { const m = /^(\d+):(\d+(?:\.\d+)?)$/.exec(String(s).trim()); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
@@ -23,8 +24,6 @@ const ICON = {
   claude: '<svg class="ic-claude" width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5v13M1.5 8h13M3.4 3.4l9.2 9.2M12.6 3.4l-9.2 9.2"/></svg>',
   caret: '<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5l3 3 3-3"/></svg>',
 };
-const TONE_LABEL = { ok: 'Approved', changed: 'Changed · rewatch', question: 'Claude asks', sent: 'With Claude', notes: '', waiting: 'Changes waiting', none: 'To review', unbuilt: 'Not built yet' };
-const TONE_DOT = { ok: 'var(--ok)', changed: 'var(--accent)', question: 'var(--accent)', sent: 'var(--warn)', notes: 'var(--sel)', waiting: 'var(--accent)', none: 'var(--line-2)', unbuilt: 'transparent' };
 // Little layout pictures for the Look tab: boxes as % of the frame ([x, y, w, h, 'scr'|'cam']).
 const LAYOUT_GLYPH = {
   'talking-head': [[8, 8, 84, 84, 'cam']], cutout: [[8, 18, 84, 30, 'scr'], [30, 30, 40, 70, 'cam']], split: [[5, 12, 55, 76, 'scr'], [64, 12, 31, 76, 'cam']],
@@ -258,16 +257,10 @@ export function makeScenes({ pane, inspector, id, getP, onCount, onScenes, histo
   const builtSc = (s) => Boolean(s && (D.builtEnd ?? Infinity) > s.start + 0.1);
   const newMoveList = () => Object.entries(D.overrides?.scenes || {}).flatMap(([scn, els]) => Object.entries(els).filter(([, o]) => !o.at || Date.parse(o.at) > renderAt()).map(([el, o]) => ({ scene: scn, el, o })));
   const packageCount = () => openItems().length + newMoveList().length;
-  function toneOf(s) {
-    const ns = notesOf(s.id).filter((n) => n.status !== 'resolved');
-    if (D.approved[s.id] && builtSc(s)) return 'ok';
-    if (ns.some((n) => n.status === 'question')) return 'question';
-    if (ns.some((n) => n.status === 'done')) return 'changed';
-    if (ns.some((n) => n.status === 'sent')) return 'sent';
-    if (ns.some((n) => n.status === 'open' && n.kind !== 'change')) return 'notes';
-    if (ns.some((n) => n.status === 'open')) return 'waiting';
-    return builtSc(s) ? 'none' : 'unbuilt';
-  }
+  // The picked render reaches this scene (no render picked: nothing to show it in, so it doesn't count as outside it).
+  const inRender = (s) => !renderFile || reaches(s);
+  // web/scene-tone.js: a scene the picked render doesn't reach (an intro-only build) is "Not in this build" (B5a).
+  const toneOf = (s) => sceneTone({ approved: Boolean(D.approved[s.id]), notes: notesOf(s.id).filter((n) => n.status !== 'resolved'), built: builtSc(s), inRender: inRender(s) });
   const toneText = (s, tone = toneOf(s)) => {
     if (tone !== 'notes') return TONE_LABEL[tone];
     const k = realNotes(s.id).filter((n) => n.status === 'open').length;
@@ -741,11 +734,11 @@ export function makeScenes({ pane, inspector, id, getP, onCount, onScenes, histo
     player.el.classList.toggle('strip', stripOn());
     if (stripOn()) return renderStrip();
     const tones = D.scenes.map(toneOf);
-    const appr = tones.filter((t) => t === 'ok').length, chg = tones.filter((t) => t === 'changed' || t === 'question').length, nb = tones.filter((t) => t === 'unbuilt').length;
-    const rest = Math.max(0, D.scenes.length - appr - chg - nb);
+    const appr = tones.filter((t) => t === 'ok').length, chg = tones.filter((t) => t === 'changed' || t === 'question').length, nb = tones.filter((t) => t === 'unbuilt').length, ni = tones.filter((t) => t === 'notin').length;
+    const rest = Math.max(0, D.scenes.length - appr - chg - nb - ni);
     player.lh.innerHTML = `<div class="s2-lt"><b>${D.scenes.length} scenes</b><span class="sub">${D.sections?.length > 1 ? `${D.sections.length} sections · ` : ''}${clock(D.scenes.at(-1).end)}</span></div>
-      <div class="s2-prog" title="${appr} approved · ${chg} to rewatch · ${rest} to review${nb ? ` · ${nb} not built yet` : ''}"><i class="ok" style="flex:${appr}"></i><i class="chg" style="flex:${chg}"></i><i style="flex:${rest}"></i>${nb ? `<i class="nb" style="flex:${nb}"></i>` : ''}</div>
-      <div class="s2-legend sub"><span><i class="ok"></i>${appr} approved</span><span><i class="chg"></i>${chg} to rewatch</span><span><i></i>${rest} to review</span>${nb ? `<span><i class="nb"></i>${nb} not built yet</span>` : ''}</div>
+      <div class="s2-prog" title="${appr} approved · ${chg} to rewatch · ${rest} to review${ni ? ` · ${ni} not in this build` : ''}${nb ? ` · ${nb} not built yet` : ''}"><i class="ok" style="flex:${appr}"></i><i class="chg" style="flex:${chg}"></i><i style="flex:${rest}"></i>${ni + nb ? `<i class="nb" style="flex:${ni + nb}"></i>` : ''}</div>
+      <div class="s2-legend sub"><span><i class="ok"></i>${appr} approved</span><span><i class="chg"></i>${chg} to rewatch</span><span><i></i>${rest} to review</span>${ni ? `<span><i class="nb"></i>${ni} not in this build</span>` : ''}${nb ? `<span><i class="nb"></i>${nb} not built yet</span>` : ''}</div>
       <button class="s2-foldlist" aria-label="Fold the list to a strip" title="Fold the list to a strip of scene numbers">«</button>`;
     $('.s2-foldlist', player.lh).onclick = () => setStrip(true);
     const groups = D.sections?.length ? D.sections : [{ id: '', label: 'All scenes', start: D.scenes[0].start, end: D.scenes.at(-1).end, scenes: D.scenes.map((s) => s.id) }];
@@ -761,11 +754,13 @@ export function makeScenes({ pane, inspector, id, getP, onCount, onScenes, histo
       if (!fold) for (const sid of g.scenes) {
         const s = scene(sid);
         if (!s) continue;
-        // An unbuilt scene says so once, on its picture (A14: not again in the line under the title).
+        // An unbuilt or not-in-this-build scene says so once, on a quiet picture (A14: not again in the line under the
+        // title; B5a: no black frame where the picked render has no picture of it).
         const tone = toneOf(s), th = thumbs.get(`${renderFile}|${s.id}`);
+        const row = sceneRow({ tone, text: toneText(s, tone), built: builtSc(s), inRender: inRender(s) });
         const b = h(`<button class="s2-row${s.id === sel ? ' on' : ''}" role="listitem" data-id="${esc(s.id)}" aria-current="${s.id === sel}">
-          <span class="s2-th${builtSc(s) ? '' : ' nb'}"><img alt=""${th && reaches(s) ? ` src="${th}"` : ' hidden'}>${builtSc(s) ? '' : '<span class="s2-nbl">Not built yet</span>'}<span class="s2-n">${s.n}</span></span>
-          <span class="s2-rt"><b>${esc(s.title)}</b>${s.line ? `<span class="s2-line" title="${esc(s.line)}">“${esc(s.line)}”</span>` : ''}<span class="sub"><span class="mono">${clock(s.start)}</span>${tone === 'unbuilt' && !builtSc(s) ? '' : `<i style="background:${TONE_DOT[tone]}"></i>${esc(toneText(s, tone))}`}</span></span>
+          <span class="s2-th${row.quiet ? ' nb' : ''}"><img alt=""${th && !row.quiet ? ` src="${th}"` : ' hidden'}>${row.picture ? `<span class="s2-nbl">${esc(row.picture)}</span>` : ''}<span class="s2-n">${s.n}</span></span>
+          <span class="s2-rt"><b>${esc(s.title)}</b>${s.line ? `<span class="s2-line" title="${esc(s.line)}">“${esc(s.line)}”</span>` : ''}<span class="sub"><span class="mono">${clock(s.start)}</span>${row.line == null ? '' : `<i style="background:${TONE_DOT[tone]}"></i>${esc(row.line)}`}</span></span>
           <span class="s2-now" hidden>▶ NOW</span></button>`);
         b.onclick = () => select(s.id);
         rows.append(b);

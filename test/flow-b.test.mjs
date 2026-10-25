@@ -110,3 +110,37 @@ test('B12: the Brand tab has one Research button and no separate Create step', a
   assert.equal(src.match(/<button class="btn primary">Research<\/button>/g)?.length, 2); // the kit rows layout and the older card layout
   assert.match(src, /startResearch\(api, profileId,/);
 });
+
+test('B5a: after a partial Build, scenes the picked render doesn’t reach are “Not in this build”, not “To review”', async () => {
+  const { sceneTone, sceneRow, TONE_LABEL } = await import('../web/scene-tone.js');
+  // An intro-only render picked; an older full render made every scene "built" (server builtEnd: the longest render).
+  assert.equal(sceneTone({ built: true, inRender: true }), 'none');
+  assert.equal(TONE_LABEL.none, 'To review');
+  assert.equal(sceneTone({ built: true, inRender: false }), 'notin');
+  assert.equal(TONE_LABEL.notin, 'Not in this build');
+  // No render reaches it at all: Not built yet, as before.
+  assert.equal(sceneTone({ built: false, inRender: false }), 'unbuilt');
+  // Approval and notes still win over where the render stops.
+  assert.equal(sceneTone({ approved: true, built: true, inRender: false }), 'ok');
+  assert.equal(sceneTone({ built: true, inRender: false, notes: [{ status: 'open' }] }), 'notes');
+  assert.equal(sceneTone({ built: true, inRender: false, notes: [{ status: 'open', kind: 'change' }] }), 'waiting');
+  // The row: a quiet picture (no black frame) with the state on it once; the line under the title stays empty (A14).
+  for (const [tone, args] of [['notin', { built: true, inRender: false }], ['unbuilt', { built: false, inRender: false }]]) {
+    const row = sceneRow({ tone, text: TONE_LABEL[tone], ...args });
+    assert.equal(row.quiet, true, tone);
+    assert.equal(row.picture, TONE_LABEL[tone], tone);
+    assert.equal(row.line, null, `${tone}: said once (A14)`);
+  }
+  // A reached scene keeps its picture and its line; an approved scene outside the picked render is quiet but says Approved.
+  assert.deepEqual(sceneRow({ tone: 'none', text: 'To review', built: true, inRender: true }), { quiet: false, picture: null, line: 'To review' });
+  assert.deepEqual(sceneRow({ tone: 'ok', text: 'Approved', built: true, inRender: false }), { quiet: true, picture: null, line: 'Approved' });
+});
+
+test('B5a: Scenes uses the shared tone rules and prints the row label from them', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../web/scenes.js', import.meta.url), 'utf8');
+  assert.match(src, /import \{ TONE_LABEL, TONE_DOT, sceneTone, sceneRow \} from '\.\/scene-tone\.js'/);
+  assert.ok(!/const TONE_LABEL =/.test(src), 'one copy of the labels');
+  assert.ok(!src.includes("'<span class=\"s2-nbl\">Not built yet</span>'"), 'the picture label comes from sceneRow');
+  assert.match(src, /row\.line == null \? ''/);
+});
