@@ -21,7 +21,7 @@ Save useful preferences with **Remember this**, review proposed lessons, and reu
 | Packaging (preview) | An optional first stage for thumbnails: a Packaging tab with a Codex chat, **Generate** (six ideas in one image, cut into cards), refine one to 1280 × 720, star / winners (up to 3) / main thumbnail, old thumbnails, and resources (photos, logos, style notes) at All channels, a channel or one video. Image generation uses your own Codex sign-in with a ChatGPT plan and counts against that plan; no API key is used. Only synthetic, fake-Codex runs are tested so far. See [Packaging and resources](docs/learning-and-storage.md#packaging-and-resources). |
 | Project formats | YouTube tutorial, faceless explainer, Short and product explainer. |
 
-> **v0.1.0-beta.19 — source update.** A tidier editor bar (theme moved to ⋯, a compact usage meter), no sideways scroll on a phone, Settings › Storage › Trash with Put back and Empty trash, and Delete in Recordings. Includes beta.18's Media section, beta.17's stage navigation, recording controls, flat My styles, the new look and Packaging.
+> **v0.1.0-beta.20 — source update.** My styles with a colour for every brand kit and real or drawn covers; Delete recording can send a take to the computer's Bin; Model and Effort pickers in the chat; permission requests you can't miss (one banner, top-bar badge, tab title, notifications); Record starts the way your style records; and 20 fixes from a full walkthrough, including a server crash when the agent CLI isn't signed in. Includes beta.19's tidier editor bar and Trash, the Media section, stage navigation, recording controls, flat My styles, the new look and Packaging.
 
 ### Six bundled starter skills
 

@@ -1,4 +1,4 @@
-# Unreleased
+# v0.1.0-beta.20
 
 - **Every brand kit has a colour.** A kit uses its brand's first colour; a kit without brand colours gets its own colour from a palette of twelve, picked when the kit is made, different from the other kits' where possible. Kits made before this update get one the first time the studio opens. Change it on the kit's **Brand** tab under **Kit colour** (twelve swatches or any colour). The kit colour is only for covers, dots and avatars: it is never added to the brand or to videos.
 - **Style covers that look like covers.** A style's card shows a picture when the studio has one: the main thumbnail from Packaging of a video made with the style, else a frame of that video, else a key frame of an example the style studied. Otherwise the cover is drawn in the kit colour, with the style's initial and a 16:9 or 9:16 frame showing a presenter (on-camera setups) or a waveform with captions (faceless). No brand styles get a colour of their own. The style page's cover matches.
@@ -20,6 +20,8 @@
 - **Stage bar.** **Publish** gets its tick once the video is exported or a render is marked final, not when a Build step renders. Show me's "New · from …" outline goes away when you switch stages instead of sitting over the logo. The bar always shows the open video's own progress.
 - **One count for your changes.** The dock and the Scenes panel say the same number for "Save changes → Claude".
 - **Small fixes.** The chat's brand line follows a newly picked style at once. The mic meter holds its peak, so "Too loud" never shows over an empty meter. The New style dialog keeps **Create** in view on a short window. At phone width the Cut transcript is readable (full width under the picture). An unbuilt scene says "Not built yet" once. Codex's step lines say "What Video Octopus asked Codex", and a turn that hit the plan's limit ends "stopped: limit reached". A dropped screen recording (named as one) comes in as the screen, not a camera. When a step finishes without its result, the dock says what's missing ("Build the intro didn't produce its video.") instead of Claude's last sentence.
+
+Verified with 426 unit tests on Node 24.22.1 and 22.22.1, the format-skill and learning runtimes, and disposable browser runs with fake agents (My styles in light and dark at 1440 to 375 px; delete to the Bin with fake Bin commands; model and effort flags reaching a fake Claude Code; the permission banner; Record presets; before/after checks for the walkthrough fixes). The real Finder/Recycle Bin calls and the Playwright e2e suites were not run. This is a source update on main; the downloadable tagged prerelease remains separate.
 
 # v0.1.0-beta.19
 
