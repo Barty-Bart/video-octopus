@@ -799,10 +799,16 @@ async function openProject(id) {
     start.show(empty && tab === 'canvas');
     el.classList.toggle('no-take', empty);
     const hello = $('#emptyChat', el);
-    if (empty && hello && !hello.dataset.start) {
-      hello.dataset.start = '1';
-      hello.innerHTML = `<b>What's this one about?</b><br>A sentence is enough. ${esc(window.STUDIO_AGENT || 'Claude')} can outline a script or suggest hooks first.
-        <span class="start-chips"><button type="button" class="qr" data-ask="Outline a script for this video. Ask me what it's about first if you need to.">Outline a script</button><button type="button" class="qr" data-ask="Give me 5 hooks for this video. Ask me what it's about first if you need to.">Give me 5 hooks</button></span>`;
+    // One next step (B2): the dock's. The script and hook chips help with Record, so they show only while Record is
+    // the dock's step (or the video has no format, so no steps); otherwise the hello names no step of its own.
+    const cur = P.pipeline?.steps.find((x) => x.id === P.pipeline.current) || null;
+    const forRecord = !P.pipeline || cur?.action === 'import';
+    const helloKey = forRecord ? 'record' : 'other';
+    if (empty && hello && hello.dataset.start !== helloKey) {
+      hello.dataset.start = helloKey;
+      hello.innerHTML = forRecord ? `<b>What's this one about?</b><br>A sentence is enough. Before you record, ${esc(window.STUDIO_AGENT || 'Claude')} can outline a script or suggest hooks.
+        <span class="start-chips"><button type="button" class="qr" data-ask="Outline a script for this video. Ask me what it's about first if you need to.">Outline a script</button><button type="button" class="qr" data-ask="Give me 5 hooks for this video. Ask me what it's about first if you need to.">Give me 5 hooks</button></span>`
+        : `<b>What's this one about?</b><br>A sentence is enough. The step that’s next waits just above the message box.`;
       for (const b of hello.querySelectorAll('[data-ask]')) b.onclick = () => chat.send(b.dataset.ask);
     }
   };

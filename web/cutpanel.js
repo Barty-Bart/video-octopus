@@ -192,15 +192,20 @@ export function makeCutPanel({ id, getP, runLock, shots = null }) {
   }
 
   function lockHTML() {
-    const s = getP().pipeline?.steps.find((x) => x.id === 'lock');
+    const p = getP().pipeline, s = p?.steps.find((x) => x.id === 'lock');
     if (!s) return '';
     const left = lists().check.length;
+    // One next step (B2): the dock's. Lock is the accent button only while it is the dock's step; before it (Split into
+    // sections still to do) the panel says the dock's step comes first, and it never names a step after the lock.
+    const cur = p.steps.find((x) => x.id === p.current) || null, mine = cur?.id === s.id;
+    const first = !mine && !s.done && cur && p.steps.indexOf(cur) < p.steps.indexOf(s) ? cur : null;
     // changed: locked, then edited (server/studio.mjs: the Lock step waits to run again).
     return `<section class="cp-lock-s"><div class="cp-lock">
       <b>${s.changed ? 'Changed after the lock' : 'Happy with it?'}</b>
-      <p class="sub">${s.changed ? 'The cut changed after it was locked, and its new joins aren’t checked yet. Lock it again: Claude renders it and checks every join.' : 'Claude renders this cut and checks every join again. When nothing sounds clipped, the cut is locked and planning the scenes comes next.'}</p>
+      <p class="sub">${s.changed ? 'The cut changed after it was locked, and its new joins aren’t checked yet. Lock it again: Claude renders it and checks every join.' : 'Claude renders this cut and checks every join again. When nothing sounds clipped, the cut is locked.'}</p>
+      ${first ? `<p class="sub cp-first">First: <b>${esc(first.name)}</b>, the next step in the dock. Lock the cut after it.</p>` : ''}
       ${left ? `<p class="cp-left">${plural(left, 'part')} still to listen to. Anything you skip stays as it is now.</p>` : ''}
-      <button class="btn accent wide" data-a="lock">${s.done || s.changed ? 'Save and lock the cut again' : 'Save and lock the cut'}</button>
+      <button class="btn${mine ? ' accent' : ''} wide" data-a="lock">${s.done || s.changed ? 'Save and lock the cut again' : 'Save and lock the cut'}</button>
       ${s.done ? '<p class="sub cp-done">✓ Locked. Lock it again after more changes.</p>' : ''}</div></section>`;
   }
 

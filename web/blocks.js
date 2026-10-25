@@ -47,6 +47,10 @@ export function makeBlocks({ id, getP, openRecord, openCut, runStep, note, seek,
 
   // The step that marks the sections (its plain name and words, core/pipelines.json).
   const sectionsStep = () => getP().pipeline?.steps.find((s) => s.brief === 'sections' || s.id === 'sections') || null;
+  // One next step (B2): the dock's. The band offers Split into sections only while it is the dock's step and isn't
+  // running; before that (Clean up still to do) and after, it names no step of its own.
+  const sectionsRunning = () => { const P = getP(), sec = sectionsStep(); return Boolean(sec && P.busy && P.running === sec.id); };
+  const sectionsNow = () => { const sec = sectionsStep(); return sec && getP().pipeline?.current === sec.id && !sectionsRunning() ? sec : null; };
 
   // ---------- the strip ----------
   function mount(host) { strip = host; render(); }
@@ -57,11 +61,11 @@ export function makeBlocks({ id, getP, openRecord, openCut, runStep, note, seek,
     const total = view.total || 1;
     const fmt = P.pipeline?.format || '';
     const canMark = Boolean(view.wordsFile);
-    const sec = sectionsStep();
+    const sec = sectionsNow();
     const head = h(`<div class="bk-head"><b>Blocks</b>
       <span class="bk-meta">${esc(fmt)}${view.exists ? ` · ${list.length} block${list.length === 1 ? '' : 's'} · ${two(view.total)}` : ''}${view.exists && !view.marked ? ' · no sections yet' : ''}</span>
       <span class="gap"></span>
-      ${!view.marked && canMark ? `<button class="btn ghost small" data-a="mark" title="${esc(sec?.what || 'Claude reads the transcript and proposes where each block starts and ends')}">${esc(sec?.name || 'Split into sections')}</button>` : ''}
+      ${!view.marked && canMark && sec ? `<button class="btn ghost small" data-a="mark" title="${esc(sec.what || 'Claude reads the transcript and proposes where each block starts and ends')}">${esc(sec.name)}</button>` : ''}
       <button class="btn small" data-a="add" title="Add a block: record one, use a file, take one from the library, or ask Claude">+ Add block</button></div>`);
     const row = h(`<div class="bk-row" role="list" aria-label="Blocks in playing order"></div>`);
     const plus = (i, before, after) => {
@@ -118,7 +122,7 @@ export function makeBlocks({ id, getP, openRecord, openCut, runStep, note, seek,
     const foot = notes.length ? h(`<div class="bk-notes">${notes.map((x) => `<span><b>${esc(x.label)}</b> ${esc(x.note)}</span>`).join('')}</div>`) : null;
     strip.replaceChildren(head, row, ...(foot ? [foot] : []));
     const mark = $('[data-a=mark]', head);
-    if (mark) mark.onclick = () => runStep?.('sections');
+    if (mark) mark.onclick = () => runStep?.(sec.id);
     $('[data-a=add]', head).onclick = (e) => insertMenu(e.currentTarget, { before: null, after: list[list.length - 1] || null, end: true });
     // A video dropped anywhere on the strip (not on a gap) goes to the end, by its rule.
     strip.ondragover = (e) => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); };
@@ -383,21 +387,24 @@ export function makeBlocks({ id, getP, openRecord, openCut, runStep, note, seek,
   const bandApi = {
     label: 'Blocks', height: 34,
     on: () => Boolean(view && getP().type && (view.items.length || view.take?.file)),
-    sig: () => `${sigN}|${band ? `${band.kind}:${band.t?.toFixed(3)}` : ''}|${sel}`,
+    sig: () => `${sigN}|${band ? `${band.kind}:${band.t?.toFixed(3)}` : ''}|${sel}|${getP().pipeline?.current || ''}|${sectionsRunning()}`,
     draw(g, r, v) {
       const font = cs().getPropertyValue('--font');
       g.save();
       g.beginPath(); g.rect(0, r.y, v.W, r.h); g.clip();
       const list = items();
-      // No sections yet (before Split into sections): a dashed band that says which step fills it, instead of the
-      // one "Whole take" block. Blocks with their own file still show as flags.
+      // No sections yet (before Split into sections): a dashed band instead of the one "Whole take" block. It names the
+      // step that fills it only while that step is the dock's Next (or running): one next step (B2). Blocks with their
+      // own file still show as flags.
       const none = !view.marked && getP().pipeline;
       if (none) {
-        const sec = sectionsStep();
+        const sec = sectionsNow(), run = sectionsRunning() ? sectionsStep() : null;
         g.strokeStyle = v.col.line2; g.lineWidth = 1.5; g.setLineDash([5, 4]);
         g.beginPath(); g.roundRect(1.5, r.y + 3.5, Math.max(4, v.W - 3), r.h - 7, 7); g.stroke(); g.setLineDash([]);
         g.textBaseline = 'middle';
-        const y = r.y + r.h / 2, parts = [['No sections yet. ', 500, v.col.muted], [sec?.name || 'Split into sections', 600, v.col.text], [' adds them here.', 500, v.col.muted]];
+        const y = r.y + r.h / 2, parts = sec ? [['No sections yet. ', 500, v.col.muted], [sec.name, 600, v.col.text], [' adds them here.', 500, v.col.muted]]
+          : run ? [['No sections yet. ', 500, v.col.muted], [run.name, 600, v.col.text], [' is adding them.', 500, v.col.muted]]
+          : [['No sections yet.', 500, v.col.muted]];
         let x = 12;
         for (const [t, wgt, c] of parts) { g.font = `${wgt} 12px ${font}`; g.fillStyle = c; g.fillText(t, x, y); x += g.measureText(t).width; }
       }

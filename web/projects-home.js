@@ -36,6 +36,10 @@ const kitOf = (p) => (p.profileName && p.profileName !== TERMS.noBrand ? p.profi
 const styleOf = (p) => p.formatName || kitOf(p) || TERMS.noStyle; // a video with a kit but no style shows the kit
 const stageOf = (p) => (!p.type ? 'Earlier edit' : p.stage || (p.progress && !p.next ? 'Done' : 'Not started'));
 const inProgress = (p) => p.app && p.type && Boolean(p.next);
+// What comes next, in the editor dock's words (server current: the next required step, else an optional one left), so
+// Home never names a different next step than the dock (B2). A video whose required steps are done stays Done.
+const nextName = (p) => p.current || p.next || null;
+const nextText = (p) => (p.next ? `Next: ${nextName(p)}` : p.current ? `${stageOf(p)} · Next: ${p.current}${p.currentOptional ? ' (optional)' : ''}` : stageOf(p));
 
 let homeView = (() => { try { return localStorage.getItem('studio.home.view') === 'list' ? 'list' : 'grid'; } catch { return 'grid'; } })();
 let homeFilter = (() => { try { return localStorage.getItem('studio.home.channel') || 'all'; } catch { return 'all'; } })();
@@ -103,7 +107,7 @@ export function renderProjects(main, ctx) {
             ${resume.waiting ? `<span class="pv-hero-wait">${plural(resume.waiting, 'change')} waiting</span>` : ''}</div>
         </div>
         <div class="pv-hero-acts">
-          ${resume.next ? `<a class="btn pv-next" href="#/p/${encodeURIComponent(resume.id)}">${esc(resume.next)}</a>` : ''}
+          ${nextName(resume) ? `<a class="btn pv-next" href="#/p/${encodeURIComponent(resume.id)}">${esc(nextName(resume))}</a>` : ''}
           <a class="btn pv-open" href="#/p/${encodeURIComponent(resume.id)}">Open</a>
         </div>
       </div>
@@ -181,7 +185,7 @@ export function renderProjects(main, ctx) {
       <span class="pv-thumb">${stagePic(p)}</span>
       <span class="pv-row-name"><b>${esc(p.name)}</b><span class="pv-meta">${esc(p.type ? STATUS_TYPES[p.type] || '' : '')}</span></span>
       <span class="pv-row-style">${p.profileId ? channelAvatar({ name: p.profileName, color: styles.find((c) => c.id === p.profileId)?.color }) : ''}${esc(styleOf(p))}</span>
-      <span class="pv-row-stage${p.next ? ' next' : ''}">${esc(p.next ? `Next: ${p.next}` : stageOf(p))}${p.waiting ? ` · ${plural(p.waiting, 'change')} waiting` : ''}</span>
+      <span class="pv-row-stage${p.next ? ' next' : ''}">${esc(nextText(p))}${p.waiting ? ` · ${plural(p.waiting, 'change')} waiting` : ''}</span>
       <span class="pv-meta">${esc(ago(p.updated))}</span>
     </a>`);
     wireThumb($('.pv-thumb', el));

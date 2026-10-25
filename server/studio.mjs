@@ -174,6 +174,9 @@ export function listProjects() {
       const id = basename(dir);
       const status = meta ? pipelineStatus(dir, meta.type) : null;
       const next = status?.steps.find((s) => s.id === status.next);
+      // The step the editor's dock offers (status.current): the next required step, else an optional one not done or
+      // skipped. Home names this one, so Projects and the dock never disagree on what comes next (B2).
+      const current = status?.steps.find((s) => s.id === status.current);
       // The stage the video is at, as Home's Continue hero says it: "Step 3 of 6 · Cut". Only a step that must be done
       // counts: a video whose required steps are all done is Done, not "Package" (an optional step never done).
       const stages = status?.stages || [];
@@ -185,6 +188,8 @@ export function listProjects() {
         type: formatId(meta?.type),
         updated: Math.max(mtime(dir), mtime(join(dir, 'work')), mtime(join(dir, 'WORKLOG.md'))),
         next: next ? next.name : null,
+        current: current ? current.name : null,
+        currentOptional: Boolean(current?.optional),
         // one entry per step for the progress bar on Home: 1 done, 2 next, 0 still to do
         progress: status ? status.steps.map((s) => (s.done ? 1 : s.id === status.next ? 2 : 0)) : null,
         steps: status ? status.steps.map((s) => s.name) : null,

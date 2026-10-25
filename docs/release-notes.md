@@ -1,3 +1,7 @@
+# Unreleased
+
+- **One next step.** The dock above the message box is the only place that says what's next, and everything else agrees with it. Projects names the dock's step (a finished video with only an optional step left says "Done · Next: Package (optional)"). The Cut panel's **Save and lock the cut** is the big button only while Lock is the next step; before that it says the dock's step comes first, and it no longer promises that planning the scenes comes next. The Blocks band offers **Split into sections** only while that is the next step. A new video's chat offers **Outline a script** and **Give me 5 hooks** while Record is next ("Before you record…").
+
 # v0.1.0-beta.20
 
 - **Every brand kit has a colour.** A kit uses its brand's first colour; a kit without brand colours gets its own colour from a palette of twelve, picked when the kit is made, different from the other kits' where possible. Kits made before this update get one the first time the studio opens. Change it on the kit's **Brand** tab under **Kit colour** (twelve swatches or any colour). The kit colour is only for covers, dots and avatars: it is never added to the brand or to videos.
