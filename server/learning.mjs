@@ -16,6 +16,7 @@ import { beginMaintenance, endMaintenance, activityView } from './maintenance.mj
 import { settingsChanged, restartWhenIdle } from './settings.mjs';
 import { settings, reveal } from './util.mjs';
 import { createProject, projectDir, projectMeta, saveProjectMeta, lockedCut, listProjects, appendWorklog } from './studio.mjs';
+import { lockHeld } from './cutreview.mjs';
 import { sqlSkillContent } from './skill-db.mjs';
 import { syncSkills, skillsView, registerGeneratedSkills } from './managed-skills.mjs';
 import { makeChat, staleChat } from './engines.mjs';
@@ -136,7 +137,7 @@ export function learnedPlan(id, dir) {
   const meta=projectMeta(dir),learning=projectLearning(id,meta);
   if(!learning)throw Error('This project has no learned format.');
   const cut=lockedCut(dir),file=safeFile(dir,'work/production.json');
-  if(!cut || !existsSync(join(dir,'WORKLOG.md')) || !/Cut locked/i.test(readFileSync(join(dir,'WORKLOG.md'),'utf8')))throw Error('Lock and review the cut first.');
+  if(!cut || !lockHeld(dir))throw Error('Lock and review the cut first.');
   if(!existsSync(file))throw Error('Create the scene plan first.');
   const raw=readFileSync(file);if(raw.length>4*1024*1024)throw Error('Scene plan is too large.');
   const plan=JSON.parse(raw),token=createHash('sha256').update(raw).update(JSON.stringify(cut)).update(learning.versionId).digest('hex');
@@ -145,7 +146,7 @@ export function learnedPlan(id, dir) {
 export function guardLearnedStep(id,dir,step) {
   const learning=projectLearning(id,projectMeta(dir));if(!learning)return '';
   if(step?.stage==='Plan'||step?.stage==='Build') {
-    if(!lockedCut(dir)||!existsSync(join(dir,'WORKLOG.md'))||!/Cut locked/i.test(readFileSync(join(dir,'WORKLOG.md'),'utf8')))throw Error('Lock the cut before planning or building.');
+    if(!lockedCut(dir)||!lockHeld(dir))throw Error('Lock the cut before planning or building.');
   }
   if(step?.stage==='Build'&&!learnedPlan(id,dir).approved)throw Error('Review and approve the current scene plan in Script & learned format before building.');
   return learning.build==='full'&&step?.stage==='Build' ? '\nBuild the complete approved scene plan, preserving stable IDs and creator overrides. Keep the locked timing. Stop for final visual review before export.' : '';

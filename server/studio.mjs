@@ -450,8 +450,10 @@ export function pipelineStatus(dir, type, opts = {}) {
       || (typeof d.kept === 'string' ? keptItems(dir, d.kept).kept > 0 : false);
     // The cut changed after it was locked (a word deleted since): the lock no longer holds, and the step waits to run
     // again (Claude checks the new joins). changed says why, for the Cut tab, the canvas and Export's words.
-    const changed = done && step.id === 'lock' && lockState(dir).changed;
-    if (changed) done = false;
+    // unlocked: the creator pressed Unlock to edit (B3): the same, by choice.
+    const ls = done && step.id === 'lock' ? lockState(dir) : null;
+    const changed = Boolean(ls?.changed), unlocked = Boolean(ls?.unlocked) && !changed;
+    if (changed || unlocked) done = false;
     const optional = Boolean(step.optional), kind = step.kind || 'claude';
     // The words the creator reads. A step without them (a studio's own) shows its label and a plain line.
     const stage = STAGE_NAMES.includes(step.stage) ? step.stage : prevStage || (step.action === 'import' ? 'Record' : 'Build');
@@ -461,7 +463,7 @@ export function pipelineStatus(dir, type, opts = {}) {
     return { id: step.id, label: step.label, name: step.name || step.label || step.id, stage, makes: makesOf(d),
              what: String(what).replaceAll('{blocks}', blockList(fmt)), where: step.where || (kind === 'app' ? '' : 'what changed, in Claude’s reply'), show,
              kind, action: step.action || null,
-             skill: step.skill || null, ask: step.ask || '', brief: step.brief || null, motion: step.motion || null, optional, done, ...(changed ? { changed: true } : {}),
+             skill: step.skill || null, ask: step.ask || '', brief: step.brief || null, motion: step.motion || null, optional, done, ...(changed ? { changed: true } : {}), ...(unlocked ? { unlocked: true } : {}),
              skipped: optional && !done && skippedIds.has(step.id),
              subs: step.subs ? step.subs.map((x) => ({ id: x.id, label: x.label, done: x.files.some((f) => globExists(dir, f)) })) : null,
              ...(opts.lines && done ? { line: doneLine(dir, step, worklog) } : {}) };

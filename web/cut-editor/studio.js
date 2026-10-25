@@ -112,7 +112,7 @@ function playRange(a,b,pad,raw){if(!D)return;scrubEnd();joinStop=null;rawStop=nu
 // Keep / Cut from Video Octopus's list: exact ranges (they come from the rough cut), one undo step. safe: a part Prepare named
 // on whole words (false starts, an unfinished ending): its outer edges go where a word delete puts them (safeEdges).
 // A cut never leaves a wordless sliver under 0.12 s at its edges (join-check's rule; index.html SLIVER).
-function applyRanges(op,R,safe){R=(R||[]).filter(r=>Array.isArray(r)&&r[1]-r[0]>.005).map(r=>[+r[0],+r[1]]).sort((x,y)=>x[0]-y[0]);if(!R.length||!D)return;
+function applyRanges(op,R,safe){if(ro())return;R=(R||[]).filter(r=>Array.isArray(r)&&r[1]-r[0]>.005).map(r=>[+r[0],+r[1]]).sort((x,y)=>x[0]-y[0]);if(!R.length||!D)return;
  if(safe&&$('snap').checked){const [a,b]=safeEdges(R[0][0],R[R.length-1][1]);R[0][0]=Math.min(R[0][0],a);R[R.length-1][1]=Math.max(R[R.length-1][1],b)}
  let L=kept.map(s=>[...s]);
  for(const [a,b] of R){if(op==='keep')L=norm(L.concat([[a,b]]));else{const o=[];for(const [p,q] of L){if(b<=p||a>=q){o.push([p,q]);continue}if(a>p&&!sliver(p,a))o.push([p,a]);if(b<q&&!sliver(b,q))o.push([b,q])}L=norm(o)}}
@@ -149,6 +149,7 @@ function studioSetup(){
   if(m.type==='studio:cut-review'){setEar(m.items);return}
   if(m.type==='studio:shots'){setShots(m);return}
   if(m.type==='studio:look'){applyStudioLook(m.look);return}
+  if(m.type==='studio:lock'){setRO(m.locked);return}
   if(m.type!=='studio:cut-do'||!D)return;const op=m.op;
   if(op==='cut-sel'){if(sel)cut(...sel)}
   else if(op==='restore-sel'){if(sel)restore(...sel)}

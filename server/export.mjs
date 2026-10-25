@@ -53,9 +53,10 @@ export function exportInfo(id, dir) {
   let cutInfo = null;
   if (cut && duration) {
     const segs = snapSegments(cut.segments, duration);
-    // state: locked (the Lock step holds), changed (edited after the lock, its joins not checked yet) or rough (no lock yet).
+    // state: locked (the Lock step holds), changed (edited after the lock, its joins not checked yet), unlocked (Unlock to
+    // edit pressed since the lock) or rough (no lock yet).
     const ls = lockState(dir);
-    if (segs.length) cutInfo = { file: cut.file, count: segs.length, duration: segs.reduce((t, [a, b]) => t + b - a, 0), segments: segs, state: ls.locked ? (ls.changed ? 'changed' : 'locked') : 'rough' };
+    if (segs.length) cutInfo = { file: cut.file, count: segs.length, duration: segs.reduce((t, [a, b]) => t + b - a, 0), segments: segs, state: ls.locked ? (ls.changed ? 'changed' : ls.unlocked ? 'unlocked' : 'locked') : 'rough' };
   }
   const job = jobs.get(id);
   const out = { sources: src, dims, duration, audio, layerAudio, cut: cutInfo, running: job ? { label: job.label, progress: job.progress } : null };

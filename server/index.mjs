@@ -12,7 +12,7 @@ import { listProjects, createProject, projectDir, projectMeta, saveProjectMeta, 
   importUpload, lockedCut, appendWorklog, setSkipped, takeDuration, setProjectIdCheck } from './studio.mjs';
 import { openCutEditor, cutPlan, cutEditorRoute, closeAll } from './cuteditor.mjs';
 import { onProjectFiles, syncCutItem, retimeOnSave, syncDocItems, markPackageBase, cutTake, saveCut } from './cutsync.mjs';
-import { cutReviewRoute, markEdits } from './cutreview.mjs';
+import { cutReviewRoute, markEdits, cutReadOnly, LOCKED_ERROR } from './cutreview.mjs';
 import { autoFrame } from './autoframe.mjs';
 import { exportInfo, startExport, cancelExport, stopAllExports, canvasSources, exportsBusy } from './export.mjs';
 import { layersRoute, cancelLayers, stopAllLayers, layersRunning, listLayerExports, layersBusy } from './export-layers.mjs';
@@ -182,7 +182,7 @@ function projectContext(id) {
     blocksContext(),
     shotsContext(),
     `Everything in this project's window is a file you can change, and the window follows within a second: the layout and frame (project.json layout), the blocks (work/blocks.json), sound cues (work/sfx.json), notes and Look changes (work/notes.json), keyframes and moves (work/overrides.json), the post kit (work/post.json). So when the creator asks for a change anywhere in the window, make it in the file rather than describing where to click. Read the file first and change only the keys you mean to (keep the rest exactly). Changes you make yourself don't go into the change package; the creator's do. Your changes (in a reply or a step) apply directly: the creator sees them in the chat and can undo your last reply or step there.`,
-    `The cut is work/edl_manual.json {segments_sec: [[start, end], …]}: the kept parts of the canvas take, in take seconds (the Cut tab and Scenes edit the same file). Change it only when asked; the Cut tab follows, and graphics are re-timed when the creator presses Save changes → Claude.`,
+    `The cut is work/edl_manual.json {segments_sec: [[start, end], …]}: the kept parts of the canvas take, in take seconds (the Cut tab and Scenes edit the same file). Change it only when asked; the Cut tab follows, and graphics are re-timed when the creator presses Save changes → Claude. Once the cut is locked (Lock the cut wrote "Cut locked" in WORKLOG.md) the Cut tab is read-only for the creator until they press Unlock to edit (WORKLOG then says "Cut unlocked"); only you write "Cut locked", when you lock it.`,
     `Saved layouts are in ${join(settings().studio || '<studio>', '.studio', 'layouts.json')} ({layouts: [{id, name, layout}]}, made with "+ Save layout"): to use one, copy its layout keys into project.json layout (keep aspect and layers). Library backgrounds (${join(settings().studio || '<studio>', 'library', 'backgrounds')}) are copied into the project's assets/ and used as bg {kind "image"|"video"|"code", file "assets/…", name}.`,
     `Things outside this project (Video Octopus's settings, other projects, scheduled runs, the library inbox) are the Video Octopus assistant's job (the Ask Claude button outside a project), which asks before each change: if the creator asks you for one, say so instead of changing Video Octopus's files.`,
     `When the creator asks what you'd change, be concrete: which layout or background per block, where a sound cue or block should go (with times), what to cut. Offer to apply it, and apply it in the files when they say yes.`,
@@ -420,7 +420,7 @@ function projectView(id, dir) {
     blocks: blocksSummary(dir), prepare: prepareState(id, dir, busy),
     layerExports: listLayerExports(dir), // Layers and Timeline file exports (server/export-layers.mjs)
     textExports: listTextExports(dir, probeFile), // Audio, Transcript and Subtitles exports (server/export-text.mjs)
-    joins: joinFlags(dir), // the join check's flags on the canvas timeline (server/timeline.mjs)
+    joins: cutReadOnly(dir) ? [] : joinFlags(dir), // the join check's flags on the canvas timeline (server/timeline.mjs); none while the cut is locked (B3)
     finalRender: meta.finalRender || null, // the render marked Final on the Renders tab
     // Shots and zooms (server/shots.mjs, web/shots.js): work/shots.json { v: 1, shots } and work/zooms.json { v: 2, items },
     // settled (sections, re-cuts, block layouts moved in) and on the take's own seconds; the page refreshes on any change.
@@ -960,6 +960,7 @@ async function route(req, res) {
   }
   // A cut pulled in Scenes (One scene's cut lines, Whole video's trim lens): the one cut, saved like the Cut Editor does.
   if (action === '/cut-save') {
+    if (cutReadOnly(dir)) return send(res, 409, { ok: false, locked: true, error: LOCKED_ERROR });
     try {
       const before = lockedCut(dir)?.segments || null;
       const r = saveCut(dir, b.segments, b.version);

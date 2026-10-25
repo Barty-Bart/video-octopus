@@ -57,11 +57,25 @@ export function makeCutPanel({ id, getP, runLock, shots = null }) {
   // Only once the editor is there (studio:cut-ready sends it then): before, the frame still holds a blank page.
   const sendLook = () => ready && post({ type: 'studio:look', look: cutLook() });
   const offLook = onAppearance(sendLook);
+  // A locked cut is read-only (B3): the editor shows "Cut locked · Unlock to edit" and makes no edits; this panel hides
+  // the flagged joins and offers Unlock. Locked = the Lock step is done (an edit by Claude since, or Unlock, undoes it).
+  const lockStep = () => getP().pipeline?.steps.find((x) => x.id === 'lock') || null;
+  const isLocked = () => Boolean(lockStep()?.done) && !unlocking;
+  let unlocking = false, sentLock = null;
+  const sendLock = () => { if (!ready) return; const on = isLocked(); if (on !== sentLock && post({ type: 'studio:lock', locked: on })) sentLock = on; };
+  async function unlock() {
+    if (!isLocked()) return;
+    if (!confirm('Unlock the cut to edit it?\n\nLock the cut becomes the next step again: lock it after your changes, and Claude checks every join.')) return;
+    unlocking = true; sendLock(); lastHTML = ''; paint();
+    try { rv = await api(url, { op: 'unlock' }); toast('Unlocked: edit the cut, then lock it again.'); }
+    catch (e) { unlocking = false; toast(e.message); }
+    sendLock(); lastHTML = ''; paint();
+  }
   const sendReview = () => rv && post({ type: 'studio:cut-review', items: rv.items.filter((it) => it.group === 'ask').map((it) => ({ a: it.a, b: it.b, join: it.kind === 'Join', done: Boolean(it.decision) })) });
   function onMessage(m) {
     if (!m || typeof m.type !== 'string') return false;
     if (m.type === 'studio:cut-ready') {
-      ready = true; sendReview(); sendLook(); shots?.sendCut();
+      ready = true; sentLock = null; sendReview(); sendLook(); sendLock(); shots?.sendCut();
       const p = pending, it = p && rv?.items.find((x) => x.key === p.key); pending = null;
       if (it) decide(it, p.d);
       return true;
@@ -74,6 +88,7 @@ export function makeCutPanel({ id, getP, runLock, shots = null }) {
       return true;
     }
     if (m.type === 'studio:cut-state') { live = m; followUndo(); paint(); return true; }
+    if (m.type === 'studio:cut-unlock') { unlock(); return true; }
     if (m.type === 'studio:cut-flushed') { flushDone?.(m.ok); flushDone = null; return true; }
     return false;
   }
@@ -124,6 +139,9 @@ export function makeCutPanel({ id, getP, runLock, shots = null }) {
   function paint() {
     if (!root || !root.isConnected) return;
     const P = getP();
+    // The pipeline says the lock no longer holds (the Unlock went through, or Claude changed the cut): back to editing.
+    if (unlocking && !lockStep()?.done) unlocking = false;
+    sendLock();
     if (!P.cut?.ready) { setHTML(`<div class="ins-head"><b>Cut</b></div><section><p class="sub">${esc(P.cut?.why || 'The Cut Editor isn’t ready yet.')}</p></section>`); return; }
     if (view === 'list') return paintList();
     if (setHTML(`<div class="ins-head"><b>Cut</b>${editorUrl ? `<a class="btn ghost small cp-own" href="${esc(editorUrl)}" target="_blank" rel="noopener" title="The Cut Editor in its own browser window (its own look, saves on Save / ⌘S)">Own window ↗</a>` : ''}</div>
@@ -137,10 +155,10 @@ export function makeCutPanel({ id, getP, runLock, shots = null }) {
     if (!s) return `<section class="cp-sel"><h3>Selection</h3><p class="sub">Nothing selected. Click a word, drag across words, or drag on the waveform.</p></section>`;
     const range = s.state === 'cut' ? `Cut · take ${clock(s.a)} – ${clock(s.b)}` : `${clock(s.ea)} – ${clock(s.eb)}${s.state === 'mixed' ? ' · partly cut' : ''}`;
     const cutB = '<button class="btn dark" data-a="cut-sel">Cut it <kbd>⌫</kbd></button>', backB = `<button class="btn${s.state === 'cut' ? ' dark' : ''}" data-a="restore-sel">Bring back <kbd>R</kbd></button>`;
-    const acts = s.state === 'kept' ? cutB : s.state === 'cut' ? backB : cutB + backB;
+    const acts = isLocked() ? '' : s.state === 'kept' ? cutB : s.state === 'cut' ? backB : cutB + backB;
     const why = whyHTML(s);
     // A new shot before the first selected word (the "/" in the transcript does the same).
-    const shotB = shots && s.words ? `<button class="btn cp-shot" data-a="shot-here" title="A new shot starts at this word (or type / in the transcript)"><kbd>/</kbd>New shot here</button>` : '';
+    const shotB = shots && s.words && !isLocked() ? `<button class="btn cp-shot" data-a="shot-here" title="A new shot starts at this word (or type / in the transcript)"><kbd>/</kbd>New shot here</button>` : '';
     return `<section class="cp-sel"><h3>Selection</h3>
       <div class="cp-big">${s.words ? plural(s.words, 'word') : 'No words'} · ${s.len.toFixed(1)} s</div>
       <div class="cp-range">${esc(range)}</div>
@@ -187,7 +205,7 @@ export function makeCutPanel({ id, getP, runLock, shots = null }) {
       <ul class="cp-legend">
         ${mine ? `<li><i class="sw hatch" aria-hidden="true"></i><span>Cut by you</span><b>${mine}</b></li>` : ''}
         <li><button class="cp-row-btn" data-a="list"${rv?.items?.some((it) => it.group === 'ask') ? '' : ' disabled'}><i class="sw ear" aria-hidden="true"></i><span>Still to listen to</span><b>${L.check.length}</b>${rv?.items?.some((it) => it.group === 'ask') ? '<span class="cp-go" aria-hidden="true">›</span>' : ''}</button></li>
-        <li><i class="sw tri" aria-hidden="true"></i><span>Joins to check${clipped ? ` <small>${clipped} likely clipped</small>` : ''}${fixed ? ` <small>${fixed} fixed by Clean up</small>` : ''}</span><b>${joins.length}</b></li>
+        ${isLocked() ? '' : `<li><i class="sw tri" aria-hidden="true"></i><span>Joins to check${clipped ? ` <small>${clipped} likely clipped</small>` : ''}${fixed ? ` <small>${fixed} fixed by Clean up</small>` : ''}</span><b>${joins.length}</b></li>`}
       </ul></section>`;
   }
 
@@ -199,14 +217,18 @@ export function makeCutPanel({ id, getP, runLock, shots = null }) {
     // sections still to do) the panel says the dock's step comes first, and it never names a step after the lock.
     const cur = p.steps.find((x) => x.id === p.current) || null, mine = cur?.id === s.id;
     const first = !mine && !s.done && cur && p.steps.indexOf(cur) < p.steps.indexOf(s) ? cur : null;
-    // changed: locked, then edited (server/studio.mjs: the Lock step waits to run again).
+    // Locked (B3): read-only, Unlock to edit. Unlocked: edit, then lock again (the Lock step is next again).
+    if (isLocked()) return `<section class="cp-lock-s"><div class="cp-lock locked">
+      <b>Cut locked</b>
+      <p class="sub">${s.byImport ? 'Your own edit is the cut. ' : ''}The scene plan and the build use this cut, so it’s read-only. Unlock it to change it, then lock it again: Claude checks every join.</p>
+      <button class="btn wide" data-a="unlock">Unlock to edit</button></div></section>`;
+    // changed: locked, then edited (server/studio.mjs: the Lock step waits to run again). unlocked: Unlock to edit.
     return `<section class="cp-lock-s"><div class="cp-lock">
-      <b>${s.changed ? 'Changed after the lock' : 'Happy with it?'}</b>
-      <p class="sub">${s.changed ? 'The cut changed after it was locked, and its new joins aren’t checked yet. Lock it again: Claude renders it and checks every join.' : 'Claude renders this cut and checks every join again. When nothing sounds clipped, the cut is locked.'}</p>
+      <b>${s.changed ? 'Changed after the lock' : s.unlocked || unlocking ? 'Unlocked' : 'Happy with it?'}</b>
+      <p class="sub">${s.changed ? 'The cut changed after it was locked, and its new joins aren’t checked yet. Lock it again: Claude renders it and checks every join.' : s.unlocked || unlocking ? 'Edit the cut, then lock it again: Claude renders it and checks every join.' : 'Claude renders this cut and checks every join again. When nothing sounds clipped, the cut is locked.'}</p>
       ${first ? `<p class="sub cp-first">First: <b>${esc(first.name)}</b>, the next step in the dock. Lock the cut after it.</p>` : ''}
       ${left ? `<p class="cp-left">${plural(left, 'part')} still to listen to. Anything you skip stays as it is now.</p>` : ''}
-      <button class="btn${mine ? ' accent' : ''} wide" data-a="lock">${s.done || s.changed ? 'Save and lock the cut again' : 'Save and lock the cut'}</button>
-      ${s.done ? '<p class="sub cp-done">✓ Locked. Lock it again after more changes.</p>' : ''}</div></section>`;
+      <button class="btn${mine ? ' accent' : ''} wide" data-a="lock">${s.done || s.changed || s.unlocked ? 'Save and lock the cut again' : 'Save and lock the cut'}</button></div></section>`;
   }
 
   function wireMain() {
@@ -215,6 +237,7 @@ export function makeCutPanel({ id, getP, runLock, shots = null }) {
   async function act(a, b) {
     if (a === 'list') return openList();
     if (a === 'lock') return lock(b);
+    if (a === 'unlock') return unlock();
     if (a === 'shot-here') { if (live?.sel) shots?.addAt(Number.isFinite(live.sel.w0) ? live.sel.w0 : live.sel.a); return; }
     ask({ type: 'studio:cut-do', op: a });
   }
@@ -253,6 +276,7 @@ export function makeCutPanel({ id, getP, runLock, shots = null }) {
       $('.cp-text', r).onclick = () => { cur = it.key; mark(); ask({ type: 'studio:cut-do', op: 'select', a: it.a, b: it.b }); };
       r.querySelectorAll('[data-d]').forEach((b) => (b.onclick = () => { cur = it.key; decide(it, b.dataset.d); }));
     });
+    if (!P.cut?.ready || isLocked()) root.querySelectorAll('.cp-dec button').forEach((b) => { b.disabled = true; if (isLocked()) b.title = 'The cut is locked: Unlock to edit'; });
     if (!P.cut?.ready) root.querySelectorAll('.cp-row button').forEach((b) => (b.disabled = true));
   }
   function rowHTML(it, S) {
@@ -294,6 +318,7 @@ export function makeCutPanel({ id, getP, runLock, shots = null }) {
     try { rv = await api(url, { decisions: { [key]: d } }); sendReview(); paint(); } catch (e) { toast(e.message); }
   }
   async function decide(it, d) {
+    if (isLocked()) { toast('The cut is locked · Unlock to edit'); return; }
     const undo = it.decision === d && stateOf(it) === (d === 'keep' ? 'kept' : 'cut'); // pressing the lit one again: back to To check
     if (!undo && !ready) { pending = { key: it.key, d }; toast(frame?.isConnected ? 'The Cut Editor is still opening: this goes in as soon as it\'s ready.' : 'The Cut Editor is still opening.'); return; }
     const before = live?.segments ? segSig(live.segments) : null;
@@ -335,7 +360,7 @@ export function makeCutPanel({ id, getP, runLock, shots = null }) {
 
   return {
     render, onMessage, openList, flush,
-    attach(f, u) { frame = f; editorUrl = u || null; live = null; ready = false; pending = null; lastHTML = ''; track.clear(); paint(); shots?.setCutPost((m) => ready && post(m)); },
+    attach(f, u) { frame = f; editorUrl = u || null; live = null; ready = false; pending = null; sentLock = null; lastHTML = ''; track.clear(); paint(); shots?.setCutPost((m) => ready && post(m)); },
     destroy() { offLook(); document.removeEventListener('keydown', onKey); document.removeEventListener('keyup', onKeyUp); clearTimeout(loadTimer); },
   };
 }

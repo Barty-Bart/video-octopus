@@ -2936,7 +2936,7 @@ function makeCanvas(pane, { inspector, tools }, id, getP, hooks = {}) {
 
   // "Play the cut": jump over the parts the locked cut removes.
   let cutOn = false;
-  const cutName = (cut) => (cut?.state === 'changed' ? 'edited cut' : cut?.state === 'rough' ? 'rough cut' : 'locked cut');
+  const cutName = (cut) => (cut?.state === 'changed' || cut?.state === 'unlocked' ? 'edited cut' : cut?.state === 'rough' ? 'rough cut' : 'locked cut');
   function refreshCutToggle() {
     const cut = getP().export.cut;
     const w = $('#cutWrap', wrap);

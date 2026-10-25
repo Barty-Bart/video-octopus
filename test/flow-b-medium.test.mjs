@@ -160,3 +160,78 @@ test('B1: a step whose result is in the window’s files gets Undo (one level); 
   // The page names the step on the quick reply.
   assert.match(src('web/app.js'), /undo\.step \? `Undo \$\{undo\.step\}`/);
 });
+
+// ---------- B3: a locked cut looks locked ----------
+function cutFixture(id) {
+  const dir = P(id);
+  write(join(dir, 'project.json'), { name: id, type: 'tutorial' });
+  write(join(dir, 'source', 'take_webcam.mp4'), 'synthetic');
+  write(join(dir, 'work', 'tr', 'words.json'), [[0.5, 0.9, 'Hello'], [1, 1.4, 'there.'], [3, 3.5, 'Bye.']]);
+  write(join(dir, 'work', 'joins.json'), { joins: [{ k: 0, src_out: 1.5, src_in: 2.9, status: 'likely clipped' }], summary: { joins: 1, likely_clipped: 1 } });
+  write(join(dir, 'work', 'edl_fixed.json'), { segments_sec: [[0.4, 1.5], [2.9, 3.6]] });
+  write(join(dir, 'work', 'blocks.json'), { v: 1, marked: true, blocks: [] });
+  return dir;
+}
+const lockStep = async (dir) => (await import('../server/studio.mjs')).pipelineStatus(dir, 'tutorial');
+
+test('B3: a locked cut is read-only; Unlock is explicit, the Lock step is next again, and a new lock holds again', async () => {
+  const { lockState, cutReadOnly, lockHeld, unlockCut, cutReview } = await import('../server/cutreview.mjs');
+  const dir = cutFixture('b3-lock');
+  assert.equal(cutReadOnly(dir), false, 'not locked yet: editable');
+  assert.equal(unlockCut(dir), false, 'nothing to unlock');
+  write(join(dir, 'WORKLOG.md'), '# Worklog\n- 2026-10-25: Cut locked (join-check: 1 joins, 0 clipped)\n');
+  let st = await lockStep(dir);
+  assert.equal(st.steps.find((s) => s.id === 'lock').done, true);
+  assert.equal(cutReadOnly(dir), true);
+  assert.equal(cutReview(dir).locked, true);
+  assert.equal(lockHeld(dir), true);
+
+  assert.equal(unlockCut(dir), true);
+  assert.deepEqual(lockState(dir), { locked: true, changed: false, unlocked: true });
+  assert.equal(cutReadOnly(dir), false);
+  assert.equal(lockHeld(dir), false, 'learning: planning and building wait for the next lock');
+  st = await lockStep(dir);
+  const lock = st.steps.find((s) => s.id === 'lock');
+  assert.equal(lock.done, false); assert.equal(lock.unlocked, true);
+  assert.equal(st.current, 'lock', 'Lock the cut is the next step again');
+  const log = readFileSync(join(dir, 'WORKLOG.md'), 'utf8');
+  assert.match(log, /Cut unlocked/);
+  assert.equal((log.match(/Cut locked/g) || []).length, 1, '"Cut unlocked" is not counted as a lock');
+  assert.doesNotMatch(log.split('\n').at(-2), /Cut locked/i, 'learning keys on "Cut locked": the unlock line never matches it');
+
+  // Claude locks again: a new "Cut locked" line, read-only again.
+  write(join(dir, 'WORKLOG.md'), `${log}- 2026-10-25: Cut locked (join-check: 1 joins, 0 clipped)\n`);
+  assert.equal(cutReadOnly(dir), true);
+  assert.equal((await lockStep(dir)).steps.find((s) => s.id === 'lock').done, true);
+});
+
+test('B3: while locked the Cut Editor’s save and Scenes’ cut save are refused, and the page knows', async () => {
+  const { cutEditorRoute } = await import('../server/cuteditor.mjs');
+  const { LOCKED_ERROR } = await import('../server/cutreview.mjs');
+  const dir = cutFixture('b3-save');
+  write(join(dir, 'WORKLOG.md'), '- Cut locked (join-check: 1 joins, 0 clipped)\n');
+  let sent = null;
+  const send = (res, code, b) => { sent = { code, b }; };
+  const answered = await cutEditorRoute({ method: 'POST' }, {}, { dir, what: 'save', send, body: async () => ({ segments: [[0.4, 1]], version: 0 }), serveFile: () => {} });
+  assert.equal(answered, true);
+  assert.equal(sent.code, 409); assert.equal(sent.b.locked, true); assert.equal(sent.b.error, LOCKED_ERROR);
+  assert.equal(existsSync(join(dir, 'work/edl_manual.json')), false);
+  // Keep / Cut decisions in the list are refused too (they are edits).
+  const { cutReviewRoute } = await import('../server/cutreview.mjs');
+  await cutReviewRoute({ method: 'POST' }, {}, { dir, action: '/cut-review', send, body: async () => ({ decisions: { c1: 'cut' } }) });
+  assert.equal(sent.code, 409);
+  const idx = src('server/index.mjs');
+  assert.match(idx, /action === '\/cut-save'\) \{\n    if \(cutReadOnly\(dir\)\) return send\(res, 409/);
+  assert.match(idx, /joins: cutReadOnly\(dir\) \? \[\] : joinFlags\(dir\)/, 'no join flags on the canvas timeline while locked');
+  // The editor page: data.json says locked; edits, undo, autosave and saves stop; flagged joins aren't drawn.
+  assert.match(src('server/cuteditor.mjs'), /version: version\(dir, plan\), locked: cutReadOnly\(dir\)/);
+  const page = src('web/cut-editor/index.html');
+  for (const re of [/function cut\(a,b\)\{if\(ro\(\)/, /function restore\(a,b\)\{if\(ro\(\)/, /function razor\(\)\{if\(ro\(\)\)return;/, /async function autoTick\(\)\{if\(!D\|\|autoBusy\|\|RO\)return;/,
+    /async function save\(force,auto\)\{if\(RO\)/, /for\(const j of \(RO\?\[\]:D\.joins\|\|\[\]\)\)/, /if\(d\.locked\)setRO\(true\)/, /Unlock to edit/]) assert.match(page, re);
+  assert.match(src('web/cut-editor/studio.js'), /if\(m\.type==='studio:lock'\)\{setRO\(m\.locked\);return\}/);
+  // The inspector: Unlock to edit, no "Joins to check" while locked.
+  const panel = src('web/cutpanel.js');
+  assert.match(panel, /data-a="unlock">Unlock to edit<\/button>/);
+  assert.match(panel, /\$\{isLocked\(\) \? '' : `<li><i class="sw tri"/);
+  assert.match(panel, /op: 'unlock'/);
+});

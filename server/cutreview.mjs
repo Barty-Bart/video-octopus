@@ -11,7 +11,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { readJSON, writeJSON, mtime } from './util.mjs';
 import { cutPlan } from './cuteditor.mjs';
-import { lockedCut, cutCount, cutChanges } from './studio.mjs';
+import { lockedCut, cutCount, cutChanges, appendWorklog } from './studio.mjs';
 
 export const REVIEW = 'work/cut_review.json';
 const r3 = (x) => Math.round(x * 1000) / 1000;
@@ -215,6 +215,9 @@ function stateOf(it, segs) {
   return gone <= 0.1 * L ? 'kept' : 'mixed';
 }
 const lockLines = (dir) => { try { return (readFileSync(join(dir, 'WORKLOG.md'), 'utf8').match(/Cut locked/g) || []).length; } catch { return 0; } };
+// Unlock to edit (B3): the creator's explicit "Unlock" after a lock, kept in cut_review.json as { at, locks } (the number
+// of "Cut locked" lines then). It holds until the next lock (a new "Cut locked" line); WORKLOG also says "Cut unlocked".
+const unlockedSince = (doc, n) => Boolean(doc?.unlocked) && Number(doc.unlocked.locks) >= n;
 const NOTE = 'Keep / Cut decisions on what Prepare asked about: from the Cut tab\'s list (by "list"), a direct edit there or in Scenes (by "edit"), or left as they were when the cut was locked (by "lock"). Video Octopus keeps this; the cut itself is in the Cut Editor\'s file.';
 // Locking the cut settles what nobody decided: it stays as it is in the locked cut. Once per lock (WORKLOG's
 // "Cut locked" lines): a later Prepare run's new parts wait for the next lock.
@@ -232,10 +235,15 @@ function settleOnLock(dir, data) {
 // Lock step then waits to run again: Claude checks the new joins). Read only (Home asks it of every project): the cut
 // kept at the lock (settleOnLock, the first time the project's view counts after it), else, for a lock it hasn't kept
 // (yet), the cut join-check last checked (work/joins.json).
+// unlocked: the creator pressed Unlock to edit since the last lock (the Lock step waits to run again, editing is allowed).
 export function lockState(dir) {
   const n = lockLines(dir);
-  if (!n) return { locked: false, changed: false };
+  if (!n) return { locked: false, changed: false, unlocked: false };
   const doc = readJSON(join(dir, REVIEW), null), now = cutNow(dir), ref = doc?.lock?.segments;
+  const unlocked = unlockedSince(doc, n);
+  return { ...lockChanged(dir, n, doc, now, ref), unlocked };
+}
+function lockChanged(dir, n, doc, now, ref) {
   if (Array.isArray(ref) && ref.length && (doc.locks || 0) >= n) return { locked: true, changed: now.length > 0 && cutChanges(ref, now).length > 0 };
   // Without it: only the creator's own save (work/edl_manual.json: the Cut tab, Scenes) newer than the lock's join check
   // and not the cut it checked counts as changed (join-check's own fix file, edl_fixed.json, never does).
@@ -245,6 +253,21 @@ export function lockState(dir) {
   const js = j.joins.filter((x) => isNum(x.src_out) && isNum(x.src_in));
   const same = ends.length === js.length && ends.every(([o, i]) => js.some((x) => Math.abs(x.src_out - o) < 0.005 && Math.abs(x.src_in - i) < 0.005));
   return { locked: true, changed: !same };
+}
+
+// The cut is read-only (B3): locked and neither unlocked nor changed since (Claude may still change it from the chat).
+export function cutReadOnly(dir) { const s = lockState(dir); return s.locked && !s.changed && !s.unlocked; }
+// The lock holds for planning and building (learning.mjs): a "Cut locked" line, not unlocked since.
+export function lockHeld(dir) { const s = lockState(dir); return s.locked && !s.unlocked; }
+export const LOCKED_ERROR = 'The cut is locked. Unlock it in the Cut tab to edit it; then lock it again.';
+// Unlock to edit: the Lock step isn't done any more and Lock is the next step again, as after an edit.
+export function unlockCut(dir) {
+  const n = lockLines(dir);
+  if (!n || !cutReadOnly(dir)) return false;
+  const doc = readJSON(join(dir, REVIEW), null) || {};
+  writeJSON(join(dir, REVIEW), { ...doc, v: 1, decisions: doc.decisions || {}, unlocked: { at: new Date().toISOString(), locks: n }, note: NOTE });
+  try { appendWorklog(dir, 'Cut unlocked in the Cut tab, to edit it (Lock the cut again after)'); } catch {}
+  return true;
 }
 
 export function cutReview(dir) {
@@ -259,7 +282,7 @@ export function cutReview(dir) {
   const needs = items.filter((it) => it.group === 'ask' && !it.decision).length;
   const summary = summaryOf(dir, data, needs);
   return { ready: plan.ready, why: plan.why || null, file, segments, duration: data.duration, summary, needs,
-    cuts: data.cuts, joins: data.joins, items };
+    cuts: data.cuts, joins: data.joins, items, locked: cutReadOnly(dir) };
 }
 
 // "Rough cut: 10 cuts, 7 need you": the list's header line, from the same count.
@@ -351,7 +374,11 @@ function decide(dir, patch) {
 export async function cutReviewRoute(req, res, { dir, action, send, body }) {
   if (action !== '/cut-review') return false;
   try {
-    if (req.method === 'POST') decide(dir, (await body(req)).decisions);
+    if (req.method === 'POST') {
+      const b = await body(req);
+      if (b.op === 'unlock') unlockCut(dir);
+      else { if (cutReadOnly(dir)) throw Object.assign(new Error(LOCKED_ERROR), { status: 409 }); decide(dir, b.decisions); }
+    }
     send(res, 200, cutReview(dir));
   } catch (e) { send(res, e.status || 400, { error: e.message }); }
   return true;

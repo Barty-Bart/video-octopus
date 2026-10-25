@@ -50,8 +50,8 @@ export const ago = (ms) => {
 export const clock = (t) => { t = Math.max(0, t || 0); const m = Math.floor(t / 60); const s = (t % 60).toFixed(1).padStart(4, '0'); return `${m}:${s}`; };
 export const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 // The cut's name where the creator reads it (Export → Length, the Cut tab's files): the locked cut only while the Lock
-// holds (server/export.mjs cut.state: locked | changed | rough).
-export const cutWord = (cut) => (cut?.state === 'changed' ? 'Cut · changed after the lock, joins not checked' : cut?.state === 'rough' ? 'Rough cut' : 'Locked cut');
+// holds (server/export.mjs cut.state: locked | changed | unlocked | rough).
+export const cutWord = (cut) => (cut?.state === 'changed' ? 'Cut · changed after the lock, joins not checked' : cut?.state === 'unlocked' ? 'Cut · unlocked to edit' : cut?.state === 'rough' ? 'Rough cut' : 'Locked cut');
 
 // The agents a chat can run on, by the names people know them by (the server's ENGINES map has the same).
 export const ENGINES = { claude: 'Claude Code', codex: 'Codex', pi: 'pi' };

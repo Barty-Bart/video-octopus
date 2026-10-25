@@ -40,6 +40,7 @@ body.hidecut .w.cut{display:none}
 #nl{margin:8px 0 0;padding-left:20px;max-height:180px;overflow:auto;font-size:13px}#nl li{padding:3px 0;cursor:pointer}#nl li b{font-family:ui-monospace,Menlo,monospace;font-weight:500;color:#ff5a1f;margin-right:6px}#nl li .x{margin-left:8px;opacity:.5;cursor:pointer}
 #spd{font:inherit;background:transparent;color:inherit;border:1px solid #555;border-radius:4px}
 /* A phone-width window: the picture above, the transcript under it at full width (not one word per line), one scroll. */
+#lockBar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:0 14px 10px;padding:8px 12px;border-radius:10px;background:rgba(255,255,255,.06);font-size:13px}#lockBar[hidden]{display:none}#lockBar button{margin-left:auto}body.ro .w{cursor:default}body.ro #bUndo,body.ro #bSave,body.ro #autoState{display:none}
 @media(max-width:640px){main{flex-direction:column;overflow:auto}#left{width:auto;min-width:0;border-right:0;border-bottom:1px solid var(--line);flex:none}#tx{flex:none;overflow:visible;padding:14px 16px}}
 </style></head><body>
 <header>
@@ -78,6 +79,15 @@ let D,kept=[],undo=[],sel=null,view=[0,8],dirty=false,words=[];
 // Colours and type for the waveform and the fine-trim pop-up: the page's own dark look, or Video Octopus's light one
 // (studio.js, loaded with studio.css only for ?theme=studio).
 const STUDIO=document.documentElement.classList.contains('studio')&&typeof studioSetup==='function';
+// A locked cut is read-only (Video Octopus B3): data.json says locked, and the Cut tab tells the page when it unlocks or
+// locks again (studio:lock). Listening, selecting and comments work; edits and saves don't, and flagged joins are hidden.
+let RO=false;const ro=()=>{if(!RO)return false;toast('The cut is locked · Unlock to edit');return true};
+function setRO(on){on=!!on;if(on===RO&&document.getElementById('lockBar'))return;RO=on;undo=[];redo=[];if(D)autoLast=autoSnap=JSON.stringify(kept);
+ document.body.classList.toggle('ro',RO);let b=document.getElementById('lockBar');
+ if(RO&&!b){b=document.createElement('div');b.id='lockBar';b.setAttribute('role','status');
+  b.innerHTML='<span class="lk-ic" aria-hidden="true"></span><b>Cut locked</b><span class="lk-sub"> · read-only: the scene plan and the build use this cut</span>'+(STUDIO&&parent!==window?'<button type="button" id="bUnlock">Unlock to edit</button>':'<span class="lk-sub"> · unlock it in Video Octopus to edit</span>');
+  document.querySelector('main').before(b);const u=document.getElementById('bUnlock');if(u)u.onclick=()=>toStudio({type:'studio:cut-unlock'})}
+ if(b)b.hidden=!RO;if(D){draw();refresh()}}
 const PAL=STUDIO?PAL_STUDIO
 :{ruler:'#8d8b84',mono:'ui-monospace,Menlo,monospace',sans:'-apple-system,system-ui,sans-serif',sans2:'-apple-system,system-ui',
  join:'rgba(248,81,73,.7)',hoverSide:'rgba(255,90,31,.16)',acc:'#ff5a1f',tip:'rgba(20,20,20,.85)',tipInk:'#fff',cutFill:'rgba(248,81,73,.13)',cutHatch:'rgba(248,81,73,.25)',cutEdge:'#f85149',clip:'#f85149',check:'#e0a84a',
@@ -105,9 +115,9 @@ const edTime=t=>{let d=0;for(const [a,b] of kept){if(t<a)break;d+=Math.min(t,b)-
 // Kept pieces under 20 ms that an edit leaves are dropped; the ones the cut file already has stay (KEEP0).
 let KEEP0=new Set();const pk=(a,b)=>a.toFixed(4)+','+b.toFixed(4);
 function norm(L){L=L.filter(([a,b])=>b-a>0.02||(b>a&&KEEP0.has(pk(a,b)))).sort((x,y)=>x[0]-y[0]);const o=[];for(const s of L){if(o.length&&s[0]<=o[o.length-1][1]+1e-4)o[o.length-1][1]=Math.max(o[o.length-1][1],s[1]);else o.push([...s])}return o}
-function razor(){const t=v.currentTime;const i=kept.findIndex(([a,b])=>t>a+.05&&t<b-.05);if(i<0){toast('Put the playhead inside kept audio to split');return}push();const [a,b]=kept[i];kept.splice(i,1,[a,t-.0005],[t+.0005,b]);refresh();toast('Split at '+fmt(edTime(t))+': drag either handle to open or close')}
+function razor(){if(ro())return;const t=v.currentTime;const i=kept.findIndex(([a,b])=>t>a+.05&&t<b-.05);if(i<0){toast('Put the playhead inside kept audio to split');return}push();const [a,b]=kept[i];kept.splice(i,1,[a,t-.0005],[t+.0005,b]);refresh();toast('Split at '+fmt(edTime(t))+': drag either handle to open or close')}
 // Tidy (Edit menu): only when asked. The cut always opens exactly as its file has it, however short a cut is.
-function tidy(silent){const before=kept.length;const hasWord=(a,b)=>words.some(w=>{const m=(w[0]+w[1])/2;return m>=a&&m<b});
+function tidy(silent){if(ro())return;const before=kept.length;const hasWord=(a,b)=>words.some(w=>{const m=(w[0]+w[1])/2;return m>=a&&m<b});
  let L=kept.filter(([a,b])=>b-a>=0.3||hasWord(a,b));const o=[];for(const s of L){if(o.length&&s[0]-o[o.length-1][1]<0.08)o[o.length-1][1]=Math.max(o[o.length-1][1],s[1]);else o.push([...s])}
  const n=before-o.length-(0);if(n>0){push();kept=o;refresh();if(!silent||n)toast(`Tidied ${n} micro-cuts and slivers (Undo to bring back)`)}else if(!silent)toast('Nothing to tidy')}
 let redo=[];function push(){undo.push(JSON.stringify(kept));if(undo.length>200)undo.shift();redo=[];dirty=true}
@@ -128,8 +138,8 @@ function safeEdges(a,b){const i=words.findIndex(w=>Math.abs(w[0]-a)<1e-3),j=word
 // A cut never leaves a sliver under SLIVER s with no word in it at either edge (a word delete from the take's first
 // word would keep the 77 ms before it): it goes with the cut, as join-check drops slivers under 0.12 s.
 const SLIVER=.12,sliver=(p,q)=>q-p<SLIVER&&!words.some(w=>{const m=(w[0]+w[1])/2;return m>=p&&m<q});
-function cut(a,b){if(b-a<.01)return;push();if($('snap').checked)[a,b]=safeEdges(a,b);setTimeout(()=>preview(b),30);const o=[];for(const [p,q] of kept){if(b<=p||a>=q){o.push([p,q]);continue}if(a>p&&!sliver(p,a))o.push([p,a]);if(b<q&&!sliver(b,q))o.push([b,q])}kept=norm(o);sel=null;refresh();toast(`Cut ${(b-a).toFixed(2)} s`)}
-function restore(a,b){if(b-a<.01)return;push();kept=norm(kept.concat([[a,b]]));sel=null;refresh();toast(`Restored ${(b-a).toFixed(2)} s`)}
+function cut(a,b){if(ro()||b-a<.01)return;push();if($('snap').checked)[a,b]=safeEdges(a,b);setTimeout(()=>preview(b),30);const o=[];for(const [p,q] of kept){if(b<=p||a>=q){o.push([p,q]);continue}if(a>p&&!sliver(p,a))o.push([p,a]);if(b<q&&!sliver(b,q))o.push([b,q])}kept=norm(o);sel=null;refresh();toast(`Cut ${(b-a).toFixed(2)} s`)}
+function restore(a,b){if(ro()||b-a<.01)return;push();kept=norm(kept.concat([[a,b]]));sel=null;refresh();toast(`Restored ${(b-a).toFixed(2)} s`)}
 function refresh(){$('len').textContent=fmt(edLen());const pd=joinDrag&&joinDrag.pend&&optHL()?joinDrag.pend:null;document.querySelectorAll('.w').forEach(el=>{const w=words[+el.dataset.i],m=(w[0]+w[1])/2;el.classList.toggle('cut',!inKept(m));
  el.classList.toggle('pt',!!pd&&pd.kind==='trim'&&m>=pd.a&&m<pd.b);el.classList.toggle('pb',!!pd&&pd.kind==='back'&&m>=pd.a&&m<pd.b);
  el.classList.toggle('sel',!!sel&&w[1]>sel[0]&&w[0]<sel[1])});draw();if(STUDIO)studioRefresh()}
@@ -171,7 +181,7 @@ function draw(){if(!D)return;cum();const W=cv.width,H=cv.height,dp=devicePixelRa
   g.save();g.beginPath();g.rect(x0,top-8*dp,x1-x0,H-top-18*dp);g.clip();g.strokeStyle=PAL.cutHatch;g.lineWidth=1*dp;for(let k=x0-H;k<x1;k+=10*dp){g.beginPath();g.moveTo(k,H);g.lineTo(k+H,0);g.stroke()}g.restore();
   g.fillStyle=PAL.cutEdge;g.fillRect(x0,top-8*dp,1.5*dp,H-top-18*dp);g.fillRect(x1-1.5*dp,top-8*dp,1.5*dp,H-top-18*dp)}
  // flagged joins from join-check (red = likely clipped, amber = check)
- for(const j of (D.joins||[])){if(j.status==='ok')continue;const c=j.status==='likely clipped'?PAL.clip:PAL.check;for(const t of [j.src_out,j.src_in]){if(t<view[0]||t>view[1])continue;const x=X(t);g.fillStyle=c;g.globalAlpha=.45;g.fillRect(x-.5*dp,top-8*dp,1*dp,H-top-18*dp);g.globalAlpha=1;g.beginPath();g.moveTo(x,H-36*dp);g.lineTo(x-6*dp,H-25*dp);g.lineTo(x+6*dp,H-25*dp);g.closePath();g.fill()}}
+ for(const j of (RO?[]:D.joins||[])){if(j.status==='ok')continue;const c=j.status==='likely clipped'?PAL.clip:PAL.check;for(const t of [j.src_out,j.src_in]){if(t<view[0]||t>view[1])continue;const x=X(t);g.fillStyle=c;g.globalAlpha=.45;g.fillRect(x-.5*dp,top-8*dp,1*dp,H-top-18*dp);g.globalAlpha=1;g.beginPath();g.moveTo(x,H-36*dp);g.lineTo(x-6*dp,H-25*dp);g.lineTo(x+6*dp,H-25*dp);g.closePath();g.fill()}}
  // waveform
  const p=D.pps,per=(view[1]-view[0])*p/W;
  for(let x=0;x<W;x+=dp){const e=view[0]+x/W*(view[1]-view[0]);if(C&&e>edLen())break;const a=Math.floor(srcOf(e)*p),b=Math.max(a+1,Math.floor(a+per*dp));let pk=0,rm=0;for(let i=a;i<b&&i<D.peaks.length;i++){pk=Math.max(pk,D.peaks[i]);rm=Math.max(rm,D.rms[i])}
@@ -197,7 +207,7 @@ function draw(){if(!D)return;cum();const W=cv.width,H=cv.height,dp=devicePixelRa
  for(const n of (NOTES||[])){if(C&&!inKept(n.t)){}const x=X(n.t);if(x<0||x>W)continue;const mine=!n.text.startsWith('Claude:');g.fillStyle=mine?PAL.flagMine:PAL.flagOther;g.beginPath();g.moveTo(x,H-22*dp);g.lineTo(x+7*dp,H-26*dp);g.lineTo(x,H-30*dp);g.closePath();g.fill();g.fillRect(x-.5*dp,H-30*dp,1*dp,10*dp)}
  // playhead
  const xp=X(v.currentTime);g.fillStyle=PAL.head;g.fillRect(xp-1*dp,0,2*dp,H-18*dp)}
-function nextFlag(){const L=(D.joins||[]).filter(j=>j.status!=='ok').sort((a,b)=>a.src_out-b.src_out);if(!L.length){toast('No flagged joins');return}
+function nextFlag(){const L=(RO?[]:D.joins||[]).filter(j=>j.status!=='ok').sort((a,b)=>a.src_out-b.src_out);if(!L.length){toast('No flagged joins');return}
  const j=L.find(j=>j.src_out>v.currentTime+.3)||L[0];v.currentTime=Math.max(0,j.src_out-1.2);centre(j.src_out);toast(`Join #${j.rank} · ${j.status}`);play()}
 let dragT=null;
 // drag the edge of a kept section on the waveform to trim it (outward restores, inward cuts)
@@ -208,12 +218,12 @@ let wordDrag=null,joinDrag=null,selEdge=false,hover=null,bubble=null;
 function wordAt(t){let best=null,bd=1e9;for(let i=0;i<words.length;i++){const w=words[i];if(!inKept((w[0]+w[1])/2))continue;const d=t<w[0]?w[0]-t:(t>w[1]?t-w[1]:0);if(d<bd){bd=d;best=i}if(w[0]>t+5)break}return best}
 function joinAt(px){if(!coll())return null;const dp=devicePixelRatio||1;let best=null;for(let i=1;i<kept.length;i++){const x=XA(CUM[i]);const d=Math.abs(x-px);if(d<=12*dp&&(!best||d<best.d))best={i,d,side:px<x?'L':'R'}}return best}
 cv.addEventListener('mousedown',e=>{const dp=devicePixelRatio||1,r=cv.getBoundingClientRect(),px=(e.clientX-r.left)*dp,py=(e.clientY-r.top)*dp;
- if(coll()){const top=74*dp;const j=joinAt(px);if(j&&py>top-56*dp){push();const i=j.i;joinDrag={i,x:px,end:kept[i-1][1],start:kept[i][0],shift:e.shiftKey?j.side!=='R':j.side==='R',moved:false,pend:null};e.preventDefault();return}
+ if(coll()){const top=74*dp;const j=joinAt(px);if(j&&py>top-56*dp&&!RO){push();const i=j.i;joinDrag={i,x:px,end:kept[i-1][1],start:kept[i][0],shift:e.shiftKey?j.side!=='R':j.side==='R',moved:false,pend:null};e.preventDefault();return}
   if(sel){const a=X(sel[0]),b=X(sel[1]);if(Math.abs(px-a)<=8*dp||Math.abs(px-b)<=8*dp){dragT=Math.abs(px-a)<Math.abs(px-b)?sel[1]:sel[0];selEdge=true;e.preventDefault();return}}
-  if(py>=top-50*dp&&py<=top-14*dp){const i=wordAt(T(px));if(i!==null){push();bubble={i,x:px,snap:JSON.stringify(kept),moved:false};sel=[words[i][0],words[i][1]];v.currentTime=words[i][0];refresh();e.preventDefault();return}}}
+  if(py>=top-50*dp&&py<=top-14*dp){const i=wordAt(T(px));if(i!==null&&!RO){push();bubble={i,x:px,snap:JSON.stringify(kept),moved:false};sel=[words[i][0],words[i][1]];v.currentTime=words[i][0];refresh();e.preventDefault();return}}}
 });
 cv.addEventListener('mousedown',e=>{if(wordDrag!==null||joinDrag||selEdge||bubble)return;const r=cv.getBoundingClientRect(),t=T((e.clientX-r.left)*(devicePixelRatio||1));
- const h=coll()?null:edgeAt(t);if(h&&!e.shiftKey){edgeDrag={...h,t0:kept[h.i][h.w]};edgePushed=false;e.preventDefault();return}
+ const h=coll()?null:edgeAt(t);if(h&&!e.shiftKey&&!RO){edgeDrag={...h,t0:kept[h.i][h.w]};edgePushed=false;e.preventDefault();return}
  if(e.shiftKey&&sel){dragT=Math.abs(t-sel[0])<Math.abs(t-sel[1])?sel[1]:sel[0]}else dragT=t;sel=[Math.min(dragT,t),Math.max(dragT,t)];v.currentTime=t;refresh()});
 cv.addEventListener('mousemove',e=>{const dp=devicePixelRatio||1,r0=cv.getBoundingClientRect(),px=(e.clientX-r0.left)*dp;
  if(bubble){const ds=(px-bubble.x)/cv.width*(view[1]-view[0]);if(Math.abs(px-bubble.x)>3*dp)bubble.moved=true;if(!bubble.moved)return;
@@ -260,7 +270,7 @@ function openLens(i){if(lens&&lens.i!==i)closeLens();if(i<1||i>=kept.length)retu
 function closeLens(){if(!lens)return;const L=lens;lens=null;$('lensP').hidden=true;scrubEnd();
  const E=kept[L.i-1][1],S=kept[L.i][0],dE=E-L.E0,dS=L.S0-S;kept=norm(kept);refresh();
  if(L.pushed){const part=(d,w)=>Math.abs(d)<.005?'':`${w} ${d>0?'+':'−'}${Math.abs(d).toFixed(2)} s`;toast(['Fine trim',part(dE,'· part before'),part(dS,'· part after')].filter(Boolean).join(' '));preview(S)}}
-function lensSet(row,s){const L=lens,i=L.i;if(!L.pushed){push();L.pushed=true}
+function lensSet(row,s){if(ro())return;const L=lens,i=L.i;if(!L.pushed){push();L.pushed=true}
  if(row===1){const E=Math.min(kept[i][0]-.02,Math.max(kept[i-1][0]+.02,s));kept[i-1][1]=E;refresh();scrubTo(E,'out',kept[i][0],E-L.E0)}
  else{const S=Math.max(kept[i-1][1]+.02,Math.min(kept[i][1]-.02,s));kept[i][0]=S;refresh();scrubTo(S,'in',kept[i-1][1],L.S0-S)}
  drawLens()}
@@ -331,7 +341,8 @@ async function addNote(){const text=$('nt').value.trim();if(!text)return;const t
 function hearJoin(){const t=v.currentTime;let best=null;for(let i=1;i<kept.length;i++){const j=kept[i][0];if(best===null||Math.abs(j-t)<Math.abs(best-t))best=j}if(best===null)return;
  const i=kept.findIndex(s=>s[0]===best),pre=kept[i-1];const et=edTime(best);let start=et-1.6;let d=0,st=pre[1]-1.6;for(const [a,b] of kept){if(d+(b-a)>=start){st=a+(start-d);break}d+=b-a}
  v.currentTime=Math.max(0,st);joinStop=et+1.6;rawStop=null;centre(best);v.play()}
-async function save(force,auto){const r=await post('save',{segments:kept,version:D.version,force:!!force});const j=await r.json();
+async function save(force,auto){if(RO){if(!auto)ro();return}const r=await post('save',{segments:kept,version:D.version,force:!!force});const j=await r.json();
+ if(j&&j.locked){setRO(true);ro();return}
  if(r.status===409&&auto){autoConflict();return}
  if(r.status===409){if(confirm('Claude changed this edit after you opened the page.\n\nOK = reload and get Claude\'s version (your unsaved changes here are lost)\nCancel = keep working (Save stays blocked)')){dirty=false;location.reload()}else if(confirm('Overwrite Claude\'s version with yours?'))save(true);return}
  D.version=j.version;dirty=false;tellStudio();if(AUTOSAVE)autoSaved();if(!auto)toast(`Saved · ${fmt(j.length)}. Tell Claude “saved”.`)}
@@ -346,7 +357,7 @@ function autoShow(t,cls){const e=$('autoState');if(e){e.textContent=t;e.classNam
 function autoAgo(){if(!autoAt||autoStop||autoBusy||autoErr)return;const s=(Date.now()-autoAt)/1000;autoShow('Saved · '+(s<60?'just now':s<3600?Math.round(s/60)+' min ago':new Date(autoAt).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})),'ok')}
 function autoSaved(){autoLast=JSON.stringify(kept);autoAt=Date.now();autoStop=false;autoErr=false;$('banner').style.display='none';autoAgo()}
 function autoConflict(){autoStop=true;$('banner').style.display='block';autoShow('Not saved: Claude changed this edit','bad')}
-async function autoTick(){if(!D||autoBusy)return;const k=JSON.stringify(kept);
+async function autoTick(){if(!D||autoBusy||RO)return;const k=JSON.stringify(kept);
  if(autoLast===null){autoLast=autoSnap=k;return}               // the cut as opened: not a change
  if(k!==autoSnap){autoSnap=k;autoChanged=Date.now()}
  if(k===autoLast){dirty=false;return}
@@ -358,9 +369,9 @@ if(AUTOSAVE){
  const css=document.createElement('style');css.textContent='#autoState.ok b,#autoState.ok{color:#7ee2a8}#autoState.bad{color:#f85149}';document.head.append(css);
  autoShow('Autosave on');setInterval(autoTick,250);setInterval(autoAgo,15000);
  // Leaving with a change not saved yet (the tab or the project closes): send it on the way out.
- addEventListener('pagehide',()=>{if(D&&!autoStop&&autoLast!==null&&JSON.stringify(kept)!==autoLast)post('save',{segments:kept,version:D.version,force:false},{keepalive:true}).catch(()=>{})});
+ addEventListener('pagehide',()=>{if(D&&!RO&&!autoStop&&autoLast!==null&&JSON.stringify(kept)!==autoLast)post('save',{segments:kept,version:D.version,force:false},{keepalive:true}).catch(()=>{})});
 }
-$('bCut').onclick=()=>sel&&cut(...sel);$('bRest').onclick=()=>sel&&restore(...sel);$('bUndo').onclick=()=>{if(undo.length){redo.push(JSON.stringify(kept));kept=JSON.parse(undo.pop());refresh();toast('Undone')}};
+$('bCut').onclick=()=>sel&&cut(...sel);$('bRest').onclick=()=>sel&&restore(...sel);$('bUndo').onclick=()=>{if(ro())return;if(undo.length){redo.push(JSON.stringify(kept));kept=JSON.parse(undo.pop());refresh();toast('Undone')}};
 $('coll').onchange=()=>{const w=view[1]-view[0],c=axisOf(v.currentTime);view=[Math.max(0,c-w*.3),0];view[1]=view[0]+w;$('coll').blur();draw()};
 $('bJoin').onclick=hearJoin;$('bTidy').onclick=()=>tidy(false);$('bNote').onclick=addNote;$('spd').onchange=()=>{v.playbackRate=+$('spd').value;$('spd').blur()};
 $('nt').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();addNote()}else if(e.key==='Escape'){$('nt').blur()}e.stopPropagation()});
@@ -370,7 +381,7 @@ addEventListener('keydown',e=>{if(e.target.tagName==='INPUT'&&e.target.type!=='c
  else if(k==='Delete'||k==='Backspace'){e.preventDefault();sel&&cut(...sel)}
  else if(k==='r'||k==='R'){sel&&restore(...sel)}
  else if(k==='j'||k==='J'){hearJoin()}
- else if((e.metaKey||e.ctrlKey)&&e.shiftKey&&(k==='z'||k==='Z')){e.preventDefault();if(redo.length){undo.push(JSON.stringify(kept));kept=JSON.parse(redo.pop());refresh();toast('Redone')}}
+ else if((e.metaKey||e.ctrlKey)&&e.shiftKey&&(k==='z'||k==='Z')){e.preventDefault();if(!ro()&&redo.length){undo.push(JSON.stringify(kept));kept=JSON.parse(redo.pop());refresh();toast('Redone')}}
  else if((e.metaKey||e.ctrlKey)&&k==='z'){e.preventDefault();$('bUndo').onclick()}
  else if(k===']'||k==='['){const L=NOTES.map(n=>n.t).sort((a,b)=>a-b);const t=v.currentTime;const n=k===']'?L.find(x=>x>t+.3):[...L].reverse().find(x=>x<t-.3);if(n!==undefined){v.currentTime=n;centre(n);const nn=NOTES.find(x=>x.t===n);toast(nn.text.slice(0,90))}}
  else if((e.metaKey||e.ctrlKey)&&k==='s'){e.preventDefault();save()}
@@ -385,7 +396,7 @@ addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue='
 if(STUDIO)studioSetup(); // studio.js: the header menus and the line to Video Octopus's Cut inspector
 addEventListener('resize',fit);
 fetch(API+'data.json').then(r=>r.ok?r.json():r.json().then(j=>{throw new Error(j.error||r.status)})).then(d=>{D=d;words=d.words;KEEP0=new Set(d.segments.filter(([a,b])=>b>a).map(([a,b])=>pk(+a,+b)));kept=norm(d.segments.map(([a,b])=>[+a,+b]));$('src').textContent=d.source+(d.saved?' · your saved edit':'');$('dur').textContent=fmt(d.duration);
- buildTx();fit();setTimeout(()=>{const el=[...document.querySelectorAll('.w')].find(e=>!e.classList.contains('cut'));el&&el.scrollIntoView({block:'start'})},50);const f=kept[0]?kept[0][0]:0;view=coll()?[0,8]:[Math.max(0,f-1),Math.max(0,f-1)+8];v.currentTime=f;refresh();BASE=kept.map(([a,b])=>[+a.toFixed(3),+b.toFixed(3)]);autoLast=autoSnap=JSON.stringify(kept);requestAnimationFrame(loop);if(STUDIO)studioReady()})
+ buildTx();fit();setTimeout(()=>{const el=[...document.querySelectorAll('.w')].find(e=>!e.classList.contains('cut'));el&&el.scrollIntoView({block:'start'})},50);const f=kept[0]?kept[0][0]:0;view=coll()?[0,8]:[Math.max(0,f-1),Math.max(0,f-1)+8];v.currentTime=f;refresh();BASE=kept.map(([a,b])=>[+a.toFixed(3),+b.toFixed(3)]);autoLast=autoSnap=JSON.stringify(kept);requestAnimationFrame(loop);if(d.locked)setRO(true);if(STUDIO)studioReady()})
  .catch(e=>{$('tx').textContent=`The cut couldn’t open: ${e.message}`});
 
 // Mirror the video into a canvas: some embedded browsers decode frames but never paint the <video> layer.

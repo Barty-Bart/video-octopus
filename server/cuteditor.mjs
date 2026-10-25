@@ -13,6 +13,7 @@ import { existsSync, statSync, realpathSync, writeFileSync } from 'node:fs';
 import { join, dirname, basename, extname } from 'node:path';
 import { readJSON, writeJSON, studioTool, childPathEnv } from './util.mjs';
 import { roles, proxyName, isAudio } from './studio.mjs';
+import { cutReadOnly, LOCKED_ERROR } from './cutreview.mjs'; // (read at call time: cutreview.mjs imports this module too)
 
 const first = (dir, list) => list.find((f) => existsSync(join(dir, f))) || null;
 
@@ -161,7 +162,7 @@ export async function cutData(dir) {
   const edl = readJSON(existsSync(out) ? out : join(dir, plan.edl), {});
   const joins = plan.joins ? readJSON(join(dir, plan.joins), {})?.joins || [] : [];
   const rest = JSON.stringify({ words: readJSON(join(dir, plan.words), []), segments: edl?.segments_sec || [], source: basename(video), out,
-    saved: existsSync(out), joins, version: version(dir, plan) });
+    saved: existsSync(out), joins, version: version(dir, plan), locked: cutReadOnly(dir) });
   return `{"duration":${w.duration},"fps":${w.fps},"pps":${PPS},${w.json},${rest.slice(1)}`;
 }
 
@@ -201,6 +202,8 @@ export async function cutEditorRoute(req, res, { dir, what, send, body, serveFil
     return send(res, 200, { ok: true }), true;
   }
   if (what === 'save') {
+    // A locked cut is read-only (B3): Unlock to edit in the Cut tab first. The page knows (data.json locked) and doesn't try.
+    if (cutReadOnly(dir)) return send(res, 409, { ok: false, locked: true, error: LOCKED_ERROR }), true;
     if (!b.force && (b.version == null || Math.abs(Number(b.version) - version(dir, plan)) > 1e-6)) return send(res, 409, { ok: false, conflict: true }), true;
     const segs = (Array.isArray(b.segments) ? b.segments : []).filter((s) => Array.isArray(s) && Number(s[1]) - Number(s[0]) > 0.02).map(([s, e]) => [round(s, 4), round(e, 4)]);
     if (segs.some((s) => !s.every(Number.isFinite))) return send(res, 400, { error: 'Bad segments.' }), true;
