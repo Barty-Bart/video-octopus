@@ -295,7 +295,7 @@ export function makeScenes({ pane, inspector, id, getP, onCount, onScenes, histo
       if (!scene(sel)) sel = D.scenes[0].id;
       preview.key = '';
     }
-    onCount?.(D.ready ? { count: D.scenes.length, open: openItems().length + newMoveList().length, done: D.notes.filter((n) => n.status === 'done' || n.status === 'question').length } : null);
+    onCount?.(D.ready ? { count: D.scenes.length, open: packageCount(), done: D.notes.filter((n) => n.status === 'done' || n.status === 'question').length } : null);
     onScenes?.(D.ready ? D : null);
     return true;
   }
@@ -1204,8 +1204,15 @@ export function makeScenes({ pane, inspector, id, getP, onCount, onScenes, histo
     const on = sc1 ? `, all on scene ${sc1.n}` : [where.size && `${where.size} scene${where.size > 1 ? 's' : ''}`, whole && 'the whole video'].filter(Boolean).join(' and ');
     return `${n} waiting: ${[ch && `${ch} change${ch > 1 ? 's' : ''}`, no && `${no} note${no > 1 ? 's' : ''}`, moves.length && `${moves.length} move${moves.length > 1 ? 's' : ''}`].filter(Boolean).join(', ')}${sc1 ? on : on ? ` · ${on}` : ''}`;
   }
+  // The package's count as this panel shows it goes to the app at once (onCount), so the dock and the stage list say the
+  // same number as "Save changes → Claude · N" here, not the last refresh's (A4).
+  function tellOpen(n) {
+    if (!D?.ready || getP()?.scenes?.open === n) return;
+    onCount?.({ count: D.scenes.length, open: n, done: D.notes.filter((x) => x.status === 'done' || x.status === 'question').length });
+  }
   function sendBar() {
     const n = packageCount();
+    tellOpen(n);
     return `<div class="s2-send">${n ? `<p class="s2-sum">${summaryLine()}</p>` : ''}<button class="btn accent wide" data-a="send"${n ? '' : ' disabled'}>${ICON.claude}${n ? `Save changes → Claude · ${n}` : 'Nothing waiting for Claude'}</button>
       ${n ? '<button class="btn ghost small wide" data-a="pkg">See what\'s in it</button>' : ''}</div>`;
   }

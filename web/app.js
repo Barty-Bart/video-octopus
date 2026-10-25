@@ -82,14 +82,14 @@ async function loadStatus(refresh = false) {
 function agentView(st) {
   const a = st.agent, v = a.version ? ` ${a.version}` : '', model = a.model ? ` · ${a.model}` : '';
   if (!a.installed) {
-    const how = `Install it in a terminal with <code>${esc(a.install)}</code>${a.login ? `, run <code>${esc(a.login)}</code> once to sign in` : ''}, then reload.`;
+    const how = `Install it in a terminal with <code>${esc(a.install)}</code>${a.login ? `, run <code>${esc(a.login)}</code> once to sign in` : ''}, then press Check again.`;
     return { ok: false, chip: `${a.name} not installed`, sub: 'Not installed',
       note: `<div class="notice">${a.error ? esc(a.error) : `${esc(a.name)} isn't on this computer yet. ${how}`}</div>` };
   }
   if (a.signedIn === false) {
     const account = { claude: 'Claude account', codex: 'ChatGPT account' }[a.engine] || 'account';
     return { ok: false, chip: `${a.name}: not signed in`, sub: 'Not signed in',
-      note: `<div class="notice">${esc(a.name)} is installed but not signed in. Open Terminal, run <code>${esc(a.login)}</code> and sign in with your ${account}, then reload. Video Octopus uses that sign-in; it never asks for your password.</div>` };
+      note: `<div class="notice">${esc(a.name)} is installed but not signed in. Open Terminal, run <code>${esc(a.login)}</code> and sign in with your ${account}, then press Check again. Video Octopus uses that sign-in; it never asks for your password.</div>` };
   }
   // Signed in to a plan (Claude's, ChatGPT's).
   if (a.signedIn) return { ok: true, chip: `${a.name}${v}${a.plan ? ` · ${a.plan}` : ''}${model}`, sub: `Signed in${a.plan ? ` · ${a.plan}` : ''}${model}`, note: '' };
@@ -97,6 +97,24 @@ function agentView(st) {
   const missing = a.needsModel && !a.model;
   return { ok: !missing, chip: `${a.name}${v} · ${a.source}${model}`, note: '',
     sub: `${a.source}${missing ? ': pick a model' : model}${a.engine === 'claude' ? ' · not your Claude plan' : ''}` };
+}
+// What stops the app from working fully, on Projects and in the editor (A13), each with its one fix: the agent (not
+// installed or not signed in: Check again, after the Terminal step) and ffmpeg (Setup → Tools installs it).
+function systemNotes(st = STATUS) {
+  if (!st) return '';
+  const a = agentView(st);
+  const agent = a.note ? a.note.replace(/<\/div>$/, ' <button type="button" class="btn small sys-check" data-sys="check">Check again</button></div>') : '';
+  const ff = st.ffmpeg === false ? '<div class="notice">ffmpeg isn’t on this computer, so Export can’t make videos or sound files yet. <a href="#/setup">Setup → Tools</a> installs it.</div>' : '';
+  return agent + ff;
+}
+function wireSystemNotes(box, repaint) {
+  box?.querySelectorAll('[data-sys=check]').forEach((b) => (b.onclick = async () => {
+    b.disabled = true; b.textContent = 'Checking…';
+    try { await loadStatus(true); } catch (e) { toast(e.message); }
+    const ok = agentView(STATUS).ok;
+    if (ok) toast(`${STATUS.agent?.name || 'The agent'} is ready.`);
+    repaint();
+  }));
 }
 // What the rail's Ask Claude button says about the agent (its tooltip, and a warning dot when it isn't ready).
 function railAgent(a = null) {
@@ -217,9 +235,11 @@ async function home(route, nav = null) {
   if (view === 'projects') {
     setTypeNames(STATUS.formats);
     page = renderProjects(main, {
-      projects, takes, counts, query: route.query, notice: agent.note, newVideo,
+      projects, takes, counts, query: route.query, notice: `<div class="sys-notes">${systemNotes()}</div>`, newVideo,
       recover: async (u) => { try { await rec.recover(u.project, u.take); location.hash = `#/p/${encodeURIComponent(u.project)}`; } catch (e) { toast(e.message); } },
     });
+    const paintNotes = () => { const box = $('.sys-notes', main); if (!box) return; box.innerHTML = systemNotes(); wireSystemNotes(box, paintNotes); };
+    wireSystemNotes($('.sys-notes', main), paintNotes);
   }
   if (view === 'recordings') renderRecordings(main, takes);
   if (view === 'scheduled') page = await renderSchedules(main, nav).catch((e) => { main.replaceChildren(h(`<div class="home-wrap"><div class="notice">${esc(e.message)}</div></div>`)); return null; });
@@ -389,6 +409,7 @@ function clearBar() {
 async function openProject(id) {
   await loadStatus();
   let P = await api(`/api/projects/${encodeURIComponent(id)}`);
+  clearBar(); // nothing of another project's bar stays (its stages, its actions)
   document.body.classList.add('in-project');
   // The bar's left side (design V2 §6–7): the name (click to rename), a line under it, and the style picker.
   const crumbs = $('#crumbs');
@@ -435,6 +456,7 @@ async function openProject(id) {
   const picker = makeStylePicker({ id, getP: () => P, formatInfo: STATUS.formatInfo || {}, onChanged: async (r) => {
     if (r.typeChanged) return router(); // another video setup: other steps, so the page starts again
     await refresh();
+    paintLearned(); // the chat's "Brand & instructions" line names the new brand at once (A5)
   } });
   crumbs.append(picker.el);
   const modes = [['manual', 'Ask before changes'], ['acceptEdits', 'File edits OK'], ['auto', 'Auto (safe steps)'], ['bypassPermissions', 'Full access']];
@@ -473,9 +495,19 @@ async function openProject(id) {
     <aside class="col inspector" aria-label="Inspector"><div id="insCanvas" class="ins"></div><div id="insKit" class="ins" hidden></div><div id="insScenes" class="ins" hidden></div><div id="insOther" class="ins" hidden></div></aside></div>`);
   app.replaceChildren(el);
 
+  // The agent isn't signed in, ffmpeg is missing: said here too, with its fix (A13).
+  const sysBox = h('<div class="sys-notes in-chat"></div>');
+  const paintSys = () => { sysBox.innerHTML = systemNotes(); sysBox.hidden = !sysBox.innerHTML; wireSystemNotes(sysBox, paintSys); };
   const learnedPanel = h('<div></div>');
-  $('.msgs', el).before(learnedPanel);
-  projectLearningPanel(learnedPanel, id, P, {send: text => api(`/api/projects/${encodeURIComponent(id)}/chat`,{text})}).catch(e => { learnedPanel.textContent = e.message; });
+  $('.msgs', el).before(sysBox, learnedPanel);
+  paintSys();
+  // Script & approved guide, and Brand & instructions: drawn again when the style (and so the brand) changes.
+  function paintLearned() {
+    const box = h('<div></div>');
+    learnedPanel.replaceChildren(box);
+    projectLearningPanel(box, id, P, {send: text => api(`/api/projects/${encodeURIComponent(id)}/chat`,{text})}).catch(e => { box.textContent = e.message; });
+  }
+  paintLearned();
 
   // The stages are the navigation (web/stages.js, web/rail.js): `stage` is the one selected in the bar, `tab` the pane
   // it opens (packaging, canvas, scenes, cut or publish; Renders and Post are the two sections of Publish).
@@ -729,6 +761,8 @@ async function openProject(id) {
     onCount: (c) => {
       sceneCount = c ? c.count : 0;
       paintCount();
+      // One count for the change package: the Scenes panel's, also on the dock and the stage list (A4).
+      if (c && P.scenes && P.scenes.open !== c.open) { P.scenes.open = c.open; rail?.render(); }
       // Claude finished notes while you were elsewhere: a dot on the tab.
       if (c && doneNotes >= 0 && c.done > doneNotes && tab !== 'scenes') markTab('scenes', 'Claude finished notes');
       if (c) doneNotes = c.done;
@@ -817,7 +851,7 @@ async function openProject(id) {
         pick.replaceChildren(h(`<div class="rail-pick"><span>What kind of video is this?</span>${Object.entries(STATUS.formats).map(([k, v]) => `<button class="btn small" data-k="${k}">${esc(v)}</button>`).join('')}</div>`));
         pick.querySelectorAll('[data-k]').forEach((b) => (b.onclick = async () => { await api(`/api/projects/${encodeURIComponent(id)}/type`, { type: b.dataset.k }); refresh(); }));
       }
-      if (!host.querySelector('.stages')) rail.bar(host, null);
+      if (!host.querySelector('.stages') || host.__rail !== rail) { host.__rail = rail; rail.bar(host, null); }
       rail.update();
       return;
     }
@@ -850,9 +884,11 @@ async function openProject(id) {
         if (!skills.length) list.textContent = 'No skills found in this studio.';
       });
       const old = host.querySelector('.rail-more');
-      if (old) old.replaceWith(more); else if (host.querySelector('.stages')) host.append(more);
+      if (old) old.replaceWith(more); else if (host.querySelector('.stages') && host.__rail === rail) host.append(more);
     }
-    if (!host.querySelector('.stages')) rail.bar(host, more);
+    // The bar is this project's own: a bar another project left in #rail (one that never got torn down) is replaced,
+    // never kept with that project's progress (A2).
+    if (!host.querySelector('.stages') || host.__rail !== rail) { host.__rail = rail; rail.bar(host, more); }
     rail.update();
   }
   const railRO = new ResizeObserver(() => rail.fit());

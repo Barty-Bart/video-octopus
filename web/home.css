@@ -370,3 +370,9 @@
   .stp-frame { opacity: 0.45; }
   .stp-cover { min-height: 200px; }
 }
+/* what stops the app from working fully (the agent's sign-in, ffmpeg), each with its fix: Projects and the editor's chat */
+.sys-notes { display: flex; flex-direction: column; gap: 8px; }
+.sys-notes:empty, .sys-notes[hidden] { display: none; }
+.sys-notes .notice .btn { margin-left: 6px; vertical-align: middle; }
+.sys-notes.in-chat { flex: none; margin: 8px 10px 0; }
+.sys-notes.in-chat .notice { padding: 10px 12px; font-size: 12px; line-height: 1.45; }
