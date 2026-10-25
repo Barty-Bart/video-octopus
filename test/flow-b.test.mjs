@@ -78,3 +78,35 @@ test('B11: the page wires it: rail passes where Run was pressed, runStep opens t
   assert.match(app, /runStep: \(sid\) => \{ const s = P\.pipeline\?\.steps\.find\(\(x\) => x\.id === sid\); if \(s\) runStep\(s\); \}/);
   assert.match(app, /runLock: \(s\) => runStep\(s\)/);
 });
+
+test('B12: one Research action makes the session and runs it with its revision (the two server routes stay)', async () => {
+  const { startResearch, researchActions } = await import('../web/brand-research.js');
+  const calls = [];
+  const call = async (path, body) => { calls.push([path, body]); return path.endsWith('/research') ? { id: 'r 1', revision: 1, status: 'draft' } : { ok: true, revision: 1 }; };
+  let created = null;
+  const r = await startResearch(call, 'kit/1', { url: 'https://example.com', direction: 'Synthetic' }, (x) => { created = x.id; });
+  assert.equal(r.id, 'r 1');
+  assert.equal(created, 'r 1');
+  assert.deepEqual(calls, [
+    ['/api/profiles/kit%2F1/research', { url: 'https://example.com', direction: 'Synthetic' }],
+    ['/api/profile-research/r%201/run', { revision: 1 }],
+  ]);
+  // A run that can't start: the session exists (the page shows it, with Resume), and the error reaches the caller.
+  created = null;
+  const failing = async (path) => { if (path.endsWith('/run')) throw new Error('Wait for the research turn to finish.'); return { id: 'r2', revision: 1 }; };
+  await assert.rejects(startResearch(failing, 'kit', { url: 'https://example.com' }, (x) => { created = x.id; }), /Wait for the research turn/);
+  assert.equal(created, 'r2');
+  // One button at a time for the session: Stop while running, Resume after a stop, Review once there may be a proposal.
+  assert.deepEqual(researchActions('running'), { resume: false, stop: true, review: false });
+  assert.deepEqual(researchActions('review'), { resume: false, stop: false, review: true });
+  assert.deepEqual(researchActions('draft'), { resume: true, stop: false, review: false });
+  assert.deepEqual(researchActions('interrupted'), { resume: true, stop: false, review: true });
+});
+
+test('B12: the Brand tab has one Research button and no separate Create step', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../web/profiles.js', import.meta.url), 'utf8');
+  assert.ok(!src.includes('Create research session'));
+  assert.equal(src.match(/<button class="btn primary">Research<\/button>/g)?.length, 2); // the kit rows layout and the older card layout
+  assert.match(src, /startResearch\(api, profileId,/);
+});

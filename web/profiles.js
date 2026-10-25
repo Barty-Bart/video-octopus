@@ -1,6 +1,7 @@
 import { $, esc, h, api, toast, confirmBox } from './ui.js';
 import { mountResources } from './resources.js';
 import { KIT_PALETTE, kitColor, cleanColor } from './kit-colors.js';
+import { startResearch, researchActions } from './brand-research.js';
 const field=(label,name,value='',rows=2)=>`<label>${label}<textarea name="${name}" rows="${rows}">${esc(value)}</textarea></label>`;
 const run=fn=>async e=>{const b=e?.currentTarget;if(b)b.disabled=true;try{await fn(e);}catch(err){toast(err.message);}finally{if(b)b.disabled=false;}};
 function brandFields(b={},assets=[]){return ['identity','audience','voice','fonts','notes'].map(k=>field(({identity:'Brand identity and offering',audience:'Audience',voice:'Voice and tone',fonts:'Fonts',notes:'Brand guidance and uncertainties'})[k],k,b[k]||'')).join('')+field('Colours (hex codes, separated by commas)','colors',(b.colors||[]).join(', '))+`<fieldset><legend>Assets included in this brand version</legend>${assets.map(a=>`<label class="learn-check"><input type="checkbox" name="asset-${a.id}"${b.assets?.includes(a.id)?' checked':''}>${esc(a.name)}</label>`).join('')||'<p class="sub">Upload logos, images or fonts below.</p>'}</fieldset>`;}
@@ -63,8 +64,8 @@ export function profileSettings({ makeChat, profileId, onBrandChange, rows = fal
     </section>
     <section class="kb-panel" id="researchCard" aria-labelledby="researchTitle"${session ? '' : ' hidden'}>
      <div class="vo-card-head"><h2 id="researchTitle">Research this brand</h2></div>
-     <p class="sub">Give the assistant a public website. It researches in a separate session and proposes a brand for your review. Running research uses your configured agent/provider.</p>
-     <form id="researchForm" class="learn-page brand-form"><label>Brand website<input type="url" name="url" placeholder="https://example.com" required></label>${field('Research direction', 'direction')}<div class="learn-actions"><button class="btn">Create research session</button></div></form>
+     <p class="sub">Give the assistant a public website. Research starts it in a separate session, which proposes a brand for your review. It uses your configured agent/provider.</p>
+     <form id="researchForm" class="learn-page brand-form"><label>Brand website<input type="url" name="url" placeholder="https://example.com" required></label>${field('Research direction', 'direction')}<div class="learn-actions"><button class="btn primary">Research</button></div></form>
      ${sessions ? `<div class="learn-actions brand-sessions">${sessions}</div>` : ''}
      <div id="researchDetail"></div>
     </section>
@@ -109,8 +110,8 @@ export function profileSettings({ makeChat, profileId, onBrandChange, rows = fal
    </section>
    <section class="vo-card" id="researchCard" aria-labelledby="researchTitle">
     <div class="vo-card-head"><h2 id="researchTitle">Research this brand</h2></div>
-    <p class="sub">Give the assistant a public website. It researches in a separate session and proposes a brand for your review. Running research uses your configured agent/provider.</p>
-    <form id="researchForm" class="learn-page brand-form"><label>Brand website<input type="url" name="url" placeholder="https://example.com" required></label>${field('Research direction', 'direction')}<div class="learn-actions"><button class="btn">Create research session</button></div></form>
+    <p class="sub">Give the assistant a public website. Research starts it in a separate session, which proposes a brand for your review. It uses your configured agent/provider.</p>
+    <form id="researchForm" class="learn-page brand-form"><label>Brand website<input type="url" name="url" placeholder="https://example.com" required></label>${field('Research direction', 'direction')}<div class="learn-actions"><button class="btn primary">Research</button></div></form>
     ${sessions ? `<div class="learn-actions brand-sessions">${sessions}</div>` : ''}
     <div id="researchDetail"></div>
    </section>
@@ -139,11 +140,13 @@ export function profileSettings({ makeChat, profileId, onBrandChange, rows = fal
    const ticked = values(form, brand.sources).assets;
    set.outerHTML = brandFields({ assets: ticked }, fresh.assets).match(/<fieldset>[\s\S]*<\/fieldset>/)[0];
   } });
+  // One Research button (B12): it makes the session and runs it. The page then shows that session.
   $('#researchForm', root).onsubmit = run(async (e) => {
    e.preventDefault();
-   const r = await api(`/api/profiles/${profileId}/research`, Object.fromEntries(new FormData(e.target)));
-   session = r.id;
-   await paint();
+   try {
+    await startResearch(api, profileId, Object.fromEntries(new FormData(e.target)), (r) => { session = r.id; });
+    toast('Research started. Follow the assistant and permission requests below.');
+   } finally { if (session) await paint(); }
   });
   root.querySelectorAll('[data-research]').forEach((b) => b.onclick = run(async () => { session = b.dataset.research; await paint(); }));
   root.querySelectorAll('[data-brand-version]').forEach((b) => b.onclick = run(async () => {
@@ -167,8 +170,11 @@ export function profileSettings({ makeChat, profileId, onBrandChange, rows = fal
   const r = await api(`/api/profile-research/${id}`);
   if (!live) return;
   const host = $('#researchDetail', root);
-  host.innerHTML = `<h3>Research session</h3><p id="researchStatus">${esc(r.url)} · ${esc(r.status)}</p><p class="learn-error" id="researchError"${r.error ? '' : ' hidden'}>${esc(r.error || '')}</p>${r.status === 'approved' ? '<p>Approved and retained as evidence.</p>' : '<div class="learn-actions"><button class="btn primary" id="brandRun">Run / resume research</button><button class="btn" id="brandReview">Review proposal</button><button class="btn" id="brandStop">Stop research</button></div><div id="brandReviewBody"></div><div id="brandChat"></div>'}`;
+  host.innerHTML = `<h3>Research session</h3><p id="researchStatus">${esc(r.url)} · ${esc(r.status)}</p><p class="learn-error" id="researchError"${r.error ? '' : ' hidden'}>${esc(r.error || '')}</p>${r.status === 'approved' ? '<p>Approved and retained as evidence.</p>' : '<div class="learn-actions"><button class="btn primary" id="brandRun">Resume research</button><button class="btn" id="brandReview">Review proposal</button><button class="btn" id="brandStop">Stop research</button></div><div id="brandReviewBody"></div><div id="brandChat"></div>'}`;
   if (r.status === 'approved') return;
+  // Only the buttons its status needs (web/brand-research.js): Stop while it runs, Resume after it stopped, Review.
+  const showActions = (status) => { const a = researchActions(status); $('#brandRun', host).hidden = !a.resume; $('#brandStop', host).hidden = !a.stop; $('#brandReview', host).hidden = !a.review; };
+  showActions(r.status);
   // The session's status (draft → running → review or failed) in the panel line and its chip, without redrawing the
   // chat. Read from the server, which changes it when a run starts and when the agent stops.
   const refreshStatus = async () => {
@@ -180,6 +186,7 @@ export function profileSettings({ makeChat, profileId, onBrandChange, rows = fal
    error.hidden = !now.error;
    const chip = root.querySelector(`[data-research="${id}"]`);
    if (chip) chip.textContent = `${now.url} · ${now.status}`;
+   if (now.status !== 'approved') showActions(now.status);
   };
   $('#brandRun', host).onclick = run(async () => {
    const latest = await api(`/api/profile-research/${id}`);
