@@ -11,7 +11,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { readJSON, writeJSON, mtime } from './util.mjs';
 import { cutPlan } from './cuteditor.mjs';
-import { lockedCut, cutCount, cutChanges, appendWorklog } from './studio.mjs';
+import { lockedCut, cutCount, cutChanges, appendWorklog, projectMeta, saveProjectMeta } from './studio.mjs';
 
 export const REVIEW = 'work/cut_review.json';
 const r3 = (x) => Math.round(x * 1000) / 1000;
@@ -237,9 +237,11 @@ function settleOnLock(dir, data) {
 // (yet), the cut join-check last checked (work/joins.json).
 // unlocked: the creator pressed Unlock to edit since the last lock (the Lock step waits to run again, editing is allowed).
 export function lockState(dir) {
-  const n = lockLines(dir);
-  if (!n) return { locked: false, changed: false, unlocked: false };
+  const n = lockLines(dir), imp = !n && importLocked(dir);
+  if (!n && !imp) return { locked: false, changed: false, unlocked: false };
   const doc = readJSON(join(dir, REVIEW), null), now = cutNow(dir), ref = doc?.lock?.segments;
+  // Done by import (B9): the whole file is the locked cut; an edit since (Claude's, from the chat) undoes it.
+  if (imp) return { locked: true, changed: Array.isArray(ref) && ref.length > 0 && now.length > 0 && cutChanges(ref, now).length > 0, unlocked: false, byImport: true };
   const unlocked = unlockedSince(doc, n);
   return { ...lockChanged(dir, n, doc, now, ref), unlocked };
 }
@@ -259,11 +261,28 @@ function lockChanged(dir, n, doc, now, ref) {
 export function cutReadOnly(dir) { const s = lockState(dir); return s.locked && !s.changed && !s.unlocked; }
 // The lock holds for planning and building (learning.mjs): a "Cut locked" line, not unlocked since.
 export function lockHeld(dir) { const s = lockState(dir); return s.locked && !s.unlocked; }
+const importLocked = (dir) => (projectMeta(dir)?.doneByImport || []).includes('lock');
+// Already-edited footage (B9): the whole-file cut is kept as the lock, so a later edit shows as changed.
+export function importLock(dir, segments) {
+  const doc = readJSON(join(dir, REVIEW), null) || {};
+  writeJSON(join(dir, REVIEW), { ...doc, v: 1, decisions: doc.decisions || {}, locks: 0, lock: { segments, at: new Date().toISOString(), by: 'import' }, note: NOTE });
+}
+export function clearImportLock(dir) {
+  const doc = readJSON(join(dir, REVIEW), null);
+  if (doc?.lock?.by !== 'import') return;
+  const { lock, ...rest } = doc;
+  writeJSON(join(dir, REVIEW), rest);
+}
 export const LOCKED_ERROR = 'The cut is locked. Unlock it in the Cut tab to edit it; then lock it again.';
 // Unlock to edit: the Lock step isn't done any more and Lock is the next step again, as after an edit.
 export function unlockCut(dir) {
   const n = lockLines(dir);
-  if (!n || !cutReadOnly(dir)) return false;
+  if (!cutReadOnly(dir)) return false;
+  if (!n) { // locked by import (B9): Lock the cut is to do again
+    saveProjectMeta(dir, { doneByImport: (projectMeta(dir)?.doneByImport || []).filter((x) => x !== 'lock') });
+    try { appendWorklog(dir, 'Cut unlocked in the Cut tab, to edit it (Lock the cut again after)'); } catch {}
+    return true;
+  }
   const doc = readJSON(join(dir, REVIEW), null) || {};
   writeJSON(join(dir, REVIEW), { ...doc, v: 1, decisions: doc.decisions || {}, unlocked: { at: new Date().toISOString(), locks: n }, note: NOTE });
   try { appendWorklog(dir, 'Cut unlocked in the Cut tab, to edit it (Lock the cut again after)'); } catch {}

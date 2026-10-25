@@ -50,7 +50,8 @@ export function makeRail({ root, id, getP, hooks }) {
   let prevDone = null, barSig = '', helpOpen = false;
   const url = `/api/projects/${encodeURIComponent(id)}`;
   const pl = () => getP().pipeline;
-  const stepOf = (sid) => pl()?.steps.find((s) => s.id === sid) || null;
+  // (also the single steps of the ⋯ menu: Transcribe runs on its own for already-edited footage, B9)
+  const stepOf = (sid) => pl()?.steps.find((s) => s.id === sid) || pl()?.more?.find((s) => s.id === sid) || null;
   const indexOf = (sid) => (pl()?.steps.findIndex((s) => s.id === sid) ?? -1) + 1;
 
   // ---------- what's happening now ----------
@@ -345,8 +346,10 @@ export function makeRail({ root, id, getP, hooks }) {
         if (state === 'todo') acts.push(`<button type="button" class="btn small" data-a="run" data-s="${esc(s.id)}">${s.kind === 'app' ? 'Open' : 'Run'}</button>`);
         if ((state === 'next' || state === 'todo') && s.optional) acts.push(`<button type="button" class="btn ghost small" data-a="skip" data-s="${esc(s.id)}">Skip</button>`);
         if (state === 'skipped') acts.push(`<button type="button" class="btn small" data-a="unskip" data-s="${esc(s.id)}">Undo skip</button>`);
-        if (state === 'done' && s.show) acts.push(`<button type="button" class="btn ghost small" data-a="show" data-s="${esc(s.id)}">${ICON.eye}Show me</button>`);
-        if (state === 'done') acts.push(`<button type="button" class="btn ghost small" data-a="again" data-s="${esc(s.id)}">${s.kind === 'app' || s.id === 'post-kit' ? 'Open' : 'Run again'}</button>`);
+        // Done by import (B9, already-edited footage): "Done · already edited", and the way back.
+        if (state === 'done' && s.byImport) acts.push(`<button type="button" class="btn small" data-a="unimport" data-s="${esc(s.id)}">Clean it up anyway</button>`);
+        else if (state === 'done' && s.show) acts.push(`<button type="button" class="btn ghost small" data-a="show" data-s="${esc(s.id)}">${ICON.eye}Show me</button>`);
+        if (state === 'done' && !s.byImport) acts.push(`<button type="button" class="btn ghost small" data-a="again" data-s="${esc(s.id)}">${s.kind === 'app' || s.id === 'post-kit' ? 'Open' : 'Run again'}</button>`);
         const status = state === 'running' ? `<small class="sl-state run"><span class="spin" aria-hidden="true"></span>${esc(runText(s))}</small>`
           : state === 'done' ? `<small class="sl-state ok">${ICON.tick}${esc(s.line || 'Done')}</small>`
           : state === 'skipped' ? '<small class="sl-state">Skipped</small>' : '';
@@ -359,6 +362,7 @@ export function makeRail({ root, id, getP, hooks }) {
       const s = stepOf(b.dataset.s), a = b.dataset.a;
       if (!s) return;
       if (a === 'skip' || a === 'unskip') return skip(s, a === 'skip');
+      if (a === 'unimport') { if (confirm('Clean it up anyway?\n\nClean up and Lock the cut become steps to do again: Claude transcribes, cuts the pauses and checks the joins as for a recording.')) railOp({ op: 'unimport', step: s.id }); return; }
       closePop();
       if (a === 'show') return show(s.show, s.name, true, s.stage);
       if (a === 'again' && s.kind !== 'app' && s.id !== 'post-kit' && !confirm(`Run “${s.name}” again?`)) return;

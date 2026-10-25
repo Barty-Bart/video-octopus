@@ -18,6 +18,7 @@ import { makeRouter, legacyRoute, parseRoute, routeNeedsLookup } from './nav.js'
 import { TERMS } from './terms.js';
 import { renderProjects, setTypeNames } from './projects-home.js';
 import { makeStartScreen } from './start-screen.js';
+import { askAlreadyEdited } from './edited-import.js';
 import { makeStylePicker } from './style-picker.js';
 import { renderSchedules } from './schedules.js';
 import { paintNight, painterFor, frameTime, edgeHTML, wireEdge, renderEdge, drawGhost, drawGuides, makeBackgroundSection } from './look.js';
@@ -377,6 +378,7 @@ async function importTakeFile(id, file) {
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || `copying failed (${r.status})`);
     toast(`${file.name} is the take. Making a playback copy…`);
+    await askAlreadyEdited(id); // B9: "Is this video already edited?" (web/edited-import.js)
     return true;
   } catch (err) {
     toast(`The file didn't come in: ${err.message}`);

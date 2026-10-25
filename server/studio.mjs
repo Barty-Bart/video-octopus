@@ -6,7 +6,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import { settings, readJSON, writeJSON, globExists, mtime, slugify, studioTool, APP_DIR, h264 } from './util.mjs';
 import { defaultLayout, cutMap } from '../web/layout.js';
 import { motionNote } from './skills-gh.mjs';
-import { needsYou, lockState } from './cutreview.mjs';
+import { needsYou, lockState, importLock, clearImportLock } from './cutreview.mjs';
 import { builtEnd, isBuilt, EXPORT_NAME } from './built.mjs'; // (read at call time only: built.mjs imports this module too)
 
 const VIDEO = /\.(mov|mp4|m4v|mkv|webm)$/i;
@@ -441,6 +441,7 @@ export function pipelineStatus(dir, type, opts = {}) {
   if (!fmt) return null;
   const worklog = (() => { try { return readFileSync(join(dir, 'WORKLOG.md'), 'utf8'); } catch { return ''; } })();
   const skippedIds = new Set((projectMeta(dir)?.skipped || []).filter((x) => typeof x === 'string'));
+  const importIds = new Set((projectMeta(dir)?.doneByImport || []).filter((x) => typeof x === 'string'));
   let prevStage = null;
   const stepOf = (s) => {
     let step = typeof s === 'string' ? { id: s, ...p.shared[s] } : s;
@@ -450,6 +451,9 @@ export function pipelineStatus(dir, type, opts = {}) {
       || (typeof d.kept === 'string' ? keptItems(dir, d.kept).kept > 0 : false)
       // built: a Build step of this format has its render (a plan made before plans needed approval, B4).
       || (d.built ? buildRendered(dir, fmt) : false);
+    // Done by import (B9, already-edited footage): a required step the import made pointless (Clean up, Lock the cut).
+    const byImport = importIds.has(step.id);
+    if (byImport) done = true;
     // The cut changed after it was locked (a word deleted since): the lock no longer holds, and the step waits to run
     // again (Claude checks the new joins). changed says why, for the Cut tab, the canvas and Export's words.
     // unlocked: the creator pressed Unlock to edit (B3): the same, by choice.
@@ -470,10 +474,10 @@ export function pipelineStatus(dir, type, opts = {}) {
     return { id: step.id, label: step.label, name: step.name || step.label || step.id, stage, makes: makesOf(d),
              what: String(what).replaceAll('{blocks}', blockList(fmt)), where: step.where || (kind === 'app' ? '' : 'what changed, in Claude’s reply'), show,
              kind, action: step.action || null,
-             skill: step.skill || null, ask: step.ask || '', brief: step.brief || null, motion: step.motion || null, optional, done, ...(changed ? { changed: true } : {}), ...(unlocked ? { unlocked: true } : {}), ...(awaiting ? { awaiting: 'approve' } : {}),
+             skill: step.skill || null, ask: step.ask || '', brief: step.brief || null, motion: step.motion || null, optional, done, ...(changed ? { changed: true } : {}), ...(unlocked ? { unlocked: true } : {}), ...(awaiting ? { awaiting: 'approve' } : {}), ...(byImport && done ? { byImport: true } : {}),
              skipped: optional && !done && skippedIds.has(step.id),
              subs: step.subs ? step.subs.map((x) => ({ id: x.id, label: x.label, done: x.files.some((f) => globExists(dir, f)) })) : null,
-             ...(opts.lines && done ? { line: doneLine(dir, step, worklog) } : {}) };
+             ...(opts.lines && done ? { line: byImport ? 'Done · already edited' : doneLine(dir, step, worklog) } : {}) };
   };
   const steps = fmt.steps.map(stepOf);
   const next = steps.find((s) => !s.done && !s.optional)?.id || null;
@@ -616,6 +620,38 @@ export function doneLine(dir, step, worklog = '') {
     if (Array.isArray(d.json)) return `Saved in ${d.json[0]}`;
   } catch {}
   return 'Done';
+}
+
+// ---- already-edited footage (B9) ----
+// "Is this video already edited?" → Yes, when a file is dropped or imported as the take: the whole file is the cut
+// (work/edl_manual.json, by IMPORT_BY), and Clean up and Lock the cut are done by import (project.json doneByImport,
+// a done override that holds for required steps; the step list says "Done · already edited"). The lock it stands for
+// is kept like a real one (cut_review.json lock, by "import"), so the Cut tab is read-only until Unlock. Claude only
+// transcribes it (index.mjs), and Split into sections stays: Plan uses the sections. cleanUpAnyway takes it back.
+export const IMPORT_DONE = ['prepare', 'cut-editor', 'lock']; // (Fix the cut is optional: its file is the whole-file cut)
+export const IMPORT_BY = 'Video Octopus import: already edited, the whole file is the cut';
+export function markAlreadyEdited(dir, { duration = null } = {}) {
+  const r = roles(dir);
+  if (!r.main) throw new Error('Import the edited video first.');
+  const d = duration ?? probe(dir, r.main)?.duration;
+  if (!(d > 0)) throw new Error(`Couldn't read how long ${r.main} is, so it can't be the cut yet.`);
+  const segs = [[0, Math.round(d * 1000) / 1000]];
+  writeJSON(join(dir, 'work', 'edl_manual.json'), { source: join(dir, 'source', r.main), segments_sec: segs, saved_at: new Date().toISOString(), edited_length: segs[0][1], by: IMPORT_BY });
+  saveProjectMeta(dir, { doneByImport: IMPORT_DONE });
+  importLock(dir, segs);
+  appendWorklog(dir, `Imported ${r.main} as already edited: the whole file is the cut (Clean up, Fix the cut and Lock the cut done by import)`);
+  return segs;
+}
+// "Clean it up anyway": the steps done by import are to do again, and the whole-file cut goes (Clean up makes the cut).
+export function cleanUpAnyway(dir) {
+  const meta = projectMeta(dir);
+  if (!meta?.doneByImport?.length) return false;
+  saveProjectMeta(dir, { doneByImport: undefined });
+  const f = join(dir, 'work', 'edl_manual.json');
+  if (readJSON(f, null)?.by === IMPORT_BY) rmSync(f, { force: true });
+  clearImportLock(dir);
+  appendWorklog(dir, 'Clean it up anyway: Clean up and Lock the cut are to do again (no longer done by import)');
+  return true;
 }
 
 // Skip an optional step, or take the skip back (project.json "skipped"): the dock moves on.

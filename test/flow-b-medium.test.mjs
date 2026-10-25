@@ -366,3 +366,83 @@ test('B6: Approve scene stays on the scene; an unbuilt scene shows a disabled "B
   assert.doesNotMatch(scenes, /id="ncApprove"/, 'not hidden behind the Notes tab any more');
   assert.match(src('test/scenes.e2e.mjs'), /nb\.approve\.text === 'Build first'/);
 });
+
+// ---------- B9: already-edited footage ----------
+test('B9: Yes, it’s my edit: the whole file is the cut, Clean up and Lock are done by import, Split into sections is next', async () => {
+  const { pipelineStatus, markAlreadyEdited, cleanUpAnyway, lockedCut, setSkipped, IMPORT_BY } = await import('../server/studio.mjs');
+  const { cutReadOnly, lockState, lockHeld, unlockCut } = await import('../server/cutreview.mjs');
+  const id = 'b9-edit', dir = P(id);
+  write(join(dir, 'project.json'), { name: id, type: 'tutorial' });
+  write(join(dir, 'source', 'final-cut.mp4'), 'synthetic');
+  assert.equal(pipelineStatus(dir, 'tutorial').current, 'prepare', 'No (the default): Clean up next, as today');
+
+  assert.deepEqual(markAlreadyEdited(dir, { duration: 252.4 }), [[0, 252.4]]);
+  const cut = readJ(join(dir, 'work/edl_manual.json'));
+  assert.deepEqual(cut.segments_sec, [[0, 252.4]]); assert.equal(cut.by, IMPORT_BY);
+  assert.equal(lockedCut(dir).file, 'work/edl_manual.json', 'Plan reads it as the locked cut');
+  let st = pipelineStatus(dir, 'tutorial', { lines: true });
+  const step = (x) => st.steps.find((s) => s.id === x);
+  for (const x of ['prepare', 'cut-editor', 'lock']) {
+    assert.equal(step(x).done, true, x); assert.equal(step(x).byImport, true, x);
+    assert.equal(step(x).line, 'Done · already edited', x);
+  }
+  assert.equal(st.current, 'sections', 'Split into sections stays: Plan uses the sections');
+  assert.throws(() => setSkipped(dir, 'tutorial', 'lock', true), /can't be skipped/, 'Skip is still only for optional steps');
+  assert.equal(cutReadOnly(dir), true, 'the import is a lock: read-only until Unlock');
+  assert.equal(lockState(dir).byImport, true);
+  assert.equal(lockHeld(dir), true, 'learning: plan and build may go ahead');
+  assert.doesNotMatch(readFileSync(join(dir, 'WORKLOG.md'), 'utf8'), /Cut locked/, 'no fake "Cut locked" line');
+  write(join(dir, 'work/blocks.json'), { v: 1, marked: true, blocks: [] });
+  assert.equal(pipelineStatus(dir, 'tutorial').current, 'plan', 'then Plan');
+
+  // Unlock to edit a lock by import: Lock the cut is to do again; Clean up stays done by import.
+  assert.equal(unlockCut(dir), true);
+  st = pipelineStatus(dir, 'tutorial', { lines: true });
+  assert.equal(step('lock').done, false); assert.equal(step('prepare').byImport, true);
+  assert.equal(st.current, 'lock');
+
+  // Clean it up anyway: both are steps again, and the whole-file cut goes (Clean up makes the cut).
+  assert.equal(cleanUpAnyway(dir), true);
+  st = pipelineStatus(dir, 'tutorial');
+  assert.equal(step('prepare').done, false); assert.equal(step('prepare').byImport, undefined);
+  assert.equal(st.current, 'prepare');
+  assert.equal(existsSync(join(dir, 'work/edl_manual.json')), false);
+  assert.equal(readJ(join(dir, 'project.json')).doneByImport, undefined);
+  assert.match(readFileSync(join(dir, 'WORKLOG.md'), 'utf8'), /Clean it up anyway/);
+  assert.equal(cleanUpAnyway(dir), false, 'nothing more to undo');
+});
+
+test('B9: Claude changing an imported cut undoes its lock, like any edit after a lock', async () => {
+  const { pipelineStatus, markAlreadyEdited } = await import('../server/studio.mjs');
+  const { cutReadOnly } = await import('../server/cutreview.mjs');
+  const dir = P('b9-changed');
+  write(join(dir, 'project.json'), { name: 'x', type: 'tutorial' });
+  write(join(dir, 'source', 'edit.mp4'), 'synthetic');
+  markAlreadyEdited(dir, { duration: 30 });
+  write(join(dir, 'work/edl_manual.json'), { segments_sec: [[0, 12], [14, 30]] });
+  const lock = pipelineStatus(dir, 'tutorial').steps.find((s) => s.id === 'lock');
+  assert.deepEqual([lock.done, lock.changed], [false, true]);
+  assert.equal(cutReadOnly(dir), false);
+});
+
+test('B9: the question at drop time, the route, the step list and the prompt', async () => {
+  globalThis.navigator ??= { platform: 'MacIntel', userAgent: 'node' };
+  const { askAlreadyEdited, EDITED_QUESTION } = await import('../web/edited-import.js');
+  assert.equal(EDITED_QUESTION.title, 'Is this video already edited?');
+  assert.deepEqual([EDITED_QUESTION.ok, EDITED_QUESTION.cancel], ['Yes, it’s my edit', 'No, tidy it up']);
+  const calls = [], said = [];
+  assert.equal(await askAlreadyEdited('my video', { ask: async () => false, call: async (...a) => calls.push(a), say: (t) => said.push(t) }), false);
+  assert.deepEqual(calls, [], 'No keeps today’s flow: nothing is sent');
+  assert.equal(await askAlreadyEdited('my video', { ask: async () => true, call: async (...a) => { calls.push(a); return { transcribing: true }; }, say: (t) => said.push(t) }), true);
+  assert.deepEqual(calls, [['/api/projects/my%20video/already-edited', {}]]);
+  assert.match(said.at(-1), /Claude is transcribing it/);
+  assert.match(src('web/app.js'), /toast\(`\$\{file\.name\} is the take\. Making a playback copy…`\);\n    await askAlreadyEdited\(id\);/);
+  const idx = src('server/index.mjs');
+  assert.match(idx, /if \(action === '\/already-edited'\)/);
+  assert.match(idx, /await startStep\(id, dir, 'transcribe'\)/);
+  assert.match(idx, /else if \(b\.op === 'unimport'\) cleanUpAnyway\(dir\)/);
+  assert.match(idx, /This video was imported as already edited/);
+  const rail = src('web/rail.js');
+  assert.match(rail, /data-a="unimport" data-s="\$\{esc\(s\.id\)\}">Clean it up anyway<\/button>/);
+  assert.match(rail, /pl\(\)\?\.more\?\.find\(\(s\) => s\.id === sid\)/, 'the dock shows Transcribe running');
+});

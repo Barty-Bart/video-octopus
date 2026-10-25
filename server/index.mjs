@@ -9,7 +9,7 @@ import { claudeInfo, ChatSession, forReplay } from './claude.mjs';
 import { makeChat, staleChat, foreignSession, enginesView, modelSourceView, engineName, agentStatus, ENGINES } from './engines.mjs';
 import { listProjects, createProject, projectDir, projectMeta, saveProjectMeta, listTakes, importTake, importTakeFrom, makeProxies,
   pipelineStatus, stepPrompt, formats, listSkills, roles, proxyName, sources, projectsRoot, probe, probeFile, formatId, formatInfo, isAudio, isTakeFile,
-  importUpload, lockedCut, appendWorklog, setSkipped, takeDuration, setProjectIdCheck } from './studio.mjs';
+  importUpload, lockedCut, appendWorklog, setSkipped, takeDuration, setProjectIdCheck, markAlreadyEdited, cleanUpAnyway } from './studio.mjs';
 import { openCutEditor, cutPlan, cutEditorRoute, closeAll } from './cuteditor.mjs';
 import { onProjectFiles, syncCutItem, retimeOnSave, syncDocItems, markPackageBase, cutTake, saveCut } from './cutsync.mjs';
 import { cutReviewRoute, markEdits, cutReadOnly, LOCKED_ERROR } from './cutreview.mjs';
@@ -195,6 +195,7 @@ function projectContext(id) {
     `Direct edits: the creator can drag and resize the titles, cards and boxes of an HTML scene in Video Octopus. The moves are in work/overrides.json {v: 1, scenes: {"<scene id>" or "*" (every scene): {"<element id>": {dx, dy (frame pixels), scale (around the element's centre)}}}}. Scenes that load the Video Octopus scene kit (assets/octopus-scene.js, a copy of ${KIT}) apply them by themselves whenever they draw, so renders pick them up: don't bake them into the scene code, and keep element ids stable. To make an element movable, draw it inside Octopus.el('<id>', [x, y, w, h], () => { ... }, { label }) in a canvas scene, or give it data-studio="<id>" in an HTML scene.`,
     `Keyframes: an element's entry in work/overrides.json can also hold keys: [{t, dx, dy, s, o, e}], the creator's own keyframes from the scene timeline (◆). t = seconds on the render's timeline (the same as the production sheet), dx/dy = frame pixels, s = scale around the element's centre, o = opacity 0–1 (multiplies the element's own), e = "linear" or "hold" (default: ease in and out) for the way to the next key. Leave "at" out of entries you write: Video Octopus stamps the creator's own moves with it, and only those go into the change package. The kit (kit 2) interpolates them on top of your own animation whenever the scene draws, so the preview and every render show them; with keys, they replace that element's dx/dy/scale. Respect them: when you change a scene, keep element ids and their timing, don't animate the same property against the creator's keys, and if you have to move or rename a keyed element, say so and move its keys along with it (keep their times on the render timeline). Never remove keys unless the creator asks. If a project's assets/octopus-scene.js is older than kit 2, copy ${KIT} over it before relying on keys.`,
     namingContext(meta),
+    ...(meta.doneByImport?.length ? ['This video was imported as already edited (the creator\'s own edit): the whole file is the cut (work/edl_manual.json), and Clean up and Lock the cut are done by import. Don\'t rough-cut it or check its joins unless the creator asks ("Clean it up anyway" in the Cut stage undoes this); transcribe it, and Split into sections and Plan the scenes work on it as the locked cut.'] : []),
     ...(dir ? kitContext(dir, meta) : []),
     ...learningProjectContext({...meta, learning: projectLearning(id,meta)}),
     blocksContext(),
@@ -357,6 +358,28 @@ function watchProject(id, dir) {
     });
     watchers.set(id, w);
   } catch {}
+}
+
+// A step's brief goes to the project's chat (the dock's Run, a stage's list, the empty states; /step). Returns its text.
+async function startStep(id, dir, stepId) {
+  const meta = projectMeta(dir);
+  if (!meta?.type) throw new Error('Pick a project type first.');
+  // Transcribing steps follow Settings → Transcription (a cloud service without its key: this computer, said once).
+  const tx = ['prepare', 'transcribe'].includes(stepId) ? await transcribeHow({ fill: stepId === 'prepare' }) : null;
+  let text = stepBrief(dir, meta.type, stepId) || stepPrompt(dir, meta.type, stepId, { transcribe: tx?.text });
+  // The chat shows where the step's work starts as one line, "▶ Build the intro · started 14:32", with Video Octopus's
+  // brief folded under it (the user event's brief), and names a new session after the step.
+  const st = pipelineStatus(dir, meta.type), step = [...(st?.steps || []), ...(st?.more || [])].find((x) => x.id === stepId);
+  text += guardLearnedStep(id,dir,step);
+  if (tx?.fallback && !state().noKeyTold?.[tx.fallback]) {
+    chatFor(id).emit({ t: 'note', text: `Transcription is set to ${tx.fallback} in Settings, but no ${tx.fallback} key is saved, so ${step?.name || 'this step'} transcribes on this computer (${tx.model}). Add the key in Settings → Transcription to use ${tx.fallback}.` });
+    patchState({ noKeyTold: { ...(state().noKeyTold || {}), [tx.fallback]: new Date().toISOString() } });
+  }
+  stepRuns.set(id, { step: stepId, at: Date.now() });
+  clearUnfinished(id);
+  await chatFor(id).send(text, { brief: { step: stepId, name: String(step?.name || step?.label || stepId).slice(0, 60) } });
+  noteStep(id, stepId);
+  return text;
 }
 
 // ---- helpers ----
@@ -782,25 +805,20 @@ async function route(req, res) {
     catch (e) { return send(res, 500, { error: e.message }); }
   }
   if (action === '/step') {
-    const meta = projectMeta(dir);
-    if (!meta?.type) return send(res, 400, { error: 'Pick a project type first.' });
+    try { return send(res, 200, { ok: true, text: await startStep(id, dir, b.step) }); }
+    catch (e) { return send(res, 400, { error: e.message }); }
+  }
+  // Already-edited footage (B9): the file just imported is the creator's own edit. The whole take becomes the cut,
+  // Clean up and Lock the cut are done by import, and Claude transcribes it (Plan, captions and the post need the words).
+  // Split into sections stays (Plan uses the sections). op "undo": Clean it up anyway (also /rail op unimport).
+  if (action === '/already-edited') {
     try {
-      // Transcribing steps follow Settings → Transcription (a cloud service without its key: this computer, said once).
-      const tx = ['prepare', 'transcribe'].includes(b.step) ? await transcribeHow({ fill: b.step === 'prepare' }) : null;
-      let text = stepBrief(dir, meta.type, b.step) || stepPrompt(dir, meta.type, b.step, { transcribe: tx?.text });
-      // The chat shows where the step's work starts as one line, "▶ Build the intro · started 14:32", with Video Octopus's
-      // brief folded under it (the user event's brief), and names a new session after the step.
-      const st = pipelineStatus(dir, meta.type), step = [...(st?.steps || []), ...(st?.more || [])].find((x) => x.id === b.step);
-      text += guardLearnedStep(id,dir,step);
-      if (tx?.fallback && !state().noKeyTold?.[tx.fallback]) {
-        chatFor(id).emit({ t: 'note', text: `Transcription is set to ${tx.fallback} in Settings, but no ${tx.fallback} key is saved, so ${step?.name || 'this step'} transcribes on this computer (${tx.model}). Add the key in Settings → Transcription to use ${tx.fallback}.` });
-        patchState({ noKeyTold: { ...(state().noKeyTold || {}), [tx.fallback]: new Date().toISOString() } });
-      }
-      stepRuns.set(id, { step: b.step, at: Date.now() });
-      clearUnfinished(id);
-      await chatFor(id).send(text, { brief: { step: b.step, name: String(step?.name || step?.label || b.step).slice(0, 60) } });
-      noteStep(id, b.step);
-      return send(res, 200, { ok: true, text });
+      if (b.op === 'undo') { cleanUpAnyway(dir); broadcast(id, { t: 'files' }); return send(res, 200, projectView(id, dir)); }
+      markAlreadyEdited(dir);
+      broadcast(id, { t: 'files' });
+      let started = true;
+      try { await startStep(id, dir, 'transcribe'); } catch (e) { started = false; logEvent(id, { t: 'note', text: `Your edit is the cut. Transcribing didn't start: ${e.message}` }); }
+      return send(res, 200, { ok: true, transcribing: started, ...projectView(id, dir) });
     } catch (e) { return send(res, 400, { error: e.message }); }
   }
   if (action === '/skill') {
@@ -857,6 +875,7 @@ async function route(req, res) {
         setProjectState(id, { railSeen: now });
         if (before) for (const s of st.steps) if (s.done && now.includes(s.id) && !before.includes(s.id)) logEvent(id, { t: 'marker', done: true, step: s.id, text: s.name, line: s.line || '', show: s.show });
       } else if (b.op === 'skip' || b.op === 'unskip') setSkipped(dir, meta.type, String(b.step || ''), b.op === 'skip');
+      else if (b.op === 'unimport') cleanUpAnyway(dir); // B9: "Clean it up anyway" on a step done by import
       else if (b.op === 'unfinished-ok') clearUnfinished(id);
       else if (b.op === 'tabs') {
         // What each tab had when the creator last looked at it (web/app.js tabNews): numbers only.
