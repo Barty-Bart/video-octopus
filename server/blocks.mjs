@@ -68,10 +68,15 @@ function startDoc(dir, ctx) {
   return normalizeDoc({ format: type, marked: false, blocks: ctx.take.duration ? [{ id: 'take', type: 'body', label: 'Whole take', source: { take: [0, ctx.take.duration] } }] : [] }, ctx.take.duration);
 }
 const save = (dir, doc) => writeJSON(join(dir, BLOCKS), { ...doc, by: 'studio', updated: new Date().toISOString() });
+// A save Video Octopus makes by itself (settling rule blocks when the row is read) is neither the creator's change nor
+// Claude's: index.mjs wraps it (server/package-owner.mjs serverWrite) so it never lands in the change package.
+let serverWrite = (dir, write) => write();
+export const setServerWriteHook = (fn) => { serverWrite = typeof fn === 'function' ? fn : (dir, write) => write(); };
 
 // Blocks with a rule (and not moved by hand) go where it says, and stay there while the cut and the take blocks
 // stay the same. When they change, the block moves to the nearest pause that still fits, with a note saying so.
-function settle(dir, doc, ctx, { persist = true } = {}) {
+// internal: the row is only being read (the view, the export), so a save here is Video Octopus's own.
+function settle(dir, doc, ctx, { persist = true, internal = false } = {}) {
   let changed = false;
   for (const b of doc.blocks.slice()) {
     const cur = doc.blocks.find((x) => x.id === b.id);
@@ -84,7 +89,7 @@ function settle(dir, doc, ctx, { persist = true } = {}) {
     doc = r.doc;
     changed = true;
   }
-  if (changed && persist) save(dir, doc);
+  if (changed && persist) { if (internal) serverWrite(dir, () => save(dir, doc)); else save(dir, doc); }
   return doc;
 }
 
@@ -98,7 +103,7 @@ export function blocksView(dir) {
   const tpl = formatTemplate(meta.type);
   let doc = readBlocks(dir, ctx);
   const exists = Boolean(doc);
-  if (doc) doc = settle(dir, doc, ctx);
+  if (doc) doc = settle(dir, doc, ctx, { internal: true });
   else doc = startDoc(dir, ctx);
   const seq = sequence(doc, ctx);
   const sceneInfo = scenesByBlock(dir);
@@ -486,7 +491,7 @@ export function sequenceForExport(dir, { useCut = true, readOnly = false } = {})
   const ctx = blocksCtx(dir);
   let doc = readBlocks(dir, ctx);
   if (!doc) return null;
-  doc = settle(dir, doc, ctx, { persist: !readOnly });
+  doc = settle(dir, doc, ctx, { persist: !readOnly, internal: true });
   doc = { ...doc, blocks: doc.blocks.map((x) => { if (kindOf(x) !== 'take' || !x.layout) return x; const { layout, ...y } = x; return y; }) };
   const parts = exportParts(doc, useCut ? ctx.cut : null, ctx.take.duration);
   if (!parts) return null;

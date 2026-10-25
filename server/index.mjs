@@ -37,7 +37,8 @@ import { onSettingsChange, restartWhenIdle, section, transcribeHow } from './set
 import { listBackgrounds, useLibraryBackground, saveUpload, saveToLibrary, generateBrief, libraryFile, bgJobRoute, backgroundsBusy } from './backgrounds.mjs';
 import { kitRoute, libraryRoute, kitContext, kitSummary, KIT_ACTIONS } from './kit.mjs';
 import { saveToLibrary as addToLibrary } from './library.mjs';
-import { blocksRoute, blocksSummary, blocksContext, prepareState, stepBrief, noteStep, receiveBlockTake } from './blocks.mjs';
+import { blocksRoute, blocksSummary, blocksContext, prepareState, stepBrief, noteStep, receiveBlockTake, blocksView, setServerWriteHook } from './blocks.mjs';
+import { makePackageOwner, UI_ROUTES } from './package-owner.mjs';
 import { shotsRoute, readShotsAndZooms, shotsContext, onShotNotes } from './shots.mjs';
 import { recRoute, unfinishedTakes, recorderChoices, recorderBusy } from './browser-recorder.mjs';
 import { mediaRoute } from './media.mjs';
@@ -78,7 +79,14 @@ setProjectIdCheck((id) => Boolean(state().projects[id]) || existsSync(join(LOCAL
 const watchers = new Map();
 // Which ways of trimming at a cut are on, for the usage log (Settings → Editing: A always, B and C optional).
 const trimModes = () => { const e = section('editing'); return ['A', e.trimHighlight && 'B', e.trimLens && 'C'].filter(Boolean).join('+'); };
-const uiTouched = new Map(); // project id -> when the window last saved its layout or blocks
+// Whose change a write is (server/package-owner.mjs): the window's routes stamp the project, Claude's turns and Video
+// Octopus's own settles don't go into the change package (B1).
+const owner = makePackageOwner({
+  busy: (id) => Boolean(chats.get(id)?.busy),
+  note: (id, n) => broadcast(id, { t: 'note', text: `Added to the change package: ${n.text}` }),
+  settle: (dir) => blocksView(dir), // reading the row places rule blocks (a server write, wrapped below)
+});
+setServerWriteHook((dir, write) => { const id = basename(dir); return projectDir(id) === dir ? owner.serverWrite(id, dir, write) : write(); });
 // The step whose brief went to a project's chat last, while that chat is still busy with it (the dock says it's
 // running; Clean up has its own state with its sub-steps, blocks.mjs prepareState).
 const stepRuns = new Map(); // project id -> { step, at }
@@ -109,6 +117,12 @@ function chatFor(id) {
     chat.agentChoice = () => agentChoice(id, chat.engine);
     chat.listeners.add((ev) => broadcast(id, ev));
     chat.listeners.add((ev) => { if (ev.t === 'busy' && !ev.busy) stepRuns.delete(id); });
+    // A turn ended: everything Claude wrote (and the blocks settled after it) is the package's new starting point (B1).
+    chat.listeners.add((ev) => {
+      if (ev.t !== 'busy' || ev.busy || ev.replay) return;
+      const dir = projectDir(id);
+      if (dir) try { owner.afterTurn(id, dir); } catch (e) { console.error('package after the turn:', e.message); }
+    });
     // AI naming (server/naming.mjs): only the agent's own reply can name an automatically named video.
     chat.listeners.add((ev) => {
       if (ev.t !== 'text' || ev.replay) return;
@@ -167,7 +181,7 @@ function projectContext(id) {
     ...learningProjectContext({...meta, learning: projectLearning(id,meta)}),
     blocksContext(),
     shotsContext(),
-    `Everything in this project's window is a file you can change, and the window follows within a second: the layout and frame (project.json layout), the blocks (work/blocks.json), sound cues (work/sfx.json), notes and Look changes (work/notes.json), keyframes and moves (work/overrides.json), the post kit (work/post.json). So when the creator asks for a change anywhere in the window, make it in the file rather than describing where to click. Read the file first and change only the keys you mean to (keep the rest exactly). Changes you make yourself don't go into the change package; the creator's do.`,
+    `Everything in this project's window is a file you can change, and the window follows within a second: the layout and frame (project.json layout), the blocks (work/blocks.json), sound cues (work/sfx.json), notes and Look changes (work/notes.json), keyframes and moves (work/overrides.json), the post kit (work/post.json). So when the creator asks for a change anywhere in the window, make it in the file rather than describing where to click. Read the file first and change only the keys you mean to (keep the rest exactly). Changes you make yourself don't go into the change package; the creator's do. Your changes (in a reply or a step) apply directly: the creator sees them in the chat and can undo your last reply or step there.`,
     `The cut is work/edl_manual.json {segments_sec: [[start, end], …]}: the kept parts of the canvas take, in take seconds (the Cut tab and Scenes edit the same file). Change it only when asked; the Cut tab follows, and graphics are re-timed when the creator presses Save changes → Claude.`,
     `Saved layouts are in ${join(settings().studio || '<studio>', '.studio', 'layouts.json')} ({layouts: [{id, name, layout}]}, made with "+ Save layout"): to use one, copy its layout keys into project.json layout (keep aspect and layers). Library backgrounds (${join(settings().studio || '<studio>', 'library', 'backgrounds')}) are copied into the project's assets/ and used as bg {kind "image"|"video"|"code", file "assets/…", name}.`,
     `Things outside this project (Video Octopus's settings, other projects, scheduled runs, the library inbox) are the Video Octopus assistant's job (the Ask Claude button outside a project), which asks before each change: if the creator asks you for one, say so instead of changing Video Octopus's files.`,
@@ -308,10 +322,10 @@ function watchProject(id, dir) {
   // package's cut item and the scenes' cut snapshot in step (cutsync.mjs), and say so in the chat when it first appears.
   const cutHooks = (files) => {
     try {
-      // Claude changed the layout or the blocks itself (its chat is working and the window saved nothing just now):
-      // that's already done, so it becomes the package's starting point instead of a change waiting for Claude.
+      // Claude changed the layout or the blocks itself (its turn is running or just ended, and the window saved nothing
+      // just now): that's already done, so it becomes the package's starting point instead of a change waiting for Claude.
       const doc = files.some((f) => f === 'work/blocks.json' || f === 'project.json');
-      if (doc && chats.get(id)?.busy && Date.now() - (uiTouched.get(id) || 0) > 3000) markPackageBase(dir, { keepOpen: true });
+      if (doc) owner.onDocFiles(id, dir);
       for (const n of onProjectFiles(dir, files) || []) broadcast(id, { t: 'note', text: `Added to the change package: ${n.text}` });
     } catch (e) { console.error('cut sync:', e.message); }
   };
@@ -588,7 +602,7 @@ async function route(req, res) {
   // Settings › Storage › Trash (list, Put back, Empty trash) and the Recordings page's Delete with its Undo (server/trash.mjs).
   if (await trashRoute(req, res, url, { send, body, busy: mediaBusy, emit: broadcast })) return;
   // Saved layouts (the canvas's "+ Save layout"), shared by every project of the studio (server/saved-layouts.mjs).
-  if (p === '/api/layouts') return layoutsRoute(req, res, { send, body, touched: (pid) => uiTouched.set(pid, Date.now()) });
+  if (p === '/api/layouts') return layoutsRoute(req, res, { send, body, touched: (pid) => owner.touch(pid) });
   // Built-in recorder takes that never got saved (the page closed mid-take), for every project: Home lists them.
   if (p === '/api/rec-unfinished') return send(res, 200, { takes: unfinishedTakes(null) });
   if (p === '/api/skills') return send(res, 200, listSkills(url.searchParams.get('type')));
@@ -680,8 +694,8 @@ async function route(req, res) {
   // The Cut tab's review list: Claude's reasons for each cut, what Prepare asked about, Keep / Cut decisions.
   if (await cutReviewRoute(req, res, { dir, action, send, body })) return;
   // Edits made in the window (layout, blocks) go into the change package; the same files changed by Claude during its
-  // turn don't (watchProject tells them apart by this time).
-  if (req.method === 'POST' && ['/layout', '/blocks', '/shots', '/zooms', '/upload', '/final', '/type', '/rename', '/import', '/take-upload', '/rail', '/media-use', '/media-layer', '/media-remove', '/media-restore'].includes(action)) uiTouched.set(id, Date.now());
+  // turn don't (watchProject tells them apart by this time). Read-only routes (the rail's "seen") aren't edits.
+  if (req.method === 'POST' && UI_ROUTES.includes(action)) owner.touch(id);
   // Blocks (M3b): the band, the strip, @mentions and dropped files (uploads stream, so this comes before the JSON body).
   if (await blocksRoute(req, res, { dir, action, url, send, body, chat: () => chatFor(id), broadcast: (ev) => broadcast(id, ev) })) return;
   // Shots and zooms (server/shots.mjs): GET /shots, /zooms; POST { op, … } like /blocks.
@@ -796,6 +810,8 @@ async function route(req, res) {
   if (action === '/undo-turn') {
     try {
       const r = undoTurn(id, String(b.offer || ''), chats.get(id));
+      // Claude's work put back is not a change for Claude either: the restored files are the package's starting point.
+      markPackageBase(dir, { keepOpen: true });
       logEvent(id, { t: 'note', text: r.note });
       broadcast(id, { t: 'files' });
       return send(res, 200, r);

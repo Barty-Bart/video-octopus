@@ -605,7 +605,7 @@ const DRAW = {
         pic(row('Highlight first (B)', 'What you’re trimming turns red and what you’re bringing back blue, word by word, and the gap only closes when you let go.', toggle(s.trimHighlight, (on) => save('editing', { trimHighlight: on }))), 'b'),
         pic(row('Fine-trim pop-up (C)', 'Click a cut without dragging for a close-up of just that cut: the part before on top, the part after below, what the cut hides shown faded. Arrow keys nudge a frame.', toggle(s.trimLens, (on) => save('editing', { trimLens: on }))), 'c')),
       group('Telling Claude',
-        row('Save changes → Claude', 'Changes to the cut, the scenes, the blocks and the look wait in the change package. Save changes sends them all: Video Octopus re-times the sheet, keyframes and notes to a new cut, and Claude confirms, re-aligns the rest (scene graphics, B-roll) and re-renders what changed.', always())),
+        row('Save changes → Claude', 'Your changes to the cut, the scenes, the blocks and the look wait in the change package (what Claude changes itself applies at once, with Undo in the chat). Save changes sends them all: Video Octopus re-times the sheet, keyframes and notes to a new cut, and Claude confirms, re-aligns the rest (scene graphics, B-roll) and re-renders what changed.', always())),
     );
   },
   sound(V, save, redraw) {

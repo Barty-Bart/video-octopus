@@ -2579,9 +2579,12 @@ try {
     sync(); // first sight: the package's base
     await border('#1e90ff');
     must(!(await looks()).length, `nothing built: no package item: ${JSON.stringify(await looks())}`);
-    // Claude builds the intro (in the blue look), then the creator changes the border again.
+    // Claude builds the intro (in the blue look), then the creator changes the border again. The end of Claude's turn
+    // re-bases the package on what Claude left (B1: Claude's own work is never a package item; package-owner.mjs).
     mkdirSync(join(dir, 'renders'), { recursive: true });
     execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=green:s=320x180:r=30', '-t', '1', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', join(dir, 'renders', `${nid}_intro_v1.mp4`)]);
+    modRun(`const C = await import(${mod('server/cutsync.mjs')}); C.markPackageBase(${JSON.stringify(dir)}, { keepOpen: true }); console.log('0');`);
+    must(!(await looks()).length, `Claude's build: no package item: ${JSON.stringify(await looks())}`);
     await sleep(300);
     await border('#ff00aa');
     const items = await looks();

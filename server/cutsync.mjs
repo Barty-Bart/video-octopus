@@ -72,8 +72,12 @@ const lookNow = (dir) => normLook(dir, readJSON(join(dir, 'project.json'), null)
 export function markPackageBase(dir, { keepOpen = false } = {}) {
   const old = keepOpen ? readJSON(join(dir, BASE), null) : null;
   const waiting = new Set(old ? notesDoc(dir).notes.filter((n) => n.kind === 'change' && n.status === 'open').map((n) => n.field) : []);
-  writeJSON(join(dir, BASE), { blocks: waiting.has('blocks') ? old.blocks : blocksNow(dir), look: waiting.has('look') ? old.look : lookNow(dir),
-    at: new Date().toISOString(), note: 'The blocks and canvas look as Claude last got them in a change package (Video Octopus keeps this).' });
+  const blocks = waiting.has('blocks') ? old.blocks : blocksNow(dir), look = waiting.has('look') ? old.look : lookNow(dir);
+  // Nothing moved (most turns end here): leave the file alone, so the watcher has nothing new to report.
+  const cur = keepOpen ? old : readJSON(join(dir, BASE), null);
+  if (cur && JSON.stringify(cur.blocks) === JSON.stringify(blocks) && JSON.stringify(cur.look) === JSON.stringify(look)) return;
+  writeJSON(join(dir, BASE), { blocks, look,
+    at: new Date().toISOString(), note: 'The blocks and canvas look as Claude last got them in a change package, or as Claude or Video Octopus left them (Video Octopus keeps this).' });
 }
 const clk = (t) => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, '0')}`;
 const srcText = (s) => (s?.file ? `the file ${basename(s.file)}` : Array.isArray(s?.take) ? `take ${clk(s.take[0])}–${clk(s.take[1])}` : 'no source');

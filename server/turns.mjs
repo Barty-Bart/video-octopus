@@ -3,10 +3,13 @@
 //   result (its files, its WORKLOG line). The dock then says so in amber, "Didn't finish: <Claude's one-line reason> ·
 //   Read" (web/rail.js), kept in local/state.json (projects[id].unfinished) until the step is done, another step starts
 //   or the creator puts it away.
-// - Undo: a turn that answered the creator's own message (not a step or another brief) and changed the files the
-//   project's window shows (project.json, blocks, sound cues, notes, moves and keys, the post kit, shots, zooms, the cut,
-//   the production sheet) can be put back by Video Octopus itself, exactly as they were when the turn began. The quick reply
-//   names the files ("Undo the change to blocks.json"); the next message tells Claude what was put back.
+// - Undo: a turn that answered the creator's own message, or a step whose result is all in the files the project's
+//   window shows (project.json, blocks, sound cues, notes, moves and keys, the post kit, shots, zooms, the cut, the
+//   production sheet: Split into sections, Plan the scenes, Write the post), and that changed those files, can be put
+//   back by Video Octopus itself, exactly as they were when the turn began (one level: the next turn replaces it).
+//   Claude's own work isn't a change package (B1): it applies at once and this is how to take it back. The quick reply
+//   names the files ("Undo the change to blocks.json") or the step ("Undo Split into sections"); the next message tells
+//   Claude what was put back. Other briefs (Save changes → Claude, a background) have no Undo.
 // - Proposals: any turn that left new proposed shots or zooms (status "proposed" in work/shots.json, work/zooms.json)
 //   adds one block to the chat log: "Claude proposed 3 shots and 6 zooms · Show me · Keep all · No thanks to all"
 //   (web/app.js draws it from the event { t: 'proposals', shots: [ids], zooms: [ids] }).
@@ -16,12 +19,20 @@ import { readFileSync, writeFileSync, existsSync, statSync, rmSync, mkdirSync } 
 import { join, dirname, basename } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { state, setProjectState } from './util.mjs';
-import { projectDir, projectMeta, pipelineStatus } from './studio.mjs';
+import { projectDir, projectMeta, pipelineStatus, formatSteps } from './studio.mjs';
 import { shotsCtx, readShotsAndZooms, ZOOMS } from './shots.mjs';
 import { normalizeShots, normalizeZooms, newProposals, proposalWords } from '../web/shots.js';
 
 export const WINDOW_FILES = ['project.json', 'work/blocks.json', 'work/sfx.json', 'work/notes.json', 'work/overrides.json', 'work/post.json',
-  'work/shots.json', 'work/zooms.json', 'work/edl_manual.json', 'work/production.json'];
+  'work/shots.json', 'work/zooms.json', 'work/edl_manual.json', 'work/production.json', 'post.md'];
+// A step's Undo puts its whole result back, so only a step whose done rule names window files only (no WORKLOG line,
+// no render) gets one: Split into sections, Plan the scenes, the post kit. Clean up, Lock and Build don't.
+export function stepUndoable(step) {
+  const d = step?.done || {};
+  if (d.worklog) return false;
+  const files = [...(d.files || []), ...(Array.isArray(d.json) ? [d.json[0]] : []), ...(typeof d.kept === 'string' ? [d.kept] : [])];
+  return files.length > 0 && files.every((f) => WINDOW_FILES.includes(f));
+}
 const MAX = 2e6;
 const read = (f) => { try { return existsSync(f) && statSync(f).size <= MAX ? readFileSync(f, 'utf8') : existsSync(f) ? undefined : null; } catch { return undefined; } };
 const snapshot = (dir) => Object.fromEntries(WINDOW_FILES.map((rel) => [rel, read(join(dir, rel))]));
@@ -45,7 +56,7 @@ export function trackTurns(id, chat, { broadcast }) {
       // Adapters mark startup/auth discovery busy before echoing the user's message.
       // Attach its metadata without discarding that turn's already-captured files.
       const before = turns.get(id)?.before ?? null;
-      turns.set(id, { step: ev.brief?.step || null, human: !ev.brief && !String(ev.text || '').startsWith('/'), text: '', textTs: 0, error: '', ok: true, before });
+      turns.set(id, { step: ev.brief?.step || null, stepName: ev.brief?.step ? ev.brief.name || null : null, human: !ev.brief && !String(ev.text || '').startsWith('/'), text: '', textTs: 0, error: '', ok: true, before });
     }
     else if (ev.t === 'busy' && ev.busy) {
       const dir = projectDir(id);
@@ -63,13 +74,15 @@ export function trackTurns(id, chat, { broadcast }) {
       const dir = projectDir(id);
       if (!dir) return;
       // Undo first, before the turn's result reaches the page (its quick replies are drawn then).
-      if (t.human && t.before) {
+      const stepDef = t.step && !t.human ? stepOfProject(dir, t.step) : null;
+      if ((t.human || (stepDef && stepUndoable(stepDef.def))) && t.before) {
         const files = WINDOW_FILES.map((rel) => ({ rel, before: t.before[rel], after: read(join(dir, rel)) }))
           .filter((f) => f.before !== undefined && f.after !== undefined && f.before !== f.after);
         if (files.length) {
-          const offer = { id: randomUUID().slice(0, 8), files };
+          const step = stepDef ? { id: t.step, name: stepDef.name || t.stepName || t.step } : null;
+          const offer = { id: randomUUID().slice(0, 8), files, step };
           offers.set(id, offer);
-          broadcast({ t: 'undo-offer', id: offer.id, files: files.map((f) => f.rel) });
+          broadcast({ t: 'undo-offer', id: offer.id, files: files.map((f) => f.rel), ...(step ? { step: step.name } : {}) });
         }
       }
       if (t.before) {
@@ -105,6 +118,15 @@ export function keepInTurn(id, rel, patch) {
   try { t.before[rel] = JSON.stringify({ ...JSON.parse(t.before[rel]), ...patch }, null, 2) + '\n'; } catch { /* not JSON: leave it */ }
 }
 
+// A step of the project's format as pipelines.json has it (its done rule) and as the rail names it.
+function stepOfProject(dir, stepId) {
+  const meta = projectMeta(dir);
+  const def = meta?.type ? formatSteps(meta.type).find((s) => s.id === stepId) : null;
+  if (!def) return null;
+  const st = pipelineStatus(dir, meta.type);
+  return { def, name: [...(st?.steps || []), ...(st?.more || [])].find((x) => x.id === stepId)?.name || def.name || def.label || stepId };
+}
+
 // The unfinished step the page shows, while that step still isn't done.
 export function unfinishedOf(id, pipeline) {
   const u = state().projects?.[id]?.unfinished;
@@ -129,9 +151,9 @@ export function undoTurn(id, offerId, chat) {
   }
   offers.delete(id);
   if (!back.length) throw new Error(`${kept.map((f) => basename(f)).join(', ')} changed again since, so nothing was put back.`);
-  const list = back.join(', ');
-  chat?.addStudioNote?.(`The creator pressed Undo on your last reply: Video Octopus put ${list} back exactly as ${back.length > 1 ? 'they were' : 'it was'} before it. Take that into account.`);
-  return { back, kept, note: `Undone: ${list} ${back.length > 1 ? 'are' : 'is'} back as before Claude's last reply.${kept.length ? ` ${kept.join(', ')} changed again since, so ${kept.length > 1 ? 'they stay' : 'it stays'}.` : ''}` };
+  const list = back.join(', '), what = o.step ? `your last step (${o.step.name})` : 'your last reply';
+  chat?.addStudioNote?.(`The creator pressed Undo on ${what}: Video Octopus put ${list} back exactly as ${back.length > 1 ? 'they were' : 'it was'} before it. Take that into account.`);
+  return { back, kept, step: o.step?.id || null, note: `Undone${o.step ? ` ${o.step.name}` : ''}: ${list} ${back.length > 1 ? 'are' : 'is'} back as before Claude's last ${o.step ? 'step' : 'reply'}.${kept.length ? ` ${kept.join(', ')} changed again since, so ${kept.length > 1 ? 'they stay' : 'it stays'}.` : ''}` };
 }
 
 // ---- proposals and the Add zooms guard ----

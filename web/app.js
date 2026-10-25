@@ -716,7 +716,8 @@ async function openProject(id) {
     } });
     if (undo?.files?.length) {
       const names = undo.files.map((f) => f.split('/').pop());
-      const label = names.length === 1 ? `Undo the change to ${names[0]}` : names.length === 2 ? `Undo changes to ${names.join(', ')}` : `Undo changes to ${names.length} files`;
+      // A step's result (B1: Claude's own work applies directly, with Undo here): "Undo Split into sections".
+      const label = undo.step ? `Undo ${undo.step}` : names.length === 1 ? `Undo the change to ${names[0]}` : names.length === 2 ? `Undo changes to ${names.join(', ')}` : `Undo changes to ${names.length} files`;
       out.push({ label, run: async () => { try { await api(`/api/projects/${encodeURIComponent(id)}/undo-turn`, { offer: undo.id }); softRefresh(); } catch (e) { toast(e.message); } } });
     }
     return out;
