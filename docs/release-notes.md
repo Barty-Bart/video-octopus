@@ -4,6 +4,7 @@
 - **Deleting an imported file works like a take.** **Delete** in Recordings, and **Delete recording** in the editor's Media section, ask the same question. **Remove from this video** keeps the file: it moves to the recordings folder, so it stays in Recordings and you can use it again (Undo puts it back in the video). **Delete recording** takes it out of the video and out of Recordings and moves it to your computer's Bin (the studio's trash when there is no Bin), with Undo. Both are refused while Claude or an export is using the video's files.
 - **Start a video from an imported file.** Once a file is back in Recordings on its own, **Start a video from it** moves the file into the new video instead of copying it, so it is never in two places.
 - **The way back to Projects is always there.** In the editor, the top bar's logo now reads **‹ Projects** and takes you to the Projects page (it was the logo alone since beta.19). The bar itself can no longer go missing: when a page failed to load (Settings while the app restarted, for example), it left its page classes behind and the next video you opened had no top bar at all, so no logo, name, style picker, stage bar or way home. Every page now starts clean, and the editor's bar shows whatever page came before.
+- **No sideways scroll in the editor on a phone.** The stage bar folds into its one-button form by the same 760 px breakpoint as the layout, so an overflowing page can no longer keep it wide.
 
 # v0.1.0-beta.21
 

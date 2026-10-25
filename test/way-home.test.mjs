@@ -65,3 +65,9 @@ test('the app wires the reset, and the editor owns its classes and its bar', () 
   assert.doesNotMatch(css, /body\.in-project \.bar \.brand \{ font-size: 0/);
   assert.match(css, /body\.in-project \.bar \.brand-home \{ display: inline-flex;/);
 });
+
+test('the stage bar folds by the CSS breakpoint, not innerWidth (an overflowing phone page widens innerWidth)', () => {
+  const rail = readFileSync(new URL('../web/rail.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  assert.match(rail, /const narrow = matchMedia\('\(max-width: 760px\)'\)\.matches;/);
+  assert.doesNotMatch(rail, /innerWidth <= 760/);
+});

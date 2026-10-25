@@ -229,7 +229,9 @@ export function makeRail({ root, id, getP, hooks }) {
     // The least the name area gives: the style picker keeps its width (style.css caps it), the name about 90 px.
     const floor = () => Math.max(160, (crumbs.querySelector('.sp')?.offsetWidth || 0) + 100);
     const over = () => barHost.scrollWidth > barHost.clientWidth + 1 || g.scrollWidth > g.clientWidth + 1;
-    const narrow = innerWidth <= 760;
+    // The CSS breakpoint, not innerWidth: on a phone an overflowing page widens innerWidth (867 px at 375), so the
+    // bar never folded and kept the page wide.
+    const narrow = matchMedia('(max-width: 760px)').matches;
     const place = () => {
       crumbs.style.maxWidth = '';
       for (const t of [0, 1, 2, 3, 4]) {
