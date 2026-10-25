@@ -281,7 +281,7 @@ export function makeExportKinds({ id, getP, canvas, job, rerender, useCut }) {
       ${progressHTML(j)}
       <section class="ex-go">
         <button class="btn dark wide big" id="lxGo"${can && !busy ? '' : ' disabled'}>${ICON_STACK}${busy ? 'Exporting…' : kind === 'layers' ? 'Export layers' : 'Write timeline file'}</button>
-        ${can ? '' : '<p class="sub">Add a recording first, and wait until its playback copies are ready.</p>'}
+        ${can ? '' : '<p class="sub">Add a recording first, and wait until it shows on the canvas.</p>'}
       </section></div>`));
     picker(box);
     box.querySelectorAll('input[name=exklen]').forEach((r) => (r.onchange = () => { cut = r.value === 'cut'; }));
@@ -292,7 +292,7 @@ export function makeExportKinds({ id, getP, canvas, job, rerender, useCut }) {
       const len = (cut ?? useCut()) && Boolean(getP().export.cut);
       try {
         if (kind === 'layers') {
-          if (!canvas.ready()) throw new Error('Add a recording first, and wait until its playback copies are ready.');
+          if (!canvas.ready()) throw new Error('Add a recording first, and wait until it shows on the canvas.');
           await api(`${base}/export-layers`, { layout: canvas.layout(), useCut: len, pngs: { ...canvas.layerPngs(), looks: canvas.lookPngs?.(canvas.layout(), true) || {} }, ...opt, graphics: opt.graphics && Boolean(scene), separate: opt.separate && opt.graphics && Boolean(scene?.kit), matte: opt.matte && Boolean(i?.masks) });
         } else await api(`${base}/export-timeline`, { layout: canvas.layout(), useCut: len });
       } catch (e) { toast(e.message); $('#lxGo', box).disabled = false; }

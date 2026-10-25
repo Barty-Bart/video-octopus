@@ -2,9 +2,9 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync, copyFileSync, cpSync, renameSync, rmSync, createWriteStream, constants, openSync, readSync, closeSync } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 import { join, basename, extname, dirname } from 'node:path';
-import { spawn, execFileSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { settings, readJSON, writeJSON, globExists, mtime, slugify, studioTool, APP_DIR, h264 } from './util.mjs';
+import { settings, readJSON, writeJSON, globExists, mtime, slugify, studioTool, APP_DIR } from './util.mjs';
 import { defaultLayout, cutMap } from '../web/layout.js';
 import { motionNote } from './skills-gh.mjs';
 import { needsYou, lockState, importLock, clearImportLock } from './cutreview.mjs';
@@ -423,59 +423,9 @@ export function appendWorklog(dir, line) {
   writeFileSync(p, text.replace(/\n*$/, '\n') + `- ${today}: ${line}\n`);
 }
 
-// 720p H.264 + AAC proxies so the browser can play takes (the recorder writes PCM audio).
-// Sound files (a mic-only take) play as they are: no copy, the timeline reads their waveform directly.
-const running = new Map();
-// A playback copy of one of these source files is being made right now (its file mustn't move meanwhile).
-export const proxyRunning = (dir, files) => files.some((f) => running.has(join(dir, proxyName(f))));
-export function makeProxies(dir, onEvent) {
-  // A project folder made by hand (or by Claude) may have no work/ yet: ffmpeg can't write the copy there otherwise.
-  try { mkdirSync(join(dir, 'work'), { recursive: true }); } catch {}
-  for (const f of sources(dir).filter((x) => !isAudio(x))) {
-    const out = join(dir, proxyName(f));
-    const key = out;
-    if (existsSync(out) || running.has(key)) continue;
-    const args = ['-y', '-v', 'error', '-progress', 'pipe:1', '-i', join(dir, 'source', f),
-      '-vf', 'scale=-2:720', ...h264('4M'),
-      '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', out + '.part.mp4'];
-    const ff = spawn(studioTool('ffmpeg'), args);
-    running.set(key, ff);
-    const total = duration(dir, f);
-    onEvent({ t: 'job', id: f, label: `Preparing ${f} for playback`, progress: 0 });
-    ff.stdout.on('data', (d) => {
-      const m = /out_time_ms=(\d+)/.exec(String(d));
-      if (m && total) onEvent({ t: 'job', id: f, label: `Preparing ${f} for playback`, progress: Math.min(1, m[1] / 1e6 / total) });
-    });
-    // ffmpeg missing (or not where Settings says): the job says so; the server stays up (it crashed on the unhandled
-    // spawn error before). Setup → Tools installs ffmpeg, and Projects and the editor say that too.
-    ff.on('error', (e) => {
-      if (running.get(key) !== ff) return;
-      running.delete(key);
-      onEvent({ t: 'job', id: f, label: e.code === 'ENOENT' ? `Couldn't prepare ${f}: ffmpeg isn't on this computer (Setup → Tools installs it)` : `Couldn't prepare ${f}: ${e.message}`, progress: 1, done: true, ok: false });
-    });
-    ff.on('exit', (code) => {
-      if (running.get(key) !== ff) return;
-      running.delete(key);
-      if (code === 0) {
-        try { renameSync(out + '.part.mp4', out); } catch {}
-      }
-      onEvent({ t: 'job', id: f, label: code === 0 ? `${f} ready` : `Couldn't prepare ${f} (ffmpeg ${code})`, progress: 1, done: true, ok: code === 0 });
-      onEvent({ t: 'files' });
-    });
-  }
-}
-
-const durations = new Map();
-function duration(dir, f) {
-  const p = join(dir, 'source', f);
-  if (durations.has(p)) return durations.get(p);
-  try {
-    const out = execFileSync(studioTool('ffprobe'), ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', p], { timeout: 5000 });
-    const d = parseFloat(String(out)) || 0;
-    durations.set(p, d);
-    return d;
-  } catch { return 0; }
-}
+// What the editor plays and the 720p editing copies: server/playback.mjs (re-exported here for the callers and tests
+// that have always found them in this module).
+export { makeProxies, proxyRunning } from './playback.mjs';
 
 // ---- pipeline ----
 // The stages a video goes through, always the same (core/pipelines.json "stages": name, title, what for the

@@ -1,5 +1,6 @@
 // Data for the timeline under the canvas: the canvas take's word times and a waveform of its sound.
-// The waveform is read once from the playback copy with ffmpeg and cached next to it in work/.
+// The waveform is read once with ffmpeg (from the 720p copy when there is one, it's quicker; else the original) and
+// cached in work/, keyed to the original: a copy landing or being deleted later doesn't read it again.
 import { existsSync, statSync } from 'node:fs';
 import { join, basename, extname } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -12,11 +13,11 @@ const SAMPLE_RATE = 4000; // mono samples per second read from ffmpeg
 
 const pending = new Map();
 
-// Peak level (0–100) of a source file's sound for every 1/RATE s (read from its playback copy).
+// Peak level (0–100) of a source file's sound for every 1/RATE s. Never waits for a copy.
 function peaksFor(dir, file) {
-  const proxy = join(dir, proxyName(file));
-  const src = existsSync(proxy) ? proxy : join(dir, 'source', file);
-  return peaksOf(src, join(dir, 'work', `peaks_${basename(file, extname(file))}.json`), file);
+  const proxy = join(dir, proxyName(file)), orig = join(dir, 'source', file);
+  const src = existsSync(proxy) ? proxy : orig;
+  return peaksOf(src, join(dir, 'work', `peaks_${basename(file, extname(file))}.json`), file, orig);
 }
 
 // The same for any video in the project, such as a render (renders/x.mp4 → work/peaks_render_x.json).
@@ -25,9 +26,10 @@ export function filePeaks(dir, rel) {
     .then((p) => p && { rate: p.rate, data: p.data });
 }
 
-function peaksOf(src, cache, file) {
-  if (!existsSync(src)) return Promise.resolve(null);
-  const stamp = statSync(src).mtimeMs;
+// keyFile: the file the cache belongs to (a take's original, whichever file is read), else src itself.
+function peaksOf(src, cache, file, keyFile = null) {
+  if (!existsSync(src) || (keyFile && !existsSync(keyFile))) return Promise.resolve(null);
+  const st = statSync(keyFile || src), stamp = keyFile ? `${st.mtimeMs}:${st.size}` : st.mtimeMs;
   const hit = readJSON(cache, null);
   if (hit && hit.stamp === stamp && hit.rate === RATE) return Promise.resolve(hit);
   if (pending.has(cache)) return pending.get(cache);

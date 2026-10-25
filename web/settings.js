@@ -71,7 +71,7 @@ const GROUPS = [
   ['recording', 'Recording', 'Camera, mic, screen, transcription', ['recorder', 'transcribe']],
   ['editing', 'Editing & sound', 'Cuts, effects, video defaults', ['editing', 'sound', 'look']],
   ['export', 'Export', 'Rendering and output', ['render']],
-  ['storage', 'Storage', 'Folders, backups, trash, usage', ['folders', 'storage', 'trash', 'usage']],
+  ['storage', 'Storage', 'Folders, backups, playback, trash, usage', ['folders', 'storage', 'playback', 'trash', 'usage']],
 ];
 // Each section: its heading and one line about it.
 const SECTIONS = {
@@ -87,6 +87,7 @@ const SECTIONS = {
   render: ['Rendering', 'How videos are rendered, and the defaults for new exports.'],
   folders: ['Folders', 'The studio is the home for your local database, projects and media. Skills are managed in the app; you do not need to arrange their folders.'],
   storage: ['Storage & backups', 'Back up and restore the local database, and look after the skill file store.'],
+  playback: ['Playback', 'What the editor plays while you edit: your original files, or 720p copies for smooth scrubbing. Exports always use the originals, at full quality.'],
   trash: ['Trash', 'Deleted takes and media removed from videos wait here. Nothing is emptied automatically: put an item back, or empty the trash yourself.'],
   usage: ['Usage', 'What you’ve made with Video Octopus, counted from your own folders and a usage log that stays on this computer.'],
 };
@@ -104,6 +105,7 @@ const FIND = {
   render: 'parallel jobs size 1080p 4k codec h.264 hevc prores object separation sam cut out rotoscope mask model',
   folders: 'studio folder projects folder library folder new studio skills learning database',
   storage: 'backup restore database sqlite skill files disk',
+  playback: 'playback copy copies proxy proxies 720p optimise optimize editing keep originals scrub smooth disk space free delete copies',
   trash: 'trash bin deleted takes removed media put back restore empty trash free space disk delete permanently',
   usage: 'dashboard statistics stats made videos hours',
 };
@@ -755,6 +757,36 @@ DRAW.storage = () => {
   const box = h('<div class="set-embed"><p class="sub">Loading…</p></div>');
   renderDatabaseRecovery(box).catch((e) => { box.replaceChildren(h(`<p class="notice">${esc(e.message)}</p>`)); });
   return box;
+};
+// Settings › Storage › Playback (server/playback.mjs): Keep originals or Optimise for editing, the question after an
+// export, and the space the 720p editing copies use, with Delete all copies (for good: they can be made again).
+DRAW.playback = (V, save, redraw) => {
+  const s = V.values.storage || {}, mode = s.playback || 'originals';
+  const gb = (b) => (b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : `${Math.max(b ? 1 : 0, Math.round(b / 1e6))} MB`);
+  const list = h('<div class="pb-copies"><p class="sub">Counting…</p></div>');
+  const paint = (d) => {
+    const rows = d.projects.map((p) => `<li><a href="#/p/${encodeURIComponent(p.id)}">${esc(p.name)}</a><span class="sub">${esc(gb(p.bytes))} · ${p.files} ${p.files === 1 ? 'copy' : 'copies'}${p.files > (p.editing?.files || 0) ? ' · needed to play' : ''}${p.own ? ` · ${p.own === 'optimise' ? 'Optimise for editing' : 'Keep originals'} for this video` : ''}</span></li>`).join('');
+    list.replaceChildren(h(`<div><p><b>${esc(gb(d.bytes))}</b> in ${d.files} ${d.files === 1 ? 'copy' : 'copies'}${d.projects.length ? ` across ${d.projects.length} ${d.projects.length === 1 ? 'video' : 'videos'}` : ''}.</p>
+      ${rows ? `<ul class="pb-list">${rows}</ul>` : '<p class="sub">No playback copies on this computer.</p>'}
+      <button type="button" class="btn small danger" data-a="all"${d.files ? '' : ' disabled'}>Delete all copies</button>
+      <p class="sub">Deleted for good, not moved to the Bin: they are only for editing and are made again when a video needs one. Your originals and exports stay.</p></div>`));
+    const b = $('[data-a=all]', list);
+    b.onclick = async () => {
+      b.disabled = true;
+      try { const r = await api('/api/app/playback-copies/delete', {}); toast(r.files === 0 ? 'There was nothing to delete.' : `Deleted ${r.files ?? 0} ${r.files === 1 ? 'copy' : 'copies'}.`); paint(r); }
+      catch (e) { toast(e.message); b.disabled = false; }
+    };
+  };
+  api('/api/app/playback-copies').then(paint).catch((e) => list.replaceChildren(h(`<p class="notice">${esc(e.message)}</p>`)));
+  return frag(
+    group('While you edit',
+      row('Playback', mode === 'optimise'
+        ? 'Optimise for editing: a 720p copy of every video, for smooth scrubbing on any computer. Until it is ready the editor plays the original, so nothing waits.'
+        : 'Keep originals: the editor plays your own files, so no second copy takes up space. A file the browser can’t play gets a 720p copy, and the editor says why.',
+      seg([['originals', 'Keep originals'], ['optimise', 'Optimise for editing']], mode, async (x) => { if (await save('storage', { playback: x })) { const st = CTX.status?.(); if (st) st.storage = { ...(st.storage || {}), playback: x }; redraw(); } })),
+      row('After an export', 'Ask whether to delete a video’s 720p editing copies once it is exported. Each video can also choose in its Media section.',
+        toggle(s.askDeleteCopies !== false, (on) => { save('storage', { askDeleteCopies: on }); const st = CTX.status?.(); if (st) st.storage = { ...(st.storage || {}), askDeleteCopies: on }; }, 'Offer to delete copies'))),
+    group('Space used by playback copies', list));
 };
 // Settings › Storage › Trash (web/trash.js): what's in the studio's trash, Put back, and Empty trash.
 DRAW.trash = (V, save) => trashSection({ row, group, pref: select([['ask', 'Ask each time'], ['video', 'Remove it from the video only'], ['bin', 'Delete it to the Bin']],

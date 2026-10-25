@@ -10,6 +10,7 @@ import { readJSON, writeJSON, mtime, settings } from './util.mjs';
 import { needsYou, needsSummary } from './cutreview.mjs';
 import { projectMeta, saveProjectMeta, roles, probe, lockedCut, appendWorklog, makeProxies, proxyName, formatTemplate, formatId,
   blockTypes, listTakes, pipelineStatus, MEDIA, isAudio, projectMedia, takeIntoSource } from './studio.mjs';
+import { playSource } from './playback.mjs';
 import { snapSegments } from '../web/layout.js';
 import { takeOf, wordsOf, settleShots, takeBlockPresets, setTakeBlockPresets } from './shots.mjs';
 import { normalizeDoc, sequence, kindOf, placeByRule, layoutSig, moveBlock, setEdge, insertAt, removeFromRow,
@@ -45,7 +46,7 @@ function fileInfo(dir, b) {
     name: main.name, duration, audio: Boolean((cam || screen).audio),
     dims: { screen: screen ? [screen.w, screen.h] : null, cam: cam ? [cam.w, cam.h] : null, files: {} },
     files: { cam: cam?.name || null, screen: screen?.name || null },
-    proxy: existsSync(join(dir, proxyName(main.name))) ? proxyName(main.name) : null,
+    proxy: playSource(dir, main.name).src, // what the block's preview plays (server/playback.mjs): its copy or the original
   };
 }
 export function blocksCtx(dir) {

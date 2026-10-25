@@ -115,6 +115,23 @@ export function makeMediaActions(ctx) {
   }
   return {
     restore,
+    // Playback (server/playback.mjs): this video's own choice, or null to follow Settings › Storage › Playback.
+    async playback(mode) {
+      ctx.note(null);
+      try {
+        const r = await api(`${base}/playback`, { mode });
+        toast(r.mode === 'optimise' ? 'Optimise for editing: 720p copies are made in the background. The originals play meanwhile, and the export uses them.' : 'Keep originals: the editor plays your original files.');
+      } catch (e) { ctx.note(e.message); }
+      ctx.refresh();
+    },
+    async deleteCopies() {
+      ctx.note(null);
+      try {
+        const r = await api(`${base}/playback-copies-delete`, {});
+        toast(r.files ? `Deleted ${r.files === 1 ? 'the 720p copy' : `${r.files} 720p copies`} (${size(r.bytes)}). The originals stay.` : 'There was nothing to delete.');
+      } catch (e) { ctx.note(e.message); }
+      ctx.refresh();
+    },
     async use(item) {
       const r = await run('/media-use', { item: item.id }, { title: 'Use this take as the recording?', ok: 'Use this take' });
       if (r) toast(`${itemName(item.id)} is the recording now${r.was ? `; ${itemName(r.was)} is under Also in this video` : ''}.`);
@@ -176,7 +193,7 @@ export function makeMediaActions(ctx) {
           const r = await fetch(`${base}/take-upload?target=layer&name=${encodeURIComponent(file.name)}`, { method: 'POST', headers: { 'X-Studio': '1', 'Content-Type': 'application/octet-stream' }, body: file });
           const j = await r.json().catch(() => ({}));
           if (!r.ok) throw new Error(j.error || `copying failed (${r.status})`);
-          toast(`${file.name} is on top as a layer. Making a playback copy…`);
+          toast(`${file.name} is on top as a layer.`);
         } catch (e) { ctx.note(`The file didn’t come in: ${e.message}`); }
         ctx.refresh();
       };
@@ -366,4 +383,27 @@ export function wireReorder(list, { onMove, onDrop }) {
 function clearMarks(list, dragging) {
   const sel = dragging ? '.md-dragging, .md-over-top, .md-over-bottom' : '.md-over-top, .md-over-bottom';
   list.querySelectorAll(sel).forEach((x) => x.classList.remove('md-dragging', 'md-over-top', 'md-over-bottom'));
+}
+
+// ---- Playback: Keep originals or Optimise for editing, for this video (Settings › Storage › Playback for all) ----
+export const PLAYBACK_LABEL = { originals: 'Keep originals', optimise: 'Optimise for editing (720p copy)' };
+export function playbackCard(pb, actions) {
+  const ed = pb.copies?.editing || { files: 0, bytes: 0 };
+  const slow = Object.entries(pb.files || {}).filter(([, x]) => x.slowSeek && x.using === 'original');
+  const needed = Math.max(0, (pb.copies?.files || 0) - ed.files);
+  const line = pb.mode === 'optimise'
+    ? 'Plays 720p editing copies for smooth scrubbing (the originals until they are ready). Exports always use the originals.'
+    : 'Plays your original files: no second copy is kept. Exports use them at full quality.';
+  const card = h(`<div class="md-play"><div class="md-sub">Playback</div>
+    <label class="md-play-row"><span class="vh">How this video plays while you edit</span><select class="field small" data-a="mode">
+      <option value="">${esc(`As in Settings (${PLAYBACK_LABEL[pb.settings] || PLAYBACK_LABEL.originals})`)}</option>
+      <option value="originals">${PLAYBACK_LABEL.originals}</option><option value="optimise">${PLAYBACK_LABEL.optimise}</option></select></label>
+    ${slow.length ? `<small class="md-play-t md-play-slow">Seeking in ${esc(slow.map(([f]) => f).join(' and '))} is slow: ${slow.length === 1 ? 'it has' : 'they have'} a keyframe only every ${esc(String(Math.max(...slow.map(([, x]) => x.slowSeek))))} s. Optimise for editing makes a copy that scrubs smoothly.</small>` : ''}
+    <small class="md-play-t">${esc(line)}${needed ? ` ${needed === 1 ? 'One file needs its copy' : `${needed} files need their copies`}: the browser can’t play ${needed === 1 ? 'it' : 'them'} as ${needed === 1 ? 'it is' : 'they are'}.` : ''}</small>
+    ${ed.files ? `<div class="md-play-copies"><small>720p editing ${ed.files === 1 ? 'copy' : 'copies'}: ${esc(size(ed.bytes))}</small><button type="button" class="btn ghost small" data-a="delcopies" title="Delete for good: they are only for smooth editing and can be made again. Your originals stay.">Delete ${ed.files === 1 ? 'copy' : 'copies'}</button></div>` : ''}</div>`);
+  const sel = $('[data-a=mode]', card);
+  sel.value = pb.own || '';
+  sel.onchange = () => actions.playback(sel.value || null);
+  $('[data-a=delcopies]', card)?.addEventListener('click', () => actions.deleteCopies());
+  return card;
 }

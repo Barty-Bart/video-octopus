@@ -74,7 +74,8 @@ const $=id=>document.getElementById(id),v=$('v'),cv=$('cv'),g=cv.getContext('2d'
 // data.json, version, video, notes, save. Writes carry X-Studio, as every write to Video Octopus does.
 const API='/api/projects/'+encodeURIComponent(new URLSearchParams(location.search).get('p')||'')+'/cut/';
 const post=(p,b,o)=>fetch(API+p,{method:'POST',headers:{'Content-Type':'application/json','X-Studio':'1'},body:JSON.stringify(b),...o});
-v.src=API+'video';$('v2').src=API+'video';
+// The video starts once data.json names it (?f= keeps this page on that file: a copy landing later doesn't swap it).
+const setVideo=(f)=>{const u=API+'video'+(f?'?f='+encodeURIComponent(f):'');if(v.getAttribute('src')!==u){v.src=u;$('v2').src=u}};
 let D,kept=[],undo=[],sel=null,view=[0,8],dirty=false,words=[];
 // Colours and type for the waveform and the fine-trim pop-up: the page's own dark look, or Video Octopus's light one
 // (studio.js, loaded with studio.css only for ?theme=studio).
@@ -395,7 +396,7 @@ addEventListener('keydown',e=>{if(e.target.tagName==='INPUT'&&e.target.type!=='c
 addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue=''}});
 if(STUDIO)studioSetup(); // studio.js: the header menus and the line to Video Octopus's Cut inspector
 addEventListener('resize',fit);
-fetch(API+'data.json').then(r=>r.ok?r.json():r.json().then(j=>{throw new Error(j.error||r.status)})).then(d=>{D=d;words=d.words;KEEP0=new Set(d.segments.filter(([a,b])=>b>a).map(([a,b])=>pk(+a,+b)));kept=norm(d.segments.map(([a,b])=>[+a,+b]));$('src').textContent=d.source+(d.saved?' · your saved edit':'');$('dur').textContent=fmt(d.duration);
+fetch(API+'data.json').then(r=>r.ok?r.json():r.json().then(j=>{throw new Error(j.error||r.status)})).then(d=>{setVideo(d.video);D=d;words=d.words;KEEP0=new Set(d.segments.filter(([a,b])=>b>a).map(([a,b])=>pk(+a,+b)));kept=norm(d.segments.map(([a,b])=>[+a,+b]));$('src').textContent=d.source+(d.saved?' · your saved edit':'');$('dur').textContent=fmt(d.duration);
  buildTx();fit();setTimeout(()=>{const el=[...document.querySelectorAll('.w')].find(e=>!e.classList.contains('cut'));el&&el.scrollIntoView({block:'start'})},50);const f=kept[0]?kept[0][0]:0;view=coll()?[0,8]:[Math.max(0,f-1),Math.max(0,f-1)+8];v.currentTime=f;refresh();BASE=kept.map(([a,b])=>[+a.toFixed(3),+b.toFixed(3)]);autoLast=autoSnap=JSON.stringify(kept);requestAnimationFrame(loop);if(d.locked)setRO(true);if(STUDIO)studioReady()})
  .catch(e=>{$('tx').textContent=`The cut couldn’t open: ${e.message}`});
 
