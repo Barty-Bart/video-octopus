@@ -133,7 +133,7 @@ test('B10: one state model: waiting, then stopped, then working, then open; the 
   const words = (state, o = {}) => A.describe({ state, count: 1, text: '', ...o }, 'Claude');
   assert.deepEqual([words('working').badge, words('working').line, words('working').title, words('working').mark], ['Working', 'Claude is working', '◌ ', 'working']);
   assert.deepEqual([words('waiting').badge, words('waiting', { count: 2 }).badge, words('waiting').title], ['Waiting for you', '2 waiting for you', '● Waiting for you · ']);
-  assert.deepEqual([words('open', { count: 2 }).badge, words('open').line, words('open').title], ['Finished · 2 open', 'Finished', '']);
+  assert.deepEqual([words('open', { count: 2 }).badge, words('open').line, words('open').title], ['Claude finished · 2 still open', 'Claude finished', '(1) ']);
   assert.deepEqual([words('stopped').badge, words('stopped').line, words('stopped').title], ['Claude stopped', 'Claude stopped', '! ']);
   assert.equal(A.describe({ state: 'working', agent: 'Codex' }).line, 'Codex is working', 'Packaging’s chat says Codex');
   assert.equal(words('idle').badge, '');
@@ -145,7 +145,9 @@ test('B10: one state model: waiting, then stopped, then working, then open; the 
   assert.equal(t.title, '● Waiting for you · Weekly tips · Video Octopus');
   t = A.titleFor(t.title, { state: 'stopped' }, t.applied);
   assert.equal(t.title, '! Weekly tips · Video Octopus');
-  t = A.titleFor(t.title, { state: 'open' }, t.applied);
+  t = A.titleFor(t.title, { state: 'open', count: 1 }, t.applied);
+  assert.deepEqual(t, { title: '(1) Weekly tips · Video Octopus', applied: '(1) ' });
+  t = A.titleFor(t.title, { state: 'idle' }, t.applied);
   assert.deepEqual(t, { title: 'Weekly tips · Video Octopus', applied: '' });
   assert.equal(A.titleFor('! Exclamation video · Video Octopus', { state: 'idle' }, '').title, '! Exclamation video · Video Octopus', 'a name that starts with ! stays');
 });
@@ -192,7 +194,7 @@ test('B10: the chat, the top bar, the folded rail and the dock all draw from att
   assert.match(app, /openItems\(id, 'questions'/);
   assert.match(app, /const asked = \/\\\?\$\/\.test\(last\) && !\/\^\\s\*\(\\d\+\[\.\)\]\|\[-\*•\]\)\\s\/\.test\(last\);/, 'a list item ending in "?" is not a question for you');
   assert.match(app, /if \(busy\) setWorking\(id, true, \{ detail: ev\.text \}\)/, 'the agent’s own status rides along');
-  assert.match(app, /const st = stateOf\(mine\), d = describe\(st\);/, 'the top bar badge: this video’s chat and its Packaging chat');
+  assert.match(app, /const st = stateOf\(mine\), d = describe\(st\)/, 'the top bar badge: this video’s chat and its Packaging chat');
   assert.match(app, /<i class="chat-state" aria-hidden="true" hidden><\/i>/, 'the folded rail’s mark');
   assert.match(app, /const rs = stateOf\(id\), rd = describe\(rs\), mark = \$\('\.chat-state', el\)/);
   // Permission requests still show once, as the banner: the badge and the dock only point at it.

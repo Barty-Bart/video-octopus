@@ -321,7 +321,7 @@ test('B4: the Plan panel, the dock’s Approve the plan and the asks that say "a
     assert.match(plan.ask, /never set "approved" in the sheet yourself/, f);
   }
   const scenes = src('web/scenes.js');
-  for (const re of [/data-a="approve-plan"/, />Approve plan<\/button>/, /data-a="ask-plan">Ask for changes<\/button>/, /<i>On screen<\/i>/, /op: 'changes', text/]) assert.match(scenes, re);
+  for (const re of [/data-a="approve-plan"/, /'Approve plan'\}<\/button>/, /data-a="ask-plan">Ask for changes<\/button>/, /<i>On screen<\/i>/, /op: 'changes', text/]) assert.match(scenes, re);
   assert.match(src('web/app.js'), /s\.action === 'open-plan'\) \{ setTab\('scenes', 'Plan'\); scenes\.showPlan\(\); return; \}/);
   const idx = src('server/index.mjs');
   assert.match(idx, /if \(action === '\/plan'\)/);
@@ -354,7 +354,7 @@ test('B6: after Save changes → Claude, the items it sent are counted: done, st
   const idx = src('server/index.mjs');
   assert.match(idx, /setProjectState\(id, \{ packageRun: brief\.ids\?\.length \? \{ ids: brief\.ids, at: Date\.now\(\), started: false \} : null \}\)/);
   assert.match(idx, /const result = packageResult\(dir, run\.ids\);/);
-  assert.match(idx, /packageRun: \(\(\{ at, result \} = \{\}\)/);
+  assert.match(idx, /packageRun: packageRunView\(dir, state\(\)\.projects\?\.\[id\]\?\.packageRun\)/);
   assert.match(src('web/scenes.js'), /class="s2-fin\$\{fin\.open \|\| fin\.unmarked \? ' open' : ''\}" role="status">\$\{esc\(fin\.text\)\}/);
 });
 

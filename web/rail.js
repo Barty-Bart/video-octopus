@@ -33,8 +33,10 @@ const ICON = {
   help: '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M6.3 6.3a1.8 1.8 0 1 1 2.5 1.6c-.5.3-.8.6-.8 1.2v.3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="11.4" r=".8" fill="currentColor"/></svg>',
   caret: '<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2.5 3.8L5 6.3l2.5-2.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   x: '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 3l6 6M9 3l-6 6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
+  stop: '<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect x="1.5" y="1.5" width="7" height="7" rx="1.2" fill="currentColor"/></svg>',
   info: '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 7.2v4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="8" cy="4.9" r=".9" fill="currentColor"/></svg>',
 };
+const store = { get: (k) => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
 // Where Show me goes, in words, by its target.
 const SHOW_WHERE = { sections: 'on the timeline', zooms: 'on the timeline', picture: 'on the canvas', cut: 'in Cut', lock: 'in Cut', scenes: 'in Scenes', newest: 'in Publish', post: 'in Publish' };
 const showLabel = (show) => `Show me ${SHOW_WHERE[show?.target] || { packaging: 'in Packaging', canvas: 'on the canvas', cut: 'in Cut', scenes: 'in Scenes', renders: 'in Publish', post: 'in Publish' }[show?.tab] || 'where'}`;
@@ -226,20 +228,37 @@ export function makeRail({ root, id, getP, hooks }) {
     if (!g || !crumbs || !barEl) return;
     // The least the name area gives: the style picker keeps its width (style.css caps it), the name about 90 px.
     const floor = () => Math.max(160, (crumbs.querySelector('.sp')?.offsetWidth || 0) + 100);
-    crumbs.style.maxWidth = '';
     const over = () => barHost.scrollWidth > barHost.clientWidth + 1 || g.scrollWidth > g.clientWidth + 1;
     const narrow = innerWidth <= 760;
-    for (const t of [0, 1, 2, 3, 4]) {
-      if (narrow && t < 4) continue;
-      // Tight first: the style picker narrows with it, so the name's share is measured at its tight width.
-      barEl.classList.toggle('tight', t >= 2);
-      if (t === 2) {
-        const short = Math.max(barHost.scrollWidth - barHost.clientWidth, g.scrollWidth - g.clientWidth);
-        crumbs.style.maxWidth = `${Math.max(floor(), crumbs.offsetWidth - short - 8)}px`;
+    const place = () => {
+      crumbs.style.maxWidth = '';
+      for (const t of [0, 1, 2, 3, 4]) {
+        if (narrow && t < 4) continue;
+        // Tight first: the style picker narrows with it, so the name's share is measured at its tight width.
+        barEl.classList.toggle('tight', t >= 2);
+        if (t === 2) {
+          const short = Math.max(barHost.scrollWidth - barHost.clientWidth, g.scrollWidth - g.clientWidth);
+          crumbs.style.maxWidth = `${Math.max(floor(), crumbs.offsetWidth - short - 8)}px`;
+        }
+        barHost.dataset.fit = String(t);
+        g.dataset.fit = String(t);
+        if (t === 4 || !over()) break;
       }
-      barHost.dataset.fit = String(t);
-      g.dataset.fit = String(t);
-      if (t === 4 || !over()) break;
+    };
+    // Claude's state badge (web/app.js, B10) gives its room first: when the bar had to tighten or the style picker is
+    // squeezed below its own width, the badge folds to its dot (the words stay in its tooltip and its name).
+    const badge = document.getElementById('waitBadge'), right = barEl.querySelector('.bar-right');
+    const squeezed = () => {
+      const b = crumbs.querySelector('.sp-btn'), m = b?.querySelector('.sp-main');
+      if (!b?.offsetWidth || !m) return false;
+      const cap = parseFloat(getComputedStyle(b).maxWidth), natural = b.offsetWidth - m.clientWidth + m.scrollWidth;
+      return b.offsetWidth + 1 < Math.min(Number.isFinite(cap) ? cap : Infinity, natural);
+    };
+    badge?.classList.remove('dot');
+    place();
+    if (badge && !badge.hidden && (narrow ? (right && right.scrollWidth > right.clientWidth + 1) || badge.offsetTop > (right?.offsetTop ?? 0) + 4 : Number(barHost.dataset.fit) >= 2 || squeezed())) {
+      badge.classList.add('dot');
+      place();
     }
     // The name gave more than the stages needed: hand the rest back.
     if (barHost.dataset.fit === '2' || barHost.dataset.fit === '3') {
@@ -407,6 +426,13 @@ export function makeRail({ root, id, getP, hooks }) {
   // · <done line> · Show me"), then shows the next step. The chat keeps a one-line marker of it: the server writes it to
   // the chat log when the page reports the step done (/rail seen), and marker() draws it. The labels shorten as the
   // column narrows (fitDock), so the strip never wraps. hooks.composer(<running step's name> | null) tells the composer.
+  // The notes from the last Save changes → Claude that its turn left open (server: packageRun.left), unless × put
+  // them away for that Save.
+  function notesLeft(P) {
+    const r = P.packageRun;
+    if (!r?.left?.count || store.get(`vo.notesSeen.${id}`) === String(r.at)) return null;
+    return { count: r.left.count, text: r.left.text };
+  }
   let dockHost = null, dockSig = '', dockRO = null, sheetOpen = false, green = null, greenTimer = 0, hovering = false, ticker = 0, lastRun = null;
   const GREEN_MS = 4000;
   // A label in three lengths; the strip shows the one its fit level allows (data-fit 0 full, 1 short, 2 and up shortest).
@@ -439,7 +465,11 @@ export function makeRail({ root, id, getP, hooks }) {
     hooks.composer?.(rs?.name || null);
     if (rs?.id !== lastRun) { if (rs) say(`Claude is working on ${rs.name}.`); lastRun = rs?.id || null; }
     if (!p) { dockHost.querySelector('.dk-strip')?.remove(); dockSig = ''; if (sheetOpen) closeSheet(); return; }
-    const cur = current(), nd = needs(), mode = green ? 'done' : rs ? 'run' : cur ? 'next' : 'all';
+    const cur = current(), nd = needs();
+    // A take recording into this video while Record is the next step: the strip is the take's ("Recording 0:42 ·
+    // Stop"), never another Start (hooks.recording: web/app.js, from web/recorder.js's session).
+    const rec = !green && !rs && cur?.action === 'import' ? hooks.recording?.() || null : null;
+    const mode = green ? 'done' : rs ? 'run' : rec ? 'rec' : cur ? 'next' : 'all';
     if (mode === 'done' && sheetOpen) { sheetOpen = false; unlistenSheet(); }
     const notes = cur && sendNotes(cur) ? P.scenes.open : 0;
     // Every step done but changes still waiting in the package (the same count Home shows): the strip says so.
@@ -448,10 +478,15 @@ export function makeRail({ root, id, getP, hooks }) {
     paintUnfinished(uf, cur);
     // A step that didn't finish is one of Claude's open items (B10): the badge and the rail count it too.
     openItems(id, 'unfinished', uf ? { count: 1, text: `${uf.name} didn’t finish`, read: () => hooks.readReply?.(uf.ts || null) } : null);
+    // So is what came of Save changes → Claude (B6): notes Claude left open or didn't mark done, until they are dealt
+    // with in Scenes or put away with × (remembered for that Save).
+    const nl = notesLeft(P);
+    openItems(id, 'notes', nl ? { count: nl.count, text: nl.text, read: () => hooks.openNotes?.() } : null);
     paintState(rs);
-    const sig = JSON.stringify([mode, cur?.id, rs && runText(rs), nd, green, notes, waiting, sheetOpen, p.steps.map((s) => [s.id, s.done, s.skipped]), Boolean(P.runningAt)]);
+    const sig = JSON.stringify([mode, cur?.id, rs && runText(rs), nd, green, notes, waiting, sheetOpen, p.steps.map((s) => [s.id, s.done, s.skipped]), Boolean(P.runningAt), rec && [rec.mode, rec.mode === 'saving' ? rec.progress : 0]]);
     clearInterval(ticker); ticker = 0;
     if (mode === 'run' && !rs.subs?.length && P.runningAt) ticker = setInterval(() => { const t = dockHost?.querySelector('.dk-time'); if (t) t.textContent = elapsed(); }, 1000);
+    if (mode === 'rec' && rec.ms != null) ticker = setInterval(() => { const t = dockHost?.querySelector('.dk-time'), r = hooks.recording?.(); if (t && r?.ms != null) t.textContent = mmss(r.ms / 1000); }, 500);
     if (sig === dockSig) return fitDock();
     dockSig = sig;
     const focusA = dockHost.contains(document.activeElement) ? document.activeElement.dataset?.a : null;
@@ -460,6 +495,13 @@ export function makeRail({ root, id, getP, hooks }) {
       html = `<div class="dk-strip ok"><span class="dk-ok" aria-hidden="true">${ICON.tick}</span>
         <span class="dk-name"><span class="vh">Done: </span><b>${esc(green.name)}</b><span class="dk-sub"> · ${esc(green.line || 'done')}</span></span>
         ${green.show ? `<button type="button" class="dk-show" data-a="show" aria-label="${esc(`${showLabel(green.show)}: ${green.name}`)}">${ICON.eye}Show me</button>` : ''}</div>`;
+    } else if (mode === 'rec') {
+      const live = rec.mode === 'live' || rec.mode === 'paused';
+      const word = { live: 'Recording', paused: 'Paused', starting: 'Starting the take…', saving: 'Saving the take…' }[rec.mode] || 'Recording';
+      const sub = live ? `<span class="dk-sub"> · <span class="dk-time">${mmss((rec.ms || 0) / 1000)}</span></span>` : rec.mode === 'saving' && rec.progress ? `<span class="dk-sub"> · ${Math.round(rec.progress * 100)}%</span>` : '';
+      html = `<div class="dk-strip rec ${esc(rec.mode)}"><span class="dk-pill rec" aria-hidden="true"><i class="rec-dot"></i></span>
+        <span class="dk-name"><span class="vh">Record: </span><b>${esc(word)}</b>${sub}</span>
+        ${live ? `<button type="button" class="dk-run dk-stop" data-a="rec-stop" aria-label="Stop the take">${ICON.stop}${lbl('Stop')}</button>` : ''}</div>`;
     } else if (mode === 'run') {
       const subs = rs.subs || [], k = subs.findIndex((x) => !x.done);
       const sub = subs.length ? (k < 0 ? 'finishing' : `${subs[k].label}, ${k + 1} of ${subs.length}`) : '';
@@ -534,7 +576,12 @@ export function makeRail({ root, id, getP, hooks }) {
   function stateAct(a) {
     const st = stateOf([id, `${id}.packaging`]);
     if (a === 'st-retry') return st.retry?.();
-    if (a === 'st-ok') return openItems(id, 'questions', null);
+    if (a === 'st-ok') {
+      const at = getP().packageRun?.at;
+      if (at && st.items?.some((x) => x.key === 'notes')) store.set(`vo.notesSeen.${id}`, String(at));
+      openItems(id, 'notes', null);
+      return openItems(id, 'questions', null);
+    }
     if (st.chat !== id && st.chat) hooks.setTab('packaging');
     return st.focus?.();
   }
@@ -570,6 +617,7 @@ export function makeRail({ root, id, getP, hooks }) {
     if (!['info', 'close', 'show'].includes(a)) closeSheet();
     switch (a) {
       case 'run': return run(cur, 'dock');
+      case 'rec-stop': return hooks.stopRecording?.();
       case 'skip': return cur && skip(cur);
       case 'pre': return run(cur && before(cur), 'dock');
       case 'needs': return hooks.openCutList();

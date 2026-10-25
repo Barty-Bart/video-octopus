@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSy
 import { pipeline } from 'node:stream/promises';
 import { join, basename, extname } from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { settings, readJSON, writeJSON, globExists, mtime, slugify, studioTool, APP_DIR, h264 } from './util.mjs';
 import { defaultLayout, cutMap } from '../web/layout.js';
 import { motionNote } from './skills-gh.mjs';
@@ -157,6 +158,32 @@ export function lockedCut(dir) {
     if (Array.isArray(segs) && segs.length) return { file: f, segments: segs };
   }
   return null;
+}
+
+// ---- a learned format's plan approval (B4 + learning.mjs): the same decision as Approve plan ----
+// The approval holds for this plan, on this locked cut, with this pinned guide version: a hash of the three. The plan
+// is hashed without what isn't the plan itself: the creator's top-level "approved" (B4) and each scene's build status
+// (B5b's marks, sheet.py mark), so approving or building never makes the approval stale; a changed scene or cut does.
+export function planToken(plan, cut, versionId) {
+  const p = plan && typeof plan === 'object' ? { ...plan } : plan;
+  if (p && typeof p === 'object') {
+    delete p.approved;
+    if (Array.isArray(p.scenes)) p.scenes = p.scenes.map((x) => { if (!x || typeof x !== 'object') return x; const { status, ...rest } = x; return rest; });
+  }
+  return createHash('sha256').update(JSON.stringify(p)).update(JSON.stringify(cut)).update(String(versionId || '')).digest('hex');
+}
+// The token an approval made before this rule held (the sheet's raw bytes): still accepted while the bytes are the same.
+export const legacyPlanToken = (raw, cut, versionId) => createHash('sha256').update(raw).update(JSON.stringify(cut)).update(String(versionId || '')).digest('hex');
+// For a project on a learned format (learning: its pinned learning, project.json or the database's binding): null when
+// it isn't one or there is no plan; else { token, ok } where ok says the learned approval is for this plan and cut.
+export function learnedPlanApproval(dir, learning = projectMeta(dir)?.learning) {
+  if (!learning?.versionId) return null;
+  let raw;
+  try { raw = readFileSync(join(dir, 'work/production.json')); } catch { return null; }
+  let plan; try { plan = JSON.parse(raw); } catch { return null; }
+  const cut = lockedCut(dir), token = planToken(plan, cut, learning.versionId);
+  const ok = Boolean(learning.planApproval) && (learning.planApproval === token || learning.planApproval === legacyPlanToken(raw, cut, learning.versionId));
+  return { token, ok, plan };
 }
 
 export const proxyName = (file) => `work/proxy_${basename(file, extname(file))}.mp4`;
@@ -457,6 +484,13 @@ export function pipelineStatus(dir, type, opts = {}) {
     // The cut changed after it was locked (a word deleted since): the lock no longer holds, and the step waits to run
     // again (Claude checks the new joins). changed says why, for the Cut tab, the canvas and Export's words.
     // unlocked: the creator pressed Unlock to edit (B3): the same, by choice.
+    // A learned format's plan (B4): Approve plan is also its learned approval, so the plan is approved only while that
+    // still holds; once the plan or the cut changed after it, Approve the plan is next again (a built video stays done).
+    let restale = false;
+    if (done && Array.isArray(d.json) && d.json[1] === 'approved' && !(d.built && buildRendered(dir, fmt))) {
+      const la = learnedPlanApproval(dir);
+      if (la && !la.ok) { done = false; restale = true; }
+    }
     const ls = done && step.id === 'lock' ? lockState(dir) : null;
     const changed = Boolean(ls?.changed), unlocked = Boolean(ls?.unlocked) && !changed;
     if (changed || unlocked) done = false;
@@ -464,7 +498,8 @@ export function pipelineStatus(dir, type, opts = {}) {
     // that opens the Plan stage; Build waits behind it.
     const awaiting = !done && Array.isArray(d.json) && d.json[1] === 'approved' && planWritten(dir, d.json[0]);
     if (awaiting) step = { ...step, name: 'Approve the plan', kind: 'app', action: 'open-plan', skill: null,
-      what: 'Read each scene’s line and what’s on screen, then approve the plan, or ask Claude for changes.', where: 'the plan, in the Plan stage' };
+      what: restale ? 'The plan or the locked cut changed since you approved it. Read it again, then approve it again (or ask Claude for changes).'
+        : 'Read each scene’s line and what’s on screen, then approve the plan, or ask Claude for changes.', where: 'the plan, in the Plan stage' };
     const optional = Boolean(step.optional), kind = step.kind || 'claude';
     // The words the creator reads. A step without them (a studio's own) shows its label and a plain line.
     const stage = STAGE_NAMES.includes(step.stage) ? step.stage : prevStage || (step.action === 'import' ? 'Record' : 'Build');
@@ -474,7 +509,7 @@ export function pipelineStatus(dir, type, opts = {}) {
     return { id: step.id, label: step.label, name: step.name || step.label || step.id, stage, makes: makesOf(d),
              what: String(what).replaceAll('{blocks}', blockList(fmt)), where: step.where || (kind === 'app' ? '' : 'what changed, in Claude’s reply'), show,
              kind, action: step.action || null,
-             skill: step.skill || null, ask: step.ask || '', brief: step.brief || null, motion: step.motion || null, optional, done, ...(changed ? { changed: true } : {}), ...(unlocked ? { unlocked: true } : {}), ...(awaiting ? { awaiting: 'approve' } : {}), ...(byImport && done ? { byImport: true } : {}),
+             skill: step.skill || null, ask: step.ask || '', brief: step.brief || null, motion: step.motion || null, optional, done, ...(changed ? { changed: true } : {}), ...(unlocked ? { unlocked: true } : {}), ...(awaiting ? { awaiting: 'approve', ...(restale ? { again: true } : {}) } : {}), ...(byImport && done ? { byImport: true } : {}),
              skipped: optional && !done && skippedIds.has(step.id),
              subs: step.subs ? step.subs.map((x) => ({ id: x.id, label: x.label, done: x.files.some((f) => globExists(dir, f)) })) : null,
              ...(opts.lines && done ? { line: byImport ? 'Done · already edited' : doneLine(dir, step, worklog) } : {}) };

@@ -44,7 +44,8 @@ function changed() {
 //   stopped  the agent stopped mid-turn (it quit or crashed): Send again
 //   working  a turn is running: a step's, or a plain chat message
 //   open     the turn finished with something left for you: its last reply asks you something ('questions'), the
-//            dock's "Didn't finish" ('unfinished'), or notes still open ('notes', for the Polish notes summary).
+//            dock's "Didn't finish" ('unfinished'), or notes from Save changes → Claude that are still open or not
+//            marked done ('notes': web/rail.js, from the project view's packageRun, B6).
 // Across chats the most pressing wins: waiting, stopped, working, then open.
 const acts = new Map(); // chat -> { agent, busy, stopped: { text, retry(), focus() } | null, open: Map(key -> item) }
 const act = (chat) => { let a = acts.get(chat); if (!a) acts.set(chat, (a = { agent: null, busy: false, detail: null, stopped: null, open: new Map() })); return a; };
@@ -120,12 +121,15 @@ export function describe(st, agent = st?.agent || agentName()) {
     case 'stopped': return { badge: `${agent} stopped`, line: `${agent} stopped`, title: STOPPED_MARK, mark: 'stopped',
       label: `${agent} stopped${st.text ? `: ${st.text}` : ''}. Send again to retry.` };
     case 'working': return { badge: 'Working', line: `${agent} is working`, title: WORKING_MARK, mark: 'working', label: `${agent} is working` };
-    case 'open': return { badge: `Finished · ${n} open`, line: 'Finished', title: '', mark: 'open',
+    // "Claude finished · 1 still open" (B6 + B10): the badge counts what is left; the dock line adds what it is ("2 notes
+    // done, 1 still open"); the tab title gets the count, "(1) ", the way a page shows something unread.
+    case 'open': return { badge: `${agent} finished · ${n} still open`, line: `${agent} finished`, title: `(${n || 1}) `, mark: 'open',
       label: `${agent} finished${st.text ? `, with this left for you: ${st.text}` : ''}` };
     default: return { badge: '', line: '', title: '', mark: '', label: '' };
   }
 }
-// The tab's title: "● Waiting for you · " while anything waits; a quieter "◌ " while working; "! " once stopped.
+// The tab's title: "● Waiting for you · " while anything waits; a quieter "◌ " while working; "! " once stopped;
+// "(N) " when Claude finished with N things still open.
 const WORKING_MARK = '◌ ', STOPPED_MARK = '! ';
 export function titleFor(title, st, applied = '') {
   const base = applied && title.startsWith(applied) ? title.slice(applied.length) : title.startsWith(PREFIX) ? title.slice(PREFIX.length) : title;

@@ -1196,17 +1196,19 @@ export function makeScenes({ pane, inspector, id, getP, onCount, onScenes, histo
   let planShown = false; // the panel opened on Plan by itself once while the plan waits
   const onScreen = (s) => s.visual || (s.layout ? `${LAYOUT_NAME[s.layout] || s.layout}${CAMERA_OF[s.layout] ? ` · ${CAMERA_OF[s.layout].toLowerCase()}` : ''}` : '');
   function renderPlan() {
-    const ok = D.plan?.approved || null, waiting = planWaiting(), busy = Boolean(getP()?.busy);
+    // again: approved, but on a learned format the plan or the locked cut changed since (B4 + learning): approve again.
+    const again = Boolean(D.plan?.again), ok = again ? null : D.plan?.approved || null, waiting = planWaiting() || again, busy = Boolean(getP()?.busy);
     const old = $('#plAsk', inspector), draft = old?.value || '', typing = old && document.activeElement === old;
     const box = h(`<div class="ins-body sc-ins pl-ins">
       ${tabsHtml()}
-      <div class="ins-head sub-h"><b>Scene plan</b><span class="sub">${D.scenes.length} scene${D.scenes.length === 1 ? '' : 's'} · ${ok ? `approved${ok.at ? ` ${esc(ago(Date.parse(ok.at)))}` : ''}` : waiting ? 'waiting for your OK' : 'not approved'}</span></div>
+      <div class="ins-head sub-h"><b>Scene plan</b><span class="sub">${D.scenes.length} scene${D.scenes.length === 1 ? '' : 's'} · ${ok ? `approved${ok.at ? ` ${esc(ago(Date.parse(ok.at)))}` : ''}` : again ? 'changed since you approved it' : waiting ? 'waiting for your OK' : 'not approved'}</span></div>
+      ${again ? '<p class="pl-again" role="status">The plan or the locked cut changed after you approved it. Build waits until you approve it again.</p>' : ''}
       <ol class="pl-list">${D.scenes.map((s) => `<li><button type="button" class="pl-row${s.id === sel ? ' on' : ''}" data-id="${esc(s.id)}">
         <span class="pl-n">${s.n}</span><span class="pl-t"><span class="pl-h"><b>${esc(s.title)}</b><span class="mono sub">${clock(s.start)}</span></span>
         ${s.line ? `<span class="pl-line">“${esc(s.line)}”</span>` : ''}
         <span class="pl-vis"><i>On screen</i> ${esc(onScreen(s) || 'not said yet')}</span></span></button></li>`).join('')}</ol>
       <div class="pl-acts">
-        ${ok ? `<p class="pl-ok">✓ Plan approved. Build is next.</p>` : `<button class="btn accent wide" data-a="approve-plan"${busy ? ' disabled title="Claude is working: wait for it to finish first"' : ''}>Approve plan</button>`}
+        ${ok ? `<p class="pl-ok">✓ Plan approved. Build is next.</p>` : `<button class="btn accent wide" data-a="approve-plan"${busy ? ' disabled title="Claude is working: wait for it to finish first"' : ''}>${again ? 'Approve plan again' : 'Approve plan'}</button>`}
         <label class="pl-lbl" for="plAsk">Ask for changes</label>
         <textarea id="plAsk" rows="3" placeholder="What should change? e.g. In scene 3 show the screen, not me."></textarea>
         <button class="btn wide" data-a="ask-plan">Ask for changes</button>
@@ -1231,6 +1233,14 @@ export function makeScenes({ pane, inspector, id, getP, onCount, onScenes, histo
     });
   }
   function showPlan() { if (!planStep()) return; tab = 'plan'; planShown = true; renderInspector(); }
+  // The badge's or the dock's Read for notes Claude left open after Save changes → Claude (B6): the Notes tab, on the
+  // first scene with one still open or not marked done.
+  function showNotes() {
+    tab = 'notes';
+    const ids = new Set((getP()?.packageRun?.result && D?.notes) ? D.notes.filter((n) => ['question', 'open', 'sent'].includes(n.status) && n.kind !== 'change').map((n) => n.scene) : []);
+    const first = D?.scenes?.find((s) => ids.has(s.id));
+    if (first && first.id !== sel) select(first.id); else renderInspector();
+  }
 
   // One line above Send: what's waiting ("1 change waiting: transition Cut → Morph").
   const optLabel = (field, v) => (D.options?.[field === 'layout' ? 'layouts' : field === 'transition' ? 'transitions' : 'backgrounds'] || []).find((x) => x.id === v)?.label || v;
@@ -2089,7 +2099,7 @@ export function makeScenes({ pane, inspector, id, getP, onCount, onScenes, histo
     show: async () => { active = true; built = ''; if ((await load()) && active && D) build(); },
     hide: () => { active = false; player?.v.pause(); player?.take.pause(); trim.closeLens(); if (editing) stopEditing(); },
     selectScene: (sid) => select(sid),
-    showPlan,
+    showPlan, showNotes,
     apply: applyNotes,
     destroy: () => { active = false; teardownMedia(); probe?.destroy(); probe?.host?.remove(); trim.destroy(); document.removeEventListener('keydown', onKey); document.removeEventListener('keyup', onKeyUp); },
   };

@@ -8,7 +8,7 @@ import { join, basename, extname } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { userInfo } from 'node:os';
 import { readJSON, writeJSON, mtime, settings, APP_DIR } from './util.mjs';
-import { appendWorklog, projectMeta, probeFile } from './studio.mjs';
+import { appendWorklog, projectMeta, probeFile, learnedPlanApproval } from './studio.mjs';
 import { EXPORT_NAME, builtEnd, isBuilt } from './built.mjs';
 import { listBackgrounds } from './backgrounds.mjs';
 import { listLibrary, AUDIO } from './library.mjs';
@@ -435,7 +435,9 @@ export function scenesView(dir) {
 export function planState(dir) {
   const p = readJSON(join(dir, PRODUCTION), null);
   const a = p?.approved && typeof p.approved === 'object' ? p.approved : p?.approved ? { at: null } : null;
-  return { approved: a ? { at: typeof a.at === 'string' ? a.at : null } : null };
+  // again: a learned format's approval no longer holds (the plan or the locked cut changed since): approve it again.
+  const la = a ? learnedPlanApproval(dir) : null;
+  return { approved: a ? { at: typeof a.at === 'string' ? a.at : null } : null, ...(la && !la.ok ? { again: true } : {}) };
 }
 export function approvePlan(dir) {
   const p = readJSON(join(dir, PRODUCTION), null);
@@ -560,6 +562,17 @@ export function packageResult(dir, ids) {
   const notes = items.filter((n) => n.kind !== 'change').length;
   const noun = notes === items.length ? 'note' : notes ? 'item' : 'change';
   return { sent: items.length, done, open, unmarked, noun, text: packageResultText({ done, open, unmarked, noun }) };
+}
+// The project view's packageRun (B6 + B10): when the last Save changes → Claude went, what its turn's end counted
+// (result), and left: the sent items still open or not marked done now, read live, so dealing with one in Scenes takes
+// it away. While left has any, Claude's state is "finished with open items" (web/rail.js 'notes').
+export function packageRunView(dir, run) {
+  if (!run?.at) return null;
+  let left = null;
+  if (run.result && Array.isArray(run.ids)) {
+    try { const r = packageResult(dir, run.ids); left = { open: r.open, unmarked: r.unmarked, count: r.open + r.unmarked, text: r.text.replace(/^Claude finished · /, '') }; } catch {}
+  }
+  return { at: run.at, result: run.result || null, left };
 }
 export function packageResultText({ done = 0, open = 0, unmarked = 0, noun = 'note' }) {
   const n = (k) => `${k} ${noun}${k === 1 ? '' : 's'}`;

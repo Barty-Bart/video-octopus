@@ -29,6 +29,11 @@ Users can choose another location. Existing studios stay in place.
 - Records of every skill file (assets, knowledge, key frames): name, note, kind, tags, size, type,
   sha256, source and the versions that use it. Their bytes live in the file store (below).
 - Project pins for brand, instructions, selected skill snapshots and learned formats, plus scene-plan approval tokens.
+  A token is the hash of the scene plan (without its top-level `approved` and the scenes' build `status`), the locked
+  cut and the pinned version (`server/studio.mjs` `planToken`). **Approve plan** in the editor's Plan stage records it
+  together with the plan's own `approved` (one decision; the Script & learned format panel's approval does both too),
+  and Ask for changes removes both. When the plan or the cut changes after approval, Approve the plan is the next step
+  again and Build waits. Tokens made before this rule (the plan's raw bytes) are still accepted while the bytes match.
 
 Skill file bytes live in a content-addressed file store in the studio:
 `<studio>/.studio/files/<first 2 hex>/<sha256><.ext>`. Identical files are stored once, writes

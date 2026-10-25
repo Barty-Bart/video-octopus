@@ -22,7 +22,7 @@ import { normalize, defaultLayout, newLayers } from '../web/layout.js';
 import { thumbFor } from './thumbs.mjs';
 import { timelineData, filePeaks, joinFlags } from './timeline.mjs';
 import { layoutsRoute } from './saved-layouts.mjs';
-import { scenesView, scenesSummary, notesOp, setOverride, applyBrief, kitBrief, updateKit, KIT, approvePlan, unapprovePlan, packageResult } from './scenes.mjs';
+import { scenesView, scenesSummary, notesOp, setOverride, applyBrief, kitBrief, updateKit, KIT, approvePlan, unapprovePlan, packageResult, packageRunView } from './scenes.mjs';
 import { buildSteps, renderKind } from './built.mjs';
 import { appRoute } from './setup.mjs';
 import { onboardingRoute, ffmpegReady, setupBusy } from './onboarding.mjs';
@@ -31,7 +31,7 @@ import { profileRoute, profileBusy, killProfileResearch, createConfiguredProject
 import { UNTITLED, autoName, nameFromReply, namingContext, onAutoRename } from './naming.mjs';
 import { memoryRoute } from './memory.mjs';
 import { packagingRoute, resourcesRoute, packagingBusy, killPackaging } from './packaging.mjs';
-import { learningRoute, learningProjectContext, projectLearning, guardLearnedStep, learningBusy, killLearning } from './learning.mjs';
+import { learningRoute, learningProjectContext, projectLearning, guardLearnedStep, learningBusy, killLearning, approveLearnedPlan, unapproveLearnedPlan } from './learning.mjs';
 import { assistantRoute, killAssistant, assistantBusy } from './assistant.mjs';
 import { onSettingsChange, restartWhenIdle, section, transcribeHow } from './settings.mjs';
 import { listBackgrounds, useLibraryBackground, saveUpload, saveToLibrary, generateBrief, libraryFile, bgJobRoute, backgroundsBusy } from './backgrounds.mjs';
@@ -471,7 +471,9 @@ function projectView(id, dir) {
     unfinished: unfinishedOf(id, pipeline),
     tabSeen: state().projects?.[id]?.tabSeen || null,
     // The last Save changes → Claude: when, and once its turn ended, what came of it (B6, the Scenes panel's line).
-    packageRun: (({ at, result } = {}) => (at ? { at, result: result || null } : null))(state().projects?.[id]?.packageRun || undefined),
+    // left: the sent items still open or not marked done now (read live, so resolving one in Scenes takes it away):
+    // Claude's state is "finished with open items" while there are any (web/rail.js, web/attention.js 'notes').
+    packageRun: packageRunView(dir, state().projects?.[id]?.packageRun),
   };
 }
 const shotsView = (dir) => { try { return readShotsAndZooms(dir); } catch (e) { console.error('shots:', e.message); return { shots: null, zooms: { v: 2, items: [] } }; } };
@@ -992,6 +994,8 @@ async function route(req, res) {
       if (b.op === 'approve') {
         const approved = approvePlan(dir);
         keepInTurn(id, 'work/production.json', { approved }); // the creator's, even while Claude works
+        // On a learned format this is also its plan approval (Script & learned format): one decision, not two.
+        try { approveLearnedPlan(id, dir); } catch (e) { console.error('learned plan approval:', e.message); }
         broadcast(id, { t: 'files' });
         return send(res, 200, { ok: true, approved });
       }
@@ -999,11 +1003,12 @@ async function route(req, res) {
         const text = String(b.text || '').trim().slice(0, 4000);
         if (!text) throw new Error('Say what should change in the plan first.');
         if (unapprovePlan(dir)) keepInTurn(id, 'work/production.json', { approved: undefined });
+        try { unapproveLearnedPlan(id, dir); } catch {}
         await chatFor(id).send(`Changes to the scene plan: ${text}`);
         broadcast(id, { t: 'files' });
         return send(res, 200, { ok: true });
       }
-      if (b.op === 'unapprove') { unapprovePlan(dir); broadcast(id, { t: 'files' }); return send(res, 200, { ok: true }); }
+      if (b.op === 'unapprove') { unapprovePlan(dir); try { unapproveLearnedPlan(id, dir); } catch {} broadcast(id, { t: 'files' }); return send(res, 200, { ok: true }); }
       throw new Error('Unknown plan action.');
     } catch (e) { return send(res, 400, { error: e.message }); }
   }

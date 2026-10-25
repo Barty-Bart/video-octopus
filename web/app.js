@@ -729,16 +729,19 @@ async function openProject(id) {
   // A finished step's one-line marker in the log is drawn by the rail (it has Show me); `rail` exists by the first event.
   const chat = makeChat(el, id, blocks, { chips, doneMarker: (ev) => rail.marker(ev), proposals, unfold: () => setFold(false) });
   // Claude's state (B10, web/attention.js): one badge in the top bar for this video's chat and its Packaging chat,
-  // Working, Waiting for you, Finished · N open, or Claude stopped; it opens the chat (or Packaging) where it matters.
+  // Working, Waiting for you, Claude finished · N still open, or Claude stopped; it opens the chat (or Packaging)
+  // where it matters (the open notes: Scenes' Notes).
   // The folded chat rail shows the same state for this video's chat as a small mark.
   const waitBadge = h('<button type="button" class="wait-badge" id="waitBadge" hidden><i aria-hidden="true"></i><span>Waiting for you</span></button>');
   $('#barActions').prepend(waitBadge);
   const mine = [id, `${id}.packaging`];
   const paintBadge = () => {
-    const st = stateOf(mine), d = describe(st);
+    const st = stateOf(mine), d = describe(st), wasHidden = waitBadge.hidden;
     waitBadge.hidden = st.state === 'idle';
     waitBadge.dataset.state = st.state;
     waitBadge.title = d.label;
+    waitBadge.setAttribute('aria-label', d.label || d.badge);
+    const grew = $('span', waitBadge).textContent !== d.badge;
     $('span', waitBadge).textContent = d.badge;
     const rs = stateOf(id), rd = describe(rs), mark = $('.chat-state', el), open = $('#chatOpen', el);
     mark.hidden = rs.state === 'idle';
@@ -746,6 +749,7 @@ async function openProject(id) {
     mark.textContent = rs.state === 'waiting' && rs.count > 1 ? String(rs.count) : '';
     const words = `Open ${window.STUDIO_AGENT || 'Claude'} (⌘J)${rd.label ? ` · ${rd.label}` : ''}`;
     open.title = words; open.setAttribute('aria-label', words);
+    if (grew || waitBadge.hidden !== wasHidden) rail?.fit(); // the bar fits again: the badge may fold to its dot
   };
   waitBadge.onclick = () => {
     const st = stateOf(mine);
@@ -796,9 +800,19 @@ async function openProject(id) {
     glowTab: (t, why, hint) => markTab(t, why, hint), applyNotes: () => scenes.apply(), openCutList: () => { setTab('cut'); cutPanel.openList(); },
     learn: () => runStep({ id: 'learn', kind: 'claude' }), status: () => STATUS, composer: (name) => chat.setStep(name),
     readReply: (ts) => { setFold(false); requestAnimationFrame(() => chat.reveal(ts)); },
+    openNotes: () => { setTab('scenes', 'Polish'); scenes.showNotes(); }, // what Save changes → Claude left open (B6)
+    // A take recording into this video (web/recorder.js): the dock shows it instead of Record · Start.
+    recording: () => recordingHere(), stopRecording: () => { if (rec.session().phase === 'recording') rec.stop(); },
     newestRender: () => { if (!P.renders.length) return null; renderSel = P.renders[0].file; renderRenders(true); $('[data-pane=publish]', el).scrollTop = 0; return $('[data-pane=renders] .rd-main', el); },
   } });
   rail.dock($('#dock', el));
+  // The take's state for the dock: 'starting', 'live', 'paused' or 'saving' (rec-live.js liveMode) and its time.
+  function recordingHere() {
+    const S = rec.session(), mode = liveMode(S, { id, hasTake: hasTake() });
+    if (!mode) return null;
+    return { mode, ms: mode === 'live' || mode === 'paused' ? Math.max(0, Date.now() - S.startedAt) : null, progress: S.progress || 0 };
+  }
+  const offRecDock = rec.onSession(() => rail.render());
 
   // An empty video (no take yet) starts on the start screen (web/start-screen.js), and Claude asks what it's about.
   function hasTake() { return Boolean(P.canvas?.screen || P.canvas?.cam || P.canvas?.audio || P.roles?.files?.length); }
@@ -1023,7 +1037,8 @@ async function openProject(id) {
   // leaves you there. A step Claude starts from the chat never comes through here.
   async function runStep(s, { from = null } = {}) {
     rail.dismissDone(); // Run puts the strip's green "done" away
-    if (s.kind === 'app' && s.action === 'import') { setTab('canvas', s.stage); canvas.showImport(); return; }
+    // Record while a take records here: the canvas shows the take (B7); never a second start or the take list.
+    if (s.kind === 'app' && s.action === 'import') { setTab('canvas', s.stage); if (!recordingHere()) canvas.showImport(); return; }
     if (s.kind === 'app' && s.action === 'open-cut') { setTab('cut', s.stage); return; }
     if (s.kind === 'app' && s.action === 'open-scenes') { setTab('scenes', s.stage); return; }
     if (s.kind === 'app' && s.action === 'open-plan') { setTab('scenes', 'Plan'); scenes.showPlan(); return; } // B4: Approve the plan
@@ -1302,7 +1317,7 @@ async function openProject(id) {
       return true;
     },
   };
-  return { teardown: () => { if (projectPage?.id === id) projectPage = null; es.close(); picker.destroy(); chat.destroy(); offBadge(); waitBadge.remove(); pickers.destroy(); railRO.disconnect(); rail.destroy(); waveStop?.(); rdCmp?.destroy(); canvas.destroy(); scenes.destroy(); sound.destroy(); post.destroy(); packaging.destroy(); recorder.destroy(); live.destroy(); blocks.destroy(); document.removeEventListener('click', closeMenus); document.removeEventListener('keydown', foldKeys); removeEventListener('message', onCutMessage); cutPanel.destroy(); clearBar(); } };
+  return { teardown: () => { if (projectPage?.id === id) projectPage = null; es.close(); picker.destroy(); chat.destroy(); offBadge(); offRecDock(); waitBadge.remove(); pickers.destroy(); railRO.disconnect(); rail.destroy(); waveStop?.(); rdCmp?.destroy(); canvas.destroy(); scenes.destroy(); sound.destroy(); post.destroy(); packaging.destroy(); recorder.destroy(); live.destroy(); blocks.destroy(); document.removeEventListener('click', closeMenus); document.removeEventListener('keydown', foldKeys); removeEventListener('message', onCutMessage); cutPanel.destroy(); clearBar(); } };
 }
 
 // ---------- export receipt: prints out of a slot when an export finishes ----------

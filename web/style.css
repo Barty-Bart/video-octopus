@@ -1045,6 +1045,11 @@ body.rs-ns, body.rs-ns * { cursor: ns-resize !important; user-select: none; }
 .wait-badge { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--accent);
   background: var(--accent-soft); color: var(--accent-text); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
 .wait-badge[hidden] { display: none; }
+/* folded to its dot when the top bar is short of room (web/rail.js fit): the words are in its tooltip and its name */
+.wait-badge.dot { width: 30px; padding: 0; justify-content: center; gap: 0; }
+.wait-badge.dot span { display: none; }
+/* while the badge shows, the Record button's ⌥⌘R hint gives its room (it is in the button's tooltip too) */
+.bar:has(.wait-badge:not([hidden])) .bar-actions kbd { display: none; }
 .wait-badge i { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: wb-pulse 1.4s ease-in-out infinite; }
 .ask.flash, .wait-banner.flash { animation: msg-flash 1.6s ease-out; }
 .wb-t .ask-why { margin: 4px 0 0; align-self: flex-start; }
@@ -2656,6 +2661,15 @@ body.in-project .bar .sp-sub { display: none; }
 .dk-prog .d { background: var(--ok); }
 .dk-prog .r { background: var(--accent); animation: bk-pulse 1.2s ease-in-out infinite; }
 .dk-time { flex: none; font-family: var(--mono); font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+/* a take recording into this video: "Recording 0:42 · Stop" (not another Record · Start) */
+.dk-strip.rec { border-color: var(--bad); background: var(--bad-soft); }
+.dk-pill.rec { padding: 1px 2px; background: transparent; }
+.dk-strip.rec.live .rec-dot { border-radius: 2px; animation: blink 1s steps(2, start) infinite; }
+.dk-strip.rec.paused .rec-dot { border-radius: 1px; background: linear-gradient(90deg, var(--bad) 0 35%, transparent 35% 65%, var(--bad) 65%); }
+.dk-strip.rec :is(.dk-time, .dk-sub) { color: var(--bad-ink); }
+.dk-stop { background: var(--bad); border: 1px solid var(--bad); color: var(--white); box-shadow: none; }
+.dk-stop:hover { background: var(--rec-hover); }
+@media (prefers-reduced-motion: reduce) { .dk-strip.rec .rec-dot { animation: none; } }
 /* done, for about 4 s; every step done */
 .dk-strip.ok { border-color: var(--ok); background: var(--ok-soft); animation: dk-in 0.25s ease-out; }
 .dk-strip.ok .dk-sub { color: var(--text-2); }
@@ -3029,6 +3043,7 @@ body.in-project .bar .sp-sub { display: none; }
 .pl-acts textarea { width: 100%; box-sizing: border-box; resize: vertical; }
 .pl-lbl { font-size: 12px; font-weight: 500; color: var(--text-2); margin-top: 4px; }
 .pl-ok { margin: 0; font-size: 12.5px; font-weight: 600; color: var(--ok-ink); }
+.pl-again { margin: 0 12px 8px; padding: 8px 10px; border-radius: var(--ctl-radius); background: var(--warn-soft); box-shadow: inset 0 0 0 1px var(--warn-line); color: var(--warn-ink); font-size: 12.5px; }
 .pl-acts .sub { margin: 0; }
 
 /* Polish (B6): Approve scene on the scene, and what came of the last Save changes → Claude. */

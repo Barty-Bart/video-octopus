@@ -15,7 +15,8 @@ import { FileStore, MAX_SKILL_FILES, MAX_SKILL_FILE_BYTES, formatBytes } from '.
 import { beginMaintenance, endMaintenance, activityView } from './maintenance.mjs';
 import { settingsChanged, restartWhenIdle } from './settings.mjs';
 import { settings, reveal } from './util.mjs';
-import { createProject, projectDir, projectMeta, saveProjectMeta, lockedCut, listProjects, appendWorklog } from './studio.mjs';
+import { createProject, projectDir, projectMeta, saveProjectMeta, lockedCut, listProjects, appendWorklog, learnedPlanApproval } from './studio.mjs';
+import { approvePlan } from './scenes.mjs';
 import { lockHeld } from './cutreview.mjs';
 import { sqlSkillContent } from './skill-db.mjs';
 import { syncSkills, skillsView, registerGeneratedSkills } from './managed-skills.mjs';
@@ -140,15 +141,33 @@ export function learnedPlan(id, dir) {
   if(!cut || !lockHeld(dir))throw Error('Lock and review the cut first.');
   if(!existsSync(file))throw Error('Create the scene plan first.');
   const raw=readFileSync(file);if(raw.length>4*1024*1024)throw Error('Scene plan is too large.');
-  const plan=JSON.parse(raw),token=createHash('sha256').update(raw).update(JSON.stringify(cut)).update(learning.versionId).digest('hex');
-  return {plan,token,approved:learning.planApproval===token};
+  // The token leaves out the creator's "approved" and the scenes' build status (studio.mjs planToken): Approve plan and
+  // Build's marks don't make the approval stale.
+  const a=learnedPlanApproval(dir,learning);
+  return {plan:a.plan,token:a.token,approved:a.ok};
+}
+// Approve plan in the Plan stage (B4) is the learned format's plan approval too: one decision, for this plan, cut and
+// guide version. Returns true when the project is on a learned format and the approval was recorded.
+export function approveLearnedPlan(id,dir) {
+  const learning=projectLearning(id,projectMeta(dir));
+  if(!learning?.versionId)return false;
+  const plan=learnedPlan(id,dir); // throws while the cut isn't locked
+  current(s=>{const next={...learning,planApproval:plan.token};s.pin(id,next);saveProjectMeta(dir,{learning:next});});
+  return true;
+}
+// Ask for changes takes it back with Approve plan's.
+export function unapproveLearnedPlan(id,dir) {
+  const learning=projectLearning(id,projectMeta(dir));
+  if(!learning?.versionId||!learning.planApproval)return false;
+  current(s=>{const next={...learning};delete next.planApproval;s.pin(id,next);saveProjectMeta(dir,{learning:next});});
+  return true;
 }
 export function guardLearnedStep(id,dir,step) {
   const learning=projectLearning(id,projectMeta(dir));if(!learning)return '';
   if(step?.stage==='Plan'||step?.stage==='Build') {
     if(!lockedCut(dir)||!lockHeld(dir))throw Error('Lock the cut before planning or building.');
   }
-  if(step?.stage==='Build'&&!learnedPlan(id,dir).approved)throw Error('Review and approve the current scene plan in Script & learned format before building.');
+  if(step?.stage==='Build'&&!learnedPlan(id,dir).approved)throw Error('Approve the plan in the Plan stage before building: the plan or the locked cut changed since it was approved.');
   return learning.build==='full'&&step?.stage==='Build' ? '\nBuild the complete approved scene plan, preserving stable IDs and creator overrides. Keep the locked timing. Stop for final visual review before export.' : '';
 }
 function selection(store,b) {
@@ -366,7 +385,7 @@ export async function learningRoute(req,res,url,{send,body,serveFile}) {
     if(group==='backup') { if(learningBusy()||profileBusy())throw Error('Stop learning and brand research before creating a backup.');return reply(current(s=>s.backup())); }
     if(group==='projects') {
       if(action==='plan-review'){const dir=projectDir(id);if(!dir)throw Error('Project not found.');return reply(learnedPlan(id,dir));}
-      if(action==='approve-plan'){const dir=projectDir(id);if(!dir)throw Error('Project not found.');const plan=learnedPlan(id,dir);if(plan.token!==b.token)throw Error('Plan or cut changed. Review it again.');return reply(current(s=>{const learning={...projectLearning(id,projectMeta(dir)),planApproval:plan.token};s.pin(id,learning);saveProjectMeta(dir,{learning});return {ok:true};}));}
+      if(action==='approve-plan'){const dir=projectDir(id);if(!dir)throw Error('Project not found.');const plan=learnedPlan(id,dir);if(plan.token!==b.token)throw Error('Plan or cut changed. Review it again.');const out=current(s=>{const learning={...projectLearning(id,projectMeta(dir)),planApproval:plan.token};s.pin(id,learning);saveProjectMeta(dir,{learning});return {ok:true};});try{approvePlan(dir);}catch{}return reply(out);}
       if(action==='upgrade-preview') return reply(current(s=>{
         const plan=upgradePlan(s,id,b),old=plan.current?.versionId?s.version(plan.current.versionId):null;
         return {from:old?.id||null,to:plan.version.id,oldRules:old?.rules||[],newRules:plan.version.rules,notices:plan.notices};
