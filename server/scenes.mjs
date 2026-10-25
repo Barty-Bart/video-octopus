@@ -544,7 +544,30 @@ export function applyBrief(dir, { preview = false, first = null } = {}) {
   const now = new Date().toISOString();
   for (const n of all) { n.status = 'sent'; n.sent_at = now; }
   saveNotes(dir, doc);
-  return { text, notes: open.length, changes: changes.length, moves: moves.length };
+  return { text, notes: open.length, changes: changes.length, moves: moves.length, ids: all.map((n) => n.id) };
+}
+
+// ---- after Save changes → Claude: what came of the items it sent (B6) ----
+// The page and the chat say "Claude finished · 2 notes done, 1 still open" once the turn after a Save ends. Done =
+// marked done (or resolved since); still open = Claude asked a question, or put it back to open; an item Claude left as
+// "sent" is "not marked done" (only the prompt asks Claude to mark them; nothing else does).
+export function packageResult(dir, ids) {
+  const want = new Set((ids || []).map(String));
+  const items = notesDoc(dir).notes.filter((n) => want.has(String(n.id)));
+  const done = items.filter((n) => n.status === 'done' || n.status === 'resolved').length;
+  const open = items.filter((n) => n.status === 'question' || n.status === 'open').length;
+  const unmarked = items.filter((n) => n.status === 'sent').length;
+  const notes = items.filter((n) => n.kind !== 'change').length;
+  const noun = notes === items.length ? 'note' : notes ? 'item' : 'change';
+  return { sent: items.length, done, open, unmarked, noun, text: packageResultText({ done, open, unmarked, noun }) };
+}
+export function packageResultText({ done = 0, open = 0, unmarked = 0, noun = 'note' }) {
+  const n = (k) => `${k} ${noun}${k === 1 ? '' : 's'}`;
+  const parts = [];
+  if (done || (!open && !unmarked)) parts.push(`${n(done)} done`);
+  if (open) parts.push(`${parts.length ? open : n(open)} still open`);
+  if (unmarked) parts.push(`${n(unmarked)} not marked done`);
+  return `Claude finished · ${parts.join(', ')}`;
 }
 
 function describeMove(o) {

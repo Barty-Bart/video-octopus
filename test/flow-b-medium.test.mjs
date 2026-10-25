@@ -329,3 +329,40 @@ test('B4: the Plan panel, the dock’s Approve the plan and the asks that say "a
   assert.match(idx, /never write or change that key yourself/);
   assert.match(src('starter/.claude/skills/production-sheet/SKILL.md'), /Never add or change that key yourself/);
 });
+
+// ---------- B6: Polish: Approve always visible, and a "finished" summary ----------
+test('B6: after Save changes → Claude, the items it sent are counted: done, still open, not marked done', async () => {
+  const { packageResult, packageResultText, applyBrief } = await import('../server/scenes.mjs');
+  const dir = planFixture('b6-notes');
+  const note = (id, extra = {}) => ({ id, scene: '1', text: `Note ${id}`, status: 'open', t: 0.5, ...extra });
+  write(join(dir, 'work/notes.json'), { v: 1, notes: [note('a'), note('b'), note('c'), note('old', { status: 'done' })], approved: {} });
+  const brief = applyBrief(dir);
+  assert.deepEqual(brief.ids, ['a', 'b', 'c'], 'Save says which items it sent');
+  // Claude marks one done, asks about one, and leaves one as "sent".
+  const doc = readJ(join(dir, 'work/notes.json'));
+  doc.notes.find((n) => n.id === 'a').status = 'done';
+  doc.notes.find((n) => n.id === 'b').status = 'question';
+  write(join(dir, 'work/notes.json'), doc);
+  const r = packageResult(dir, brief.ids);
+  assert.deepEqual([r.sent, r.done, r.open, r.unmarked], [3, 1, 1, 1]);
+  assert.equal(r.text, 'Claude finished · 1 note done, 1 still open, 1 note not marked done');
+  assert.equal(packageResultText({ done: 2, open: 1 }), 'Claude finished · 2 notes done, 1 still open');
+  assert.equal(packageResultText({ done: 2, unmarked: 1 }), 'Claude finished · 2 notes done, 1 note not marked done');
+  assert.equal(packageResultText({ done: 3 }), 'Claude finished · 3 notes done');
+  assert.equal(packageResultText({ done: 1, noun: 'change' }), 'Claude finished · 1 change done');
+  // The server keeps the run (apply-notes) and counts it when the turn after it ends; the page shows it in the panel.
+  const idx = src('server/index.mjs');
+  assert.match(idx, /setProjectState\(id, \{ packageRun: brief\.ids\?\.length \? \{ ids: brief\.ids, at: Date\.now\(\), started: false \} : null \}\)/);
+  assert.match(idx, /const result = packageResult\(dir, run\.ids\);/);
+  assert.match(idx, /packageRun: \(\(\{ at, result \} = \{\}\)/);
+  assert.match(src('web/scenes.js'), /class="s2-fin\$\{fin\.open \|\| fin\.unmarked \? ' open' : ''\}" role="status">\$\{esc\(fin\.text\)\}/);
+});
+
+test('B6: Approve scene stays on the scene; an unbuilt scene shows a disabled "Build first"', () => {
+  const scenes = src('web/scenes.js');
+  assert.match(scenes, /<button class="btn small s2-approve" id="scApprove" type="button"><\/button>/);
+  assert.match(scenes, /b\.disabled = !built && !ok;/);
+  assert.match(scenes, /b\.textContent = ok \? 'Approved ✓' : built \? 'Approve scene' : 'Build first';/);
+  assert.doesNotMatch(scenes, /id="ncApprove"/, 'not hidden behind the Notes tab any more');
+  assert.match(src('test/scenes.e2e.mjs'), /nb\.approve\.text === 'Build first'/);
+});

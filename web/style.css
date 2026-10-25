@@ -3005,3 +3005,10 @@ body.in-project .bar .sp-sub { display: none; }
 .pl-lbl { font-size: 12px; font-weight: 500; color: var(--text-2); margin-top: 4px; }
 .pl-ok { margin: 0; font-size: 12.5px; font-weight: 600; color: var(--ok-ink); }
 .pl-acts .sub { margin: 0; }
+
+/* Polish (B6): Approve scene on the scene, and what came of the last Save changes → Claude. */
+.s2-approve { flex: none; white-space: nowrap; }
+.s2-approve.on { background: var(--ok-soft); color: var(--ok-ink); box-shadow: inset 0 0 0 1px var(--ok-line); }
+.s2-approve:disabled { opacity: 1; color: var(--text-3); background: var(--surface-2); cursor: not-allowed; }
+.s2-fin { margin: 0 0 8px; font-size: 12px; font-weight: 600; color: var(--ok-ink); }
+.s2-fin.open { color: var(--warn-ink); }

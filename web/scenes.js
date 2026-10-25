@@ -327,6 +327,7 @@ export function makeScenes({ pane, inspector, id, getP, onCount, onScenes, histo
         <div class="s2-top">
           <div class="seg" id="s2Mode" role="group" aria-label="View"><button data-m="full">Whole video</button><button data-m="scene">One scene</button></div>
           <div class="s2-title"></div><span class="gap"></span>
+          <button class="btn small s2-approve" id="scApprove" type="button"></button>
           ${D.renders.length ? `<label class="sc-render"><span class="vh">Render</span><select id="scRender">${D.renders.map((r) => `<option value="${esc(r.file)}"${r.file === renderFile ? ' selected' : ''}>${esc(r.file.replace(/^renders\//, ''))} · ${esc(ago(r.at))}</option>`).join('')}</select></label>` : ''}
           <button class="btn ghost small" id="s2Prev" aria-label="Previous scene" title="Previous scene (↑)">↑</button><button class="btn ghost small" id="s2Next" aria-label="Next scene" title="Next scene (↓)">↓</button>
           <button class="btn small s2-pkg" id="s2Pkg" title="Everything waiting for Claude"><span class="lbl">Change package</span><span class="lbl-s">Package</span> <span class="n" id="s2PkgN"></span></button>
@@ -811,6 +812,7 @@ export function makeScenes({ pane, inspector, id, getP, onCount, onScenes, histo
       meta = `<span class="sub s2-meta"><span class="mono">${len.toFixed(1)} s</span>${lay ? ` · ${esc(LAYOUT_NAME[lay] || lay)}` : ''}${r ? ` · Changed by Claude ${esc(ago(r.at))}` : ''}</span>`;
     }
     player.title.innerHTML = `<b>${s.n} · ${esc(s.title)}</b>${g ? `<span class="sub">${esc(g.label)}</span>` : ''}<span class="sc-st ${tone}">${esc(toneText(s, tone))}</span>${meta}`;
+    paintApprove(s);
     paintCmp();
     const n = packageCount();
     $('#s2PkgN', player.el).textContent = n || '';
@@ -1258,7 +1260,9 @@ export function makeScenes({ pane, inspector, id, getP, onCount, onScenes, histo
   function sendBar() {
     const n = packageCount();
     tellOpen(n);
-    return `<div class="s2-send">${n ? `<p class="s2-sum">${summaryLine()}</p>` : ''}<button class="btn accent wide" data-a="send"${n ? '' : ' disabled'}>${ICON.claude}${n ? `Save changes → Claude · ${n}` : 'Nothing waiting for Claude'}</button>
+    // What came of the last Save, once Claude's turn ended (B6): "Claude finished · 2 notes done, 1 still open".
+    const fin = getP()?.packageRun?.result;
+    return `<div class="s2-send">${fin?.sent ? `<p class="s2-fin${fin.open || fin.unmarked ? ' open' : ''}" role="status">${esc(fin.text)}</p>` : ''}${n ? `<p class="s2-sum">${summaryLine()}</p>` : ''}<button class="btn accent wide" data-a="send"${n ? '' : ' disabled'}>${ICON.claude}${n ? `Save changes → Claude · ${n}` : 'Nothing waiting for Claude'}</button>
       ${n ? '<button class="btn ghost small wide" data-a="pkg">See what\'s in it</button>' : ''}</div>`;
   }
   function wireSend(box) {
@@ -1283,8 +1287,7 @@ export function makeScenes({ pane, inspector, id, getP, onCount, onScenes, histo
         <textarea id="ncText" rows="2" placeholder="Add a note at ${clock(t)}… (click the paused picture to pin it to a spot)"></textarea>
         <div class="nc-row"><span class="sub">${s.n} · ${esc(s.title)}</span><span class="gap"></span><button class="btn small" id="ncAdd">Add note</button></div>
       </div>
-      <div class="nc-actions">${sendBar()}${!builtSc(s) ? `${mode === 'full' ? '<button class="btn wide" id="ncOpen" title="See this scene on its own, with its timeline">Open this scene</button>' : ''}<p class="sub nc-nb">Not built yet: no render has this scene, so there is nothing to approve. The take plays here, on the cut.</p>`
-        : mode === 'full' ? `<div class="nc-two"><button class="btn" id="ncOpen" title="See this scene on its own, with its timeline">Open this scene</button><button class="btn" id="ncApprove">${D.approved[s.id] ? 'Approved ✓' : 'Approve scene'}</button></div>` : `<button class="btn wide" id="ncApprove">${D.approved[s.id] ? 'Approved ✓ · undo' : 'Approve scene'}</button>`}</div></div>`);
+      <div class="nc-actions">${sendBar()}${mode === 'full' ? '<button class="btn wide" id="ncOpen" title="See this scene on its own, with its timeline">Open this scene</button>' : ''}${!builtSc(s) ? '<p class="sub nc-nb">Not built yet: no render has this scene, so there is nothing to approve. The take plays here, on the cut.</p>' : ''}</div></div>`);
     inspector.replaceChildren(box);
     wireTabs(box); wireSend(box);
     const ta = $('#ncText', box);
@@ -1313,9 +1316,22 @@ export function makeScenes({ pane, inspector, id, getP, onCount, onScenes, histo
     ta.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); add(); } if (e.key === 'Escape') { pin = null; replyTo = null; renderInspector(); } };
     box.querySelector('[data-a=unpin]')?.addEventListener('click', () => { pin = null; renderInspector(); if (player) player.pins.dataset.sig = ''; });
     box.querySelector('[data-a=unreply]')?.addEventListener('click', () => { replyTo = null; renderInspector(); });
-    box.querySelector('#ncApprove')?.addEventListener('click', () => approve());
     box.querySelector('#ncOpen')?.addEventListener('click', () => setMode('scene'));
     if (player) player.pins.dataset.sig = '';
+  }
+  // Approve scene sits on the scene, over the picture, whatever the panel shows (B6). An unbuilt scene has nothing to
+  // approve yet: the button stays, disabled, and says "Build first".
+  function paintApprove(s) {
+    const b = player?.el?.querySelector?.('#scApprove') || $('#scApprove', pane);
+    if (!b || !s) return;
+    const ok = Boolean(D.approved[s.id]), built = builtSc(s);
+    b.disabled = !built && !ok;
+    b.classList.toggle('accent', built && !ok);
+    b.classList.toggle('on', ok);
+    b.textContent = ok ? 'Approved ✓' : built ? 'Approve scene' : 'Build first';
+    b.title = ok ? `Scene ${s.n} is approved: click to take it back` : built ? `Approve scene ${s.n}` : `Scene ${s.n} isn’t built yet: no render has it, so there’s nothing to approve`;
+    b.setAttribute('aria-label', ok ? `Scene ${s.n} approved. Take the approval back` : built ? `Approve scene ${s.n}` : `Approve scene ${s.n}: build it first`);
+    b.onclick = () => approve();
   }
   async function approve() {
     const s = scene(sel);

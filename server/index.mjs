@@ -22,7 +22,7 @@ import { normalize, defaultLayout, newLayers } from '../web/layout.js';
 import { thumbFor } from './thumbs.mjs';
 import { timelineData, filePeaks, joinFlags } from './timeline.mjs';
 import { layoutsRoute } from './saved-layouts.mjs';
-import { scenesView, scenesSummary, notesOp, setOverride, applyBrief, kitBrief, updateKit, KIT, approvePlan, unapprovePlan } from './scenes.mjs';
+import { scenesView, scenesSummary, notesOp, setOverride, applyBrief, kitBrief, updateKit, KIT, approvePlan, unapprovePlan, packageResult } from './scenes.mjs';
 import { buildSteps, renderKind } from './built.mjs';
 import { appRoute } from './setup.mjs';
 import { onboardingRoute, ffmpegReady, setupBusy } from './onboarding.mjs';
@@ -117,6 +117,23 @@ function chatFor(id) {
     chat.agentChoice = () => agentChoice(id, chat.engine);
     chat.listeners.add((ev) => broadcast(id, ev));
     chat.listeners.add((ev) => { if (ev.t === 'busy' && !ev.busy) stepRuns.delete(id); });
+    // Save changes → Claude (B6): when the turn after the Save ends, count what came of the items it sent, for the
+    // Scenes panel and one line in the chat ("Claude finished · 2 notes done, 1 still open").
+    chat.listeners.add((ev) => {
+      if (ev.t !== 'busy' || ev.replay) return;
+      const run = state().projects?.[id]?.packageRun;
+      if (!run || run.result) return;
+      if (ev.busy) { if (!run.started) setProjectState(id, { packageRun: { ...run, started: true } }); return; }
+      if (!run.started) return;
+      const dir = projectDir(id);
+      if (!dir) return;
+      try {
+        const result = packageResult(dir, run.ids);
+        setProjectState(id, { packageRun: { ...run, result: { ...result, at: Date.now() } } });
+        logEvent(id, { t: 'note', text: `${result.text}.`, packageResult: true });
+        broadcast(id, { t: 'files' });
+      } catch (e) { console.error('package result:', e.message); }
+    });
     // A turn ended: everything Claude wrote (and the blocks settled after it) is the package's new starting point (B1).
     chat.listeners.add((ev) => {
       if (ev.t !== 'busy' || ev.busy || ev.replay) return;
@@ -173,7 +190,7 @@ function projectContext(id) {
     `Export → Audio, Transcript and Subtitles work on the final timeline (locked cut, blocks in order, sponsor-read files included): Audio writes renders/<project>_mix_vN.wav|m4a|mp3 (voice + sound cues, mixed like the video; _voice_vN = voice only; optional −14/−16 LUFS), Transcript renders/<project>_transcript_vN.txt|md (block headings, optional timecodes), Subtitles renders/<project>_subtitles_vN.srt|vtt, from work/words_refined.json, else work/tr/words.json (a file block's own words: work/tr/<file name>/words.json); the Video export can burn the captions in.`,
     `The scene plan waits for the creator: after Plan the scenes, they read it in the Plan stage and press Approve plan (Video Octopus then writes "approved" into work/production.json; never write or change that key yourself), or Ask for changes, which reaches you as "Changes to the scene plan: …": change the plan only, tell them what changed and stop. Build steps come after the approval.`,
     `Scenes: work/production.json is the production sheet. Video Octopus shows its scenes as blocks on the timeline and in its Scenes tab, where each scene plays from the newest render in renders/ (the canvas exports above don't count). Keep the scene times on the locked cut's timeline, the same timeline the renders are on, and give each new render the next version number (…_v4.mp4).`,
-    `Review notes: the creator leaves notes per scene and pins them on the picture in the Scenes tab. They are in work/notes.json {notes: [{id, scene, block, text, t (seconds on the render timeline), pos {x, y} (fractions of the frame, when pinned), el {id, label} (the scene element under the pin), version, status, reply}], approved: {scene id: time}}. "Apply my notes" sends you the open ones. When you've handled a note, set its status to "done" and its reply to one line on what you changed (or status "question" with your question in reply). Never delete notes.`,
+    `Review notes: the creator leaves notes per scene and pins them on the picture in the Scenes tab. They are in work/notes.json {notes: [{id, scene, block, text, t (seconds on the render timeline), pos {x, y} (fractions of the frame, when pinned), el {id, label} (the scene element under the pin), version, status, reply}], approved: {scene id: time}}. "Apply my notes" sends you the open ones. When you've handled a note, set its status to "done" and its reply to one line on what you changed (or status "question" with your question in reply). Never delete notes. When your turn after "Save changes → Claude" ends, Video Octopus counts the items it sent and tells the creator ("Claude finished · 2 notes done, 1 still open"); an item you leave as "sent" shows as "not marked done".`,
     `The change package: besides notes, the creator's quick edits in the Scenes tab are notes of kind "change" in the same file: {kind: "change", scene, field: "layout"|"background"|"transition"|"sfx"|"timing"|"style"|"text"|"cut", target {id, label} (a scene element, when it's about one), from, to, text}. Timing changes move a scene edge ({start, end}) or when an element is on screen ({in, out}); they never cut audio (the cut belongs to the Cut tab). A "cut" change (no scene) comes from the Cut tab: from and to are the kept parts of the take before and after ({segments: [[start, end], …]} in take seconds); the brief lists every edit with where it sits on the old cut and writes the old cut to work/cut_before_<id>.json, and before re-rendering you re-align everything that sits on the old timeline (production sheet times, scene files, keyframes and element times in work/overrides.json, note times, B-roll) so nothing drifts off its words. The creator sends the package with "Save changes → Claude". Every note and change with status "open", plus moves in work/overrides.json newer than the newest render, is the creator's change package. Video Octopus sends it to you as one message; if the creator asks you in this chat to send, apply or do "the package" or "my changes", read work/notes.json, tell them what's in it (how many items, which scenes), set those items to "sent", do them in one pass and re-render once, then mark each "done" with a one-line reply. If they ask what's waiting, read the open items and list them.`,
     `Direct edits: the creator can drag and resize the titles, cards and boxes of an HTML scene in Video Octopus. The moves are in work/overrides.json {v: 1, scenes: {"<scene id>" or "*" (every scene): {"<element id>": {dx, dy (frame pixels), scale (around the element's centre)}}}}. Scenes that load the Video Octopus scene kit (assets/octopus-scene.js, a copy of ${KIT}) apply them by themselves whenever they draw, so renders pick them up: don't bake them into the scene code, and keep element ids stable. To make an element movable, draw it inside Octopus.el('<id>', [x, y, w, h], () => { ... }, { label }) in a canvas scene, or give it data-studio="<id>" in an HTML scene.`,
     `Keyframes: an element's entry in work/overrides.json can also hold keys: [{t, dx, dy, s, o, e}], the creator's own keyframes from the scene timeline (◆). t = seconds on the render's timeline (the same as the production sheet), dx/dy = frame pixels, s = scale around the element's centre, o = opacity 0–1 (multiplies the element's own), e = "linear" or "hold" (default: ease in and out) for the way to the next key. Leave "at" out of entries you write: Video Octopus stamps the creator's own moves with it, and only those go into the change package. The kit (kit 2) interpolates them on top of your own animation whenever the scene draws, so the preview and every render show them; with keys, they replace that element's dx/dy/scale. Respect them: when you change a scene, keep element ids and their timing, don't animate the same property against the creator's keys, and if you have to move or rename a keyed element, say so and move its keys along with it (keep their times on the render timeline). Never remove keys unless the creator asks. If a project's assets/octopus-scene.js is older than kit 2, copy ${KIT} over it before relying on keys.`,
@@ -430,6 +447,8 @@ function projectView(id, dir) {
     // creator last opened it (its glow survives a reload).
     unfinished: unfinishedOf(id, pipeline),
     tabSeen: state().projects?.[id]?.tabSeen || null,
+    // The last Save changes → Claude: when, and once its turn ended, what came of it (B6, the Scenes panel's line).
+    packageRun: (({ at, result } = {}) => (at ? { at, result: result || null } : null))(state().projects?.[id]?.packageRun || undefined),
   };
 }
 const shotsView = (dir) => { try { return readShotsAndZooms(dir); } catch (e) { console.error('shots:', e.message); return { shots: null, zooms: { v: 2, items: [] } }; } };
@@ -1005,6 +1024,7 @@ async function route(req, res) {
       if (retimed) { broadcast(id, { t: 'note', text: `Re-timed to the new cut: ${retimed.files.join('; ')}` }); logUse('retime.done', { project: id, files: retimed.files.length }); }
       const brief = applyBrief(dir, { first });
       markPackageBase(dir); // the blocks and canvas look as Claude now has them
+      setProjectState(id, { packageRun: brief.ids?.length ? { ids: brief.ids, at: Date.now(), started: false } : null });
       await chatFor(id).send(brief.text, { brief: { name: 'Save changes → Claude' } });
       logUse('package.sent', { project: id, items: (brief.notes || 0) + (brief.changes || 0) + (brief.moves || 0) });
       broadcast(id, { t: 'files' });

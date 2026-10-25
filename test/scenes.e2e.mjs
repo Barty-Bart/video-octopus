@@ -153,8 +153,9 @@ try {
   await until('the take in scene 3', async () => (await pic())?.cutview, 10000);
   await sleep(400);
   p = await pic();
-  const nb = await page.evaluate(() => ({ approve: Boolean(document.querySelector('#ncApprove')), state: document.querySelector('.s2-title .sc-st')?.textContent || '' }));
-  expect(p.take.shown && !p.render.shown && /Not built yet/.test(p.note) && !nb.approve && /Not built yet/.test(nb.state), 'scene 3 (not built): the take, "Not built yet", no Approve', { p, nb });
+  // B6: Approve stays on the scene; an unbuilt one shows it disabled as "Build first" (the server still refuses it).
+  const nb = await page.evaluate(() => { const b = document.querySelector('#scApprove'); return { approve: b ? { disabled: b.disabled, text: b.textContent } : null, state: document.querySelector('.s2-title .sc-st')?.textContent || '' }; });
+  expect(p.take.shown && !p.render.shown && /Not built yet/.test(p.note) && nb.approve?.disabled && nb.approve.text === 'Build first' && /Not built yet/.test(nb.state), 'scene 3 (not built): the take, "Not built yet", Approve disabled as "Build first"', { p, nb });
   await shot('4-not-built');
   const refused = await api(`/api/projects/${ID}/notes`, { op: 'approve', scene: '3' }).then(() => null, (e) => e.message);
   expect(/isn't built yet/.test(refused || ''), 'the server refuses to approve a scene that isn\'t built', refused);
