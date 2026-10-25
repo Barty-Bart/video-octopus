@@ -7,7 +7,7 @@
 //   Renders and Post pane). Each stage is a tab: clicking it opens its workspace (hooks.goStage). The selected stage is
 //   where you are (bold, underlined); a NEXT badge sits on the stage of the next step, RUNNING with a spinner on the stage
 //   whose step Claude is working on; the two can differ. One segment per step (green done, accent next, dashed
-//   optional), a tick when every step is done or skipped (Publish: once a render exists), and a dot for something new
+//   optional), a tick when every step is done or skipped (Publish: once the video is exported or a render is marked final), and a dot for something new
 //   there (hooks.marks). The ▾ beside a stage opens its steps (what each does, where it shows, Run / Skip / Undo skip /
 //   Show me) without changing the pane; Alt+↓ or a long press on the stage opens it too. fit() folds the bar as it
 //   narrows: segments, the project name, the ▾ buttons, then (and always at 760 px and below) one button with the
@@ -98,8 +98,9 @@ export function makeRail({ root, id, getP, hooks }) {
   function stageInfo(st, cur, rs) {
     const ss = stepsOf(st);
     const nDone = ss.filter((s) => s.done).length;
-    // Publish has no steps: its tick is a render.
-    const tick = st.name === 'Publish' ? Boolean(getP().renders?.length) : ss.length > 0 && ss.every((s) => s.done || s.skipped);
+    // Publish has no steps: its tick is the finished video, an export (Export → Video) or a render marked final. A Build
+    // step's render isn't one: it's ready to review, not published.
+    const tick = st.name === 'Publish' ? published() : ss.length > 0 && ss.every((s) => s.done || s.skipped);
     const badge = rs ? (rs.stage === st.name ? 'run' : '') : cur?.stage === st.name ? 'next' : '';
     const optional = ss.length > 0 && ss.every((s) => s.optional);
     const skipped = optional && ss.some((s) => s.skipped) && ss.every((s) => s.skipped || s.done);
@@ -119,12 +120,13 @@ export function makeRail({ root, id, getP, hooks }) {
     if (badge === 'run') parts.push(`running: ${runText(rs)}`);
     if (badge === 'next') parts.push(`next step: ${cur.name}`);
     if (ss.length) parts.push(`${nDone} of ${ss.length} step${ss.length > 1 ? 's' : ''} done`);
-    else if (st.name === 'Publish') parts.push(tick ? 'a render is ready' : 'nothing rendered yet');
+    else if (st.name === 'Publish') parts.push(tick ? 'exported' : getP().renders?.length ? 'not exported yet' : 'nothing rendered yet');
     else if (pl()) parts.push('no steps in this format');
     if (optional) parts.push(skipped ? 'optional, skipped' : 'optional');
     if (tick && st.name !== 'Publish') parts.push('done');
     return [...parts, ...extra].join(', ');
   }
+  const published = () => { const P = getP(); return Boolean(P.finalRender) || (P.renders || []).some((r) => r.kind === 'export'); };
   const selected = () => hooks.stage?.() || null;
   let menu = null, longPress = 0, longFired = false;
   function renderBar() {
@@ -133,7 +135,7 @@ export function makeRail({ root, id, getP, hooks }) {
     const cur = p ? current() : null, rs = p ? running() : null, sc = P.scenes?.count ? P.scenes : null, nd = p ? needs() : 0;
     const sel = selected(), marks = hooks.marks?.() || {};
     const list = stageList().map((st) => stageInfo(st, cur, rs));
-    const sig = JSON.stringify([p && p.steps.map((s) => [s.id, s.done, s.skipped, s.name]), p?.current, rs?.id, rs && runText(rs), sc && [sc.approved, sc.count, sc.of], nd, popFor, sel, marks, Boolean(P.renders?.length), Boolean(menu)]);
+    const sig = JSON.stringify([p && p.steps.map((s) => [s.id, s.done, s.skipped, s.name]), p?.current, rs?.id, rs && runText(rs), sc && [sc.approved, sc.count, sc.of], nd, popFor, sel, marks, Boolean(P.renders?.length), published(), Boolean(menu)]);
     if (sig === barSig && barHost.querySelector('.stages')) return fit();
     barSig = sig;
     const fo = document.activeElement;
@@ -265,7 +267,7 @@ export function makeRail({ root, id, getP, hooks }) {
     const had = menu.contains(document.activeElement) ? document.activeElement.dataset.go || document.activeElement.dataset.steps : null;
     menu.innerHTML = `<ul class="sm-list">${stageList().map((st) => {
       const i = stageInfo(st, cur, rs), on = st.name === sel;
-      const count = i.ss.length ? `${i.nDone} of ${i.ss.length}` : st.name === 'Publish' ? (i.tick ? 'rendered' : '') : '';
+      const count = i.ss.length ? `${i.nDone} of ${i.ss.length}` : st.name === 'Publish' ? (i.tick ? 'exported' : '') : '';
       return `<li><button type="button" class="sm-go${on ? ' on' : ''}" data-go="${esc(st.name)}" aria-current="${on ? 'true' : 'false'}" aria-label="${esc(stageLabel(i, cur, rs, marks[st.name] ? [marks[st.name]] : []))}">
           <span class="sm-ic" aria-hidden="true">${i.tick ? ICON.tick : ''}</span><b>${esc(st.name)}</b>${badgeHtml(i.badge)}${marks[st.name] ? '<i class="stg-dot" aria-hidden="true"></i>' : ''}<span class="gap"></span><small aria-hidden="true">${esc(count)}</small></button>
         ${i.ss.length ? `<button type="button" class="nc-link sm-steps" data-steps="${esc(st.name)}" aria-label="${esc(`${st.name} steps`)}">Steps</button>` : ''}</li>`;
@@ -689,14 +691,17 @@ export function makeRail({ root, id, getP, hooks }) {
     const place = () => {
       if (!alive) return;
       const r = t.rect();
+      // The thing went out of view (another stage opened, its pane hidden): the outline and its tag go with it, never
+      // left over the top corner of the app.
+      if (!r || (!r.width && !r.height)) { stop(); return; }
       Object.assign(o.style, { left: `${r.left - 3}px`, top: `${r.top - 3}px`, width: `${r.width + 6}px`, height: `${r.height + 6}px` });
       o.classList.toggle('tag-in', r.top < 40); // no room above it: the tag sits inside the outline
       raf = requestAnimationFrame(place);
     };
-    place();
     const stop = () => { alive = false; cancelAnimationFrame(raf); o.remove(); if (overlay?.o === o) overlay = null; };
     const timer = setTimeout(() => { o.classList.add('out'); setTimeout(stop, reduced() ? 0 : 400); }, 4000);
     overlay = { o, stop: () => { clearTimeout(timer); stop(); } };
+    place();
   }
 
   // ---------- empty states ----------

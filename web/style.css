@@ -2795,11 +2795,11 @@ body.in-project .bar .sp-sub { display: none; }
 .ep-ar { font-style: normal; color: var(--muted); }
 .em-acts { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; justify-content: center; }
 .em-acts .nc-link { font-size: 12.5px; }
-
-/* first time: the five stages in one row */
 .ep.run { border-color: var(--accent); color: var(--text); font-weight: 600; }
 .em-run { display: inline-flex; align-items: center; gap: 8px; margin: 0; font-size: 13.5px; color: var(--text-2); }
 .em-run b { color: var(--text); }
+
+/* first time: the five stages in one row */
 .dialog.rail-first { width: min(1040px, calc(100vw - 32px)); padding: 26px 28px 22px; display: flex; flex-direction: column; gap: 18px; }
 .rail-first .ft-head h2 { margin: 0 0 4px; font-size: 24px; letter-spacing: -0.01em; font-family: var(--display); font-style: var(--display-style); font-weight: var(--display-weight); }
 .rail-first .ft-head p { margin: 0; color: var(--text-2); max-width: 760px; }

@@ -204,6 +204,24 @@ test('New video: Untitled video with the last-used style and format, a style or 
   assert.equal(row.exported, false);
   assert.equal(row.stage, 'Record');
   assert.ok(row.stageIndex >= 1 && row.stageCount >= row.stageIndex);
+  // Every step that must be done is done (each by its own done rule in core/pipelines.json); an optional one (Package)
+  // never was: the tile says Done, not the optional step's stage.
+  const pipes = JSON.parse(readFileSync(join(APP, 'core', 'pipelines.json'), 'utf8'));
+  const dir = join(s.studio, 'projects', first.id), type = s.meta(first.id).type;
+  const steps = pipes.formats[type].steps.map((x) => (typeof x === 'string' ? { id: x, ...pipes.shared[x] } : x));
+  let worklog = '';
+  for (const st of steps.filter((x) => !x.optional)) {
+    const d = st.done || {}, put = (rel, text) => { mkdirSync(dirname(join(dir, rel)), { recursive: true }); writeFileSync(join(dir, rel), text); };
+    if (d.files?.length) put(d.files[0].replace('*', 'x'), 'x');
+    else if (Array.isArray(d.json)) put(d.json[0], JSON.stringify({ [d.json[1]]: true }));
+    else if (d.worklog) worklog += `- ${d.worklog}\n`;
+  }
+  writeFileSync(join(dir, 'WORKLOG.md'), worklog);
+  assert.ok(steps.some((x) => x.optional), 'the style has an optional step');
+  const done = (await s.ok('/api/projects')).find((p) => p.id === first.id);
+  assert.equal(done.next, null);
+  assert.equal(done.stage, null, 'an optional step left undone is not where the video is');
+  assert.equal(done.stageIndex, null);
   const counts = await s.ok('/api/app/counts');
   assert.deepEqual(counts.waiting, { memories: 0, drafts: { count: 0, formatId: null } });
   assert.equal(counts.channels.find((x) => x.id === c.A.id).description, 'Me on camera, teaching with my screen');

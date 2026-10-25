@@ -174,9 +174,10 @@ export function listProjects() {
       const id = basename(dir);
       const status = meta ? pipelineStatus(dir, meta.type) : null;
       const next = status?.steps.find((s) => s.id === status.next);
-      // The stage the video is at, as Home's Continue hero says it: "Step 3 of 6 · Cut".
+      // The stage the video is at, as Home's Continue hero says it: "Step 3 of 6 · Cut". Only a step that must be done
+      // counts: a video whose required steps are all done is Done, not "Package" (an optional step never done).
       const stages = status?.stages || [];
-      const at = stages.findIndex((x) => x.current);
+      const at = next ? stages.findIndex((x) => x.name === next.stage) : -1;
       return {
         id,
         name: meta?.name || id,

@@ -761,10 +761,11 @@ export function makeScenes({ pane, inspector, id, getP, onCount, onScenes, histo
       if (!fold) for (const sid of g.scenes) {
         const s = scene(sid);
         if (!s) continue;
+        // An unbuilt scene says so once, on its picture (A14: not again in the line under the title).
         const tone = toneOf(s), th = thumbs.get(`${renderFile}|${s.id}`);
         const b = h(`<button class="s2-row${s.id === sel ? ' on' : ''}" role="listitem" data-id="${esc(s.id)}" aria-current="${s.id === sel}">
           <span class="s2-th${builtSc(s) ? '' : ' nb'}"><img alt=""${th && reaches(s) ? ` src="${th}"` : ' hidden'}>${builtSc(s) ? '' : '<span class="s2-nbl">Not built yet</span>'}<span class="s2-n">${s.n}</span></span>
-          <span class="s2-rt"><b>${esc(s.title)}</b>${s.line ? `<span class="s2-line" title="${esc(s.line)}">“${esc(s.line)}”</span>` : ''}<span class="sub"><span class="mono">${clock(s.start)}</span><i style="background:${TONE_DOT[tone]}"></i>${esc(toneText(s, tone))}</span></span>
+          <span class="s2-rt"><b>${esc(s.title)}</b>${s.line ? `<span class="s2-line" title="${esc(s.line)}">“${esc(s.line)}”</span>` : ''}<span class="sub"><span class="mono">${clock(s.start)}</span>${tone === 'unbuilt' && !builtSc(s) ? '' : `<i style="background:${TONE_DOT[tone]}"></i>${esc(toneText(s, tone))}`}</span></span>
           <span class="s2-now" hidden>▶ NOW</span></button>`);
         b.onclick = () => select(s.id);
         rows.append(b);

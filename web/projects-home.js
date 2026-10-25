@@ -18,11 +18,14 @@ const mmss = (s) => {
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 // A tile's picture fades in when it loads. Without one (no take yet) it stays the dark stage with a quiet glyph:
-// never a letter tile.
+// never a letter tile. A tall picture (a 9:16 Short) shows whole, on a blurred copy of itself, not cropped to 16:9.
 export function wireThumb(box) {
   const img = $('img', box);
   if (!img) return;
-  img.onload = () => box.classList.add('in');
+  img.onload = () => {
+    if (img.naturalHeight > img.naturalWidth * 1.05) { box.classList.add('tall'); box.style.setProperty('--pic', `url("${img.currentSrc || img.src}")`); }
+    box.classList.add('in');
+  };
   img.onerror = () => { img.remove(); box.classList.add('none'); };
 }
 const stagePic = (p, lazy = true) => `<img alt="" decoding="async"${lazy ? ' loading="lazy"' : ''} src="${thumbUrl(p)}">`
@@ -86,7 +89,8 @@ export function renderProjects(main, ctx) {
   // ---- Continue: the project you were on, on its real frame ----
   const hero = $('#hero', main);
   if (resume) {
-    const stageCount = resume.stageCount || 0, at = resume.stageIndex || 0;
+    // Every step that must be done is done: the whole bar is done (an optional step left doesn't count).
+    const stageCount = resume.stageCount || 0, at = resume.stageIndex || (resume.progress && !resume.next ? stageCount + 1 : 0);
     const bar = stageCount ? Array.from({ length: stageCount }, (_, i) => `<i class="${i + 1 < at ? 'd' : i + 1 === at ? 'n' : ''}"></i>`).join('') : '';
     const where = resume.stage ? `Step ${at} of ${stageCount} · ${resume.stage}` : !resume.hasTake ? 'Not started' : stageOf(resume);
     const el = h(`<section class="pv-hero" aria-labelledby="heroName">
