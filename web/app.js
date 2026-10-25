@@ -41,7 +41,8 @@ import * as rec from './recorder.js';
 import { HOTKEY } from './recorder.js';
 import { icon } from './icons.js';
 import { makeMediaActions, popMenu, addLayerMenu, currentCard, otherRows, removedRows, wireReorder, itemName, actionToast } from './media.js';
-import { waiting, settled, clearChat, onAttention, pending, canOfferNotifications, offerNotifications, notificationsOn, soundOn, setSound } from './attention.js';
+import { waiting, settled, clearChat, onAttention, pending, canOfferNotifications, offerNotifications, notificationsOn, soundOn, setSound,
+  chatAgent, setWorking, setStopped, openItems, stateOf, describe } from './attention.js';
 import { agentPickers } from './agent-pickers.js';
 import { applyAppearance, onAppearance, cutLookParams, themeSwitch } from './appearance.js';
 import { rememberMessage, reviewLessons } from './memory.js';
@@ -467,7 +468,7 @@ async function openProject(id) {
   );
   const el = h(`<div class="project">
     <section class="col chat" aria-label="Claude">
-      <div class="chat-rail"><button class="chat-open" id="chatOpen" aria-label="Open Claude (⌘J)" title="Open Claude (⌘J)">${ICON.claude}<i class="chat-dot" hidden></i></button><span class="chat-rail-l">Claude · ⌘J</span></div>
+      <div class="chat-rail"><button class="chat-open" id="chatOpen" aria-label="Open Claude (⌘J)" title="Open Claude (⌘J)">${ICON.claude}<i class="chat-dot" hidden></i><i class="chat-state" aria-hidden="true" hidden></i></button><span class="chat-rail-l">Claude · ⌘J</span></div>
       <div class="chat-head">${ICON.claude}<span class="title">${esc(window.STUDIO_AGENT || 'Claude')}</span><span id="sessionInfo"></span>
         <button class="btn ghost small chat-fold" id="chatFold" aria-label="Fold Claude away (⌘J)" title="Fold Claude away (⌘J)">«</button></div>
       <div class="chat-ctl" id="chatCtl" role="group" aria-label="How the agent works">
@@ -724,24 +725,31 @@ async function openProject(id) {
   };
   // A finished step's one-line marker in the log is drawn by the rail (it has Show me); `rail` exists by the first event.
   const chat = makeChat(el, id, blocks, { chips, doneMarker: (ev) => rail.marker(ev), proposals, unfold: () => setFold(false) });
-  // Waiting for you (web/attention.js): a badge in the top bar while this video's chat or its Packaging chat waits for
-  // an answer; it opens the chat (or Packaging) at the card.
+  // Claude's state (B10, web/attention.js): one badge in the top bar for this video's chat and its Packaging chat,
+  // Working, Waiting for you, Finished · N open, or Claude stopped; it opens the chat (or Packaging) where it matters.
+  // The folded chat rail shows the same state for this video's chat as a small mark.
   const waitBadge = h('<button type="button" class="wait-badge" id="waitBadge" hidden><i aria-hidden="true"></i><span>Waiting for you</span></button>');
   $('#barActions').prepend(waitBadge);
   const mine = [id, `${id}.packaging`];
   const paintBadge = () => {
-    const list = pending(mine);
-    waitBadge.hidden = !list.length;
-    if (!list.length) return;
-    const a = list[0];
-    waitBadge.title = `${a.kind === 'question' ? 'A question' : 'A permission request'} is waiting: ${a.text || ''}`;
-    $('span', waitBadge).textContent = list.length > 1 ? `${list.length} waiting for you` : 'Waiting for you';
+    const st = stateOf(mine), d = describe(st);
+    waitBadge.hidden = st.state === 'idle';
+    waitBadge.dataset.state = st.state;
+    waitBadge.title = d.label;
+    $('span', waitBadge).textContent = d.badge;
+    const rs = stateOf(id), rd = describe(rs), mark = $('.chat-state', el), open = $('#chatOpen', el);
+    mark.hidden = rs.state === 'idle';
+    mark.dataset.state = rs.state;
+    mark.textContent = rs.state === 'waiting' && rs.count > 1 ? String(rs.count) : '';
+    const words = `Open ${window.STUDIO_AGENT || 'Claude'} (⌘J)${rd.label ? ` · ${rd.label}` : ''}`;
+    open.title = words; open.setAttribute('aria-label', words);
   };
   waitBadge.onclick = () => {
-    const a = pending(mine)[0];
-    if (!a) return;
-    if (a.chat !== id && tab !== 'packaging') setTab('packaging');
-    a.focus?.();
+    const st = stateOf(mine);
+    if (st.state === 'idle') return;
+    if (st.chat !== id && tab !== 'packaging') setTab('packaging');
+    else if (st.chat === id && st.state !== 'waiting') setFold(false);
+    st.focus?.();
   };
   const offBadge = onAttention(paintBadge);
   paintBadge();
@@ -1398,6 +1406,7 @@ function makeChat(root, id, ext = {}, opts = {}) {
   // editor's top bar badge, a desktop notification and an optional sound come with it (web/attention.js). Cleared when
   // it's answered or withdrawn, when the turn ends, and on a new session.
   const who = () => opts.agent || window.STUDIO_AGENT || 'Claude';
+  chatAgent(id, who());
   const waits = new Map(); // request id -> the permission or question event
   const waitBar = h('<div class="wait-banner" role="alert" aria-live="assertive" hidden></div>');
   msgs.before(waitBar);
@@ -1460,6 +1469,20 @@ function makeChat(root, id, ext = {}, opts = {}) {
   }
   // Send again on a turn that stopped (server: ChatSession.retry): only the latest one offers it; a new message takes it away.
   const dropRetry = () => msgs.querySelectorAll('.err-retry').forEach((b) => b.remove());
+  // The same Send again from the dock and the top bar (Claude's state, B10).
+  const sendAgain = async () => {
+    try { await api(`${base}/chat`, { retry: true }); dropRetry(); setStopped(id, null); return true; } catch (e) { toast(e.message); return false; }
+  };
+  // Claude's state (B10, web/attention.js): working while a turn runs; when it ends, a reply that asks you something
+  // (or a question left unanswered) is an open item until you write again; an agent that stopped is "stopped".
+  let turnText = '';
+  function turnEnded(unanswered) {
+    // The reply's last line asks something (a list's last item that happens to end in "?" doesn't: "6. WHY AI?").
+    const last = turnText.replace(/```[\s\S]*?```/g, '').replace(/[*_\s]+$/, '').split('\n').pop() || '';
+    const asked = /\?$/.test(last) && !/^\s*(\d+[.)]|[-*•])\s/.test(last);
+    openItems(id, 'questions', unanswered || asked ? { count: unanswered || 1, text: unanswered ? `${unanswered} question${unanswered > 1 ? 's' : ''} not answered` : `${who()} asked you something`,
+      read: () => { opts.unfold?.(); requestAnimationFrame(() => reveal(null)); } } : null);
+  }
   // Following new messages: while the list is at its bottom it stays there, also when its height changes under it (the
   // working line, the quick replies, the composer's step line, the chat unfolding) or a message grows (a card answered,
   // a tool's output). Scrolled up, nothing moves: a "↓ New message" pill says something came and takes you down.
@@ -1688,19 +1711,27 @@ function makeChat(root, id, ext = {}, opts = {}) {
     if (ev.t === 'usage') { if (!ev.replay && ev.engine === STATUS?.engine) showUsage(ev); return; }
     switch (ev.t) {
       case 'local-down': localDown(ev); break;
-      case 'busy': setBusy(ev.busy); if (!ev.busy) { flushHeld(); unwaitAll(); } break;
-      case 'status': $('#workText', root).textContent = ev.text; break;
+      case 'busy': {
+        const unanswered = ev.busy ? 0 : [...waits.values()].filter((x) => x.t === 'question').length;
+        setBusy(ev.busy); setWorking(id, ev.busy);
+        if (ev.busy) openItems(id, 'questions', null);
+        else { flushHeld(); unwaitAll(); turnEnded(unanswered); }
+        break;
+      }
+      case 'status': $('#workText', root).textContent = ev.text; if (busy) setWorking(id, true, { detail: ev.text }); break;
       case 'session': $('#sessionInfo', root).textContent = ev.model ? `· ${ev.model.replace(/^claude-/, '')}` : ''; break;
       case 'context': showContext(ev); break;
       case 'reset': {
         // A new session, or an earlier one continued: redraw from what the server sends next.
         tools.clear(); cards.clear(); closeMenu(); clearChips(); setTitle(''); showContext(null); unwaitAll();
+        turnText = ''; setStopped(id, null); openItems(id, 'questions', null);
         pinned = true; caughtUp(); undoOffer = null;
         msgs.replaceChildren(h(`<div class="empty-chat" id="emptyChat">New session.<br><span class="sub">${id === '_studio' ? 'Same Claude, a fresh conversation.' : 'The project’s files, notes and WORKLOG are its memory.'}</span></div>`));
         break;
       }
       case 'user': {
         clearChips(); undoOffer = null; turnOver = false; dropRetry();
+        turnText = ''; setStopped(id, null); openItems(id, 'questions', null);
         // Video Octopus's own message (a step's brief, the change package…): one line, "▶ Clean up · started 14:32", with what
         // Video Octopus asked folded under it (an older log's are folded the same way by the server, server/claude.mjs forReplay).
         if (ev.brief?.name) {
@@ -1712,7 +1743,7 @@ function makeChat(root, id, ext = {}, opts = {}) {
         if ($('.sp-t', sess).textContent === 'This session' && !ev.text.startsWith('/')) setTitle(ev.text.replace(/\s+/g, ' ').slice(0, 60));
         break;
       }
-      case 'text': { lastText = ev.text; const display = ev.text.replace(/```octopus-name[ \t]*\r?\n([\s\S]*?)```/g, (m, n) => `\n*Name for this video: ${n.trim().split('\n')[0]}*\n`).replace(/```octopus-memory[\s\S]*?```/g, `\n[Proposed lessons → Review in Memories](#/style/_/memories?chat=${encodeURIComponent(id)})\n`); const n = add(h(`<div class="msg-ai">${md(display)}</div>`), ev); n.dataset.ts = ev.ts || ''; break; }
+      case 'text': { lastText = ev.text; turnText = ev.text; const display = ev.text.replace(/```octopus-name[ \t]*\r?\n([\s\S]*?)```/g, (m, n) => `\n*Name for this video: ${n.trim().split('\n')[0]}*\n`).replace(/```octopus-memory[\s\S]*?```/g, `\n[Proposed lessons → Review in Memories](#/style/_/memories?chat=${encodeURIComponent(id)})\n`); const n = add(h(`<div class="msg-ai">${md(display)}</div>`), ev); n.dataset.ts = ev.ts || ''; break; }
       case 'undo-offer': undoOffer = ev; if (turnOver && !busy) showChips(); break;
       case 'proposals': {
         // Claude's turn left proposed shots or zooms: "Claude proposed 3 shots and 6 zooms · Show me · Keep all · No
@@ -1797,11 +1828,9 @@ function makeChat(root, id, ext = {}, opts = {}) {
         const n = add(h(`<div class="error"><span class="err-t">${esc(ev.text)}</span></div>`), ev);
         if (ev.retry) {
           const b = h('<button type="button" class="btn small err-retry">Send again</button>');
-          b.onclick = async () => {
-            b.disabled = true;
-            try { await api(`${base}/chat`, { retry: true }); b.remove(); } catch (e) { b.disabled = false; toast(e.message); }
-          };
+          b.onclick = async () => { b.disabled = true; if (!(await sendAgain())) b.disabled = false; };
           n.append(b);
+          setStopped(id, { text: ev.text, retry: sendAgain, focus: () => { opts.unfold?.(); setTimeout(() => { n.scrollIntoView({ block: 'center' }); flash(n); b.focus({ preventScroll: true }); }, 60); } });
         }
         break;
       }

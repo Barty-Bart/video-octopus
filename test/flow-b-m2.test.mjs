@@ -112,3 +112,96 @@ test('B8: the board offers Use this idea and, when empty, a big Generate 6 ideas
   // The route comes before anything that talks to Codex: Use this idea makes no model call.
   assert.ok(srv.indexOf("op === 'use'") < srv.indexOf('const c = chatFor(project);\n    if (action === \'answer\')'));
 });
+
+test('B10: one state model: waiting, then stopped, then working, then open; the same words everywhere', async () => {
+  const A = await import('../web/attention.js');
+  assert.equal(A.chatState({}), 'idle');
+  assert.equal(A.chatState({ busy: true, stopped: { text: 'x' } }), 'working', 'a new turn has dealt with the stop');
+  assert.equal(A.chatState({ asks: 1, busy: true }), 'waiting');
+  assert.equal(A.chatState({ open: [{ text: 'x' }] }), 'open');
+  const snap = (chat, o) => ({ chat, asks: [], busy: false, stopped: null, open: [], ...o });
+  const ask = { chat: 'p.packaging', id: 'r1', text: 'Wants to use Bash', at: 1, focus: () => 'f' };
+  assert.equal(A.pickState([snap('p', { busy: true }), snap('p.packaging', { asks: [ask] })]).state, 'waiting');
+  const w = A.pickState([snap('p', { busy: true }), snap('p.packaging', { asks: [ask] })]);
+  assert.deepEqual([w.chat, w.count, w.text, w.focus()], ['p.packaging', 1, 'Wants to use Bash', 'f']);
+  assert.equal(A.pickState([snap('p', { open: [{ text: 'a' }] }), snap('q', { stopped: { text: 'exit 3' } }), snap('r', { busy: true })]).state, 'stopped');
+  assert.equal(A.pickState([snap('p', { open: [{ text: 'a' }] }), snap('r', { busy: true })]).state, 'working');
+  const open = A.pickState([snap('p', { open: [{ text: 'Plan didn’t finish', count: 1 }, { text: '1 note still open', count: 1 }] })]);
+  assert.deepEqual([open.state, open.count, open.text], ['open', 2, 'Plan didn’t finish · 1 note still open']);
+  assert.equal(A.pickState([]).state, 'idle');
+
+  const words = (state, o = {}) => A.describe({ state, count: 1, text: '', ...o }, 'Claude');
+  assert.deepEqual([words('working').badge, words('working').line, words('working').title, words('working').mark], ['Working', 'Claude is working', '◌ ', 'working']);
+  assert.deepEqual([words('waiting').badge, words('waiting', { count: 2 }).badge, words('waiting').title], ['Waiting for you', '2 waiting for you', '● Waiting for you · ']);
+  assert.deepEqual([words('open', { count: 2 }).badge, words('open').line, words('open').title], ['Finished · 2 open', 'Finished', '']);
+  assert.deepEqual([words('stopped').badge, words('stopped').line, words('stopped').title], ['Claude stopped', 'Claude stopped', '! ']);
+  assert.equal(A.describe({ state: 'working', agent: 'Codex' }).line, 'Codex is working', 'Packaging’s chat says Codex');
+  assert.equal(words('idle').badge, '');
+
+  // The tab title: "● Waiting for you · " kept for waiting, a quieter mark while working; a page's own title is kept.
+  let t = A.titleFor('Weekly tips · Video Octopus', { state: 'working' });
+  assert.deepEqual(t, { title: '◌ Weekly tips · Video Octopus', applied: '◌ ' });
+  t = A.titleFor(t.title, { state: 'waiting', count: 1 }, t.applied);
+  assert.equal(t.title, '● Waiting for you · Weekly tips · Video Octopus');
+  t = A.titleFor(t.title, { state: 'stopped' }, t.applied);
+  assert.equal(t.title, '! Weekly tips · Video Octopus');
+  t = A.titleFor(t.title, { state: 'open' }, t.applied);
+  assert.deepEqual(t, { title: 'Weekly tips · Video Octopus', applied: '' });
+  assert.equal(A.titleFor('! Exclamation video · Video Octopus', { state: 'idle' }, '').title, '! Exclamation video · Video Octopus', 'a name that starts with ! stays');
+});
+
+test('B10: chats report their state; a stop waits for Send again; open items have a hook for more (notes)', async () => {
+  const A = await import('../web/attention.js');
+  const id = 'b10-video';
+  A.chatAgent(id, 'Claude');
+  A.setWorking(id, true);
+  assert.equal(A.stateOf(id).state, 'working');
+  A.setWorking(id, true, { detail: 'Compacting the chat…' });
+  assert.equal(A.stateOf(id).text, 'Compacting the chat…');
+  A.setWorking(id, false);
+  A.openItems(id, 'questions', { count: 1, text: 'Claude asked you something' });
+  let sent = 0;
+  A.setStopped(id, { text: 'Claude Code stopped (exit 3).', retry: () => { sent++; } });
+  let st = A.stateOf(id);
+  assert.equal(st.state, 'stopped');
+  st.retry();
+  assert.equal(sent, 1);
+  A.setWorking(id, true); // Send again started a turn
+  assert.equal(A.stateOf(id).state, 'working');
+  A.setWorking(id, false);
+  assert.equal(A.stateOf(id).state, 'open', 'the stop is gone; the question is still open');
+  A.openItems(id, 'notes', { count: 1, text: '1 note still open' }); // the Polish notes summary's hook (B6)
+  st = A.stateOf(id);
+  assert.deepEqual([st.count, st.items.map((x) => x.key)], [2, ['questions', 'notes']]);
+  A.openItems(id, 'questions', null);
+  A.openItems(id, 'notes', null);
+  assert.equal(A.stateOf(id).state, 'idle');
+  A.waiting({ chat: `${id}.packaging`, id: 'q1', kind: 'question', text: 'Which one?' });
+  A.setWorking(id, true);
+  assert.equal(A.stateOf([id, `${id}.packaging`]).state, 'waiting');
+  assert.equal(A.stateOf(id).state, 'working', 'the folded rail is this video’s chat only');
+  A.clearChat(`${id}.packaging`);
+  A.clearChat(id);
+  assert.equal(A.stateOf().state, 'idle');
+});
+
+test('B10: the chat, the top bar, the folded rail and the dock all draw from attention.js', () => {
+  const app = web('app.js');
+  assert.match(app, /setBusy\(ev\.busy\); setWorking\(id, ev\.busy\);/, 'plain chat turns count as working, not only steps');
+  assert.match(app, /setStopped\(id, \{ text: ev\.text, retry: sendAgain/);
+  assert.match(app, /openItems\(id, 'questions'/);
+  assert.match(app, /const asked = \/\\\?\$\/\.test\(last\) && !\/\^\\s\*\(\\d\+\[\.\)\]\|\[-\*•\]\)\\s\/\.test\(last\);/, 'a list item ending in "?" is not a question for you');
+  assert.match(app, /if \(busy\) setWorking\(id, true, \{ detail: ev\.text \}\)/, 'the agent’s own status rides along');
+  assert.match(app, /const st = stateOf\(mine\), d = describe\(st\);/, 'the top bar badge: this video’s chat and its Packaging chat');
+  assert.match(app, /<i class="chat-state" aria-hidden="true" hidden><\/i>/, 'the folded rail’s mark');
+  assert.match(app, /const rs = stateOf\(id\), rd = describe\(rs\), mark = \$\('\.chat-state', el\)/);
+  // Permission requests still show once, as the banner: the badge and the dock only point at it.
+  assert.equal((app.match(/data-w="1">Allow<\/button>/g) || []).length, 1);
+  const rail = web('rail.js');
+  assert.match(rail, /openItems\(id, 'unfinished', uf \?/, 'the dock’s Didn’t finish is an open item');
+  assert.match(rail, /function paintState\(rs = running\(\)\)/);
+  assert.match(rail, /onAttention\(\(\) => \{ paintEmpties\(\); paintState\(\); \}\)/);
+  assert.match(rail, /data-a="st-retry">Send again<\/button>/);
+  const att = web('attention.js');
+  assert.match(att, /const WORKING_MARK = '◌ ', STOPPED_MARK = '! ';/);
+});

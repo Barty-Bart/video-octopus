@@ -2745,6 +2745,30 @@ body.in-project .bar .sp-sub { display: none; }
 .dku-read { flex: none; border: 0; padding: 0; background: none; color: inherit; font: inherit; font-weight: 700; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 .dku-x { flex: none; width: 22px; height: 22px; margin-top: -2px; display: grid; place-items: center; border: 0; border-radius: 6px; background: none; color: inherit; cursor: pointer; }
 .dku-x:hover { background: var(--warn-soft-2); }
+/* Claude's state on the dock (B10, web/rail.js paintState): the same marks as the top bar badge and the folded rail */
+.dk-st { display: flex; align-items: center; gap: 6px; line-height: 1.4; margin-bottom: 6px; padding: 5px 4px 5px 8px; border-radius: calc(var(--ctl-radius) * 8 / 9); background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line); color: var(--text-2); font-size: 12px; animation: dk-in 0.2s ease-out; }
+.dk-st.waiting { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); color: var(--accent-text); }
+.dk-st.stopped { background: var(--bad-soft); box-shadow: inset 0 0 0 1px var(--bad); color: var(--bad-ink); }
+.dk-st .dku-t { -webkit-line-clamp: 1; }
+.dk-st .dku-read { margin-right: 4px; }
+.chat:has(.dk-st.working) #working { display: none; } /* the dock line says it, with the agent's status */
+/* one mark per state: working a small ring, waiting the accent dot, open a quiet dot, stopped a red one */
+.st-mark, .chat-state { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); display: inline-grid; place-items: center; }
+.st-mark[data-state="working"], .chat-state[data-state="working"] { background: transparent; }
+.st-mark[data-state="working"] .spin { width: 9px; height: 9px; border-width: 1.5px; }
+.st-mark[data-state="waiting"], .chat-state[data-state="waiting"] { background: var(--accent); animation: wb-pulse 1.4s ease-in-out infinite; }
+.st-mark[data-state="stopped"], .chat-state[data-state="stopped"] { background: var(--bad); }
+.chat-state { position: absolute; bottom: -4px; right: -4px; width: 12px; height: 12px; border: 2px solid var(--panel); font-size: 9px; font-weight: 700; color: var(--on-accent); line-height: 1; }
+.chat-state[hidden] { display: none; }
+.chat-state:not(:empty) { width: auto; min-width: 16px; height: 16px; padding: 0 3px; border-radius: 999px; }
+.chat-state[data-state="working"] { border-color: var(--text-3); border-right-color: transparent; animation: spin 0.9s linear infinite; }
+.wait-badge[data-state="working"] { border-color: var(--line); background: transparent; color: var(--text-2); font-weight: 500; }
+.wait-badge[data-state="working"] i { background: transparent; border: 1.5px solid var(--text-3); border-right-color: transparent; animation: spin 0.9s linear infinite; }
+.wait-badge[data-state="open"] { border-color: var(--line); background: var(--panel-2); color: var(--text); }
+.wait-badge[data-state="open"] i { background: var(--text-3); animation: none; }
+.wait-badge[data-state="stopped"] { border-color: var(--bad); background: var(--bad-soft); color: var(--bad-ink); }
+.wait-badge[data-state="stopped"] i { background: var(--bad); animation: none; }
+@media (prefers-reduced-motion: reduce) { .chat-state, .wait-badge i, .st-mark { animation: none !important; } }
 
 /* a finished step's one line in the chat log: "✓ Split into sections · 1 section added: Main body · Show me" */
 .marker.done { align-items: center; gap: 8px; margin: 2px 0; padding-top: 0; border-top: 0; color: var(--text-2); }
