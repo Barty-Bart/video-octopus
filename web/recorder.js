@@ -57,6 +57,9 @@ const set = (patch) => { Object.assign(S, patch); for (const fn of subs) { try {
 syncWithRecorder(onSession); // a script in its own window follows the take
 let run = null;  // the running take: recorders, uploaders, streams
 let dev = null;  // the open streams: { screen, cam, mic } (MediaStream or null)
+// The take for the editor's canvas while it records (B7, web/rec-live.js): the session (phase, paused, startedAt,
+// target, landed) and the streams it records, or is about to (the countdown), or null.
+export const liveStreams = () => run?.d || dev || null;
 window.addEventListener('beforeunload', (e) => { if (['starting', 'recording', 'stopping'].includes(S.phase)) { e.preventDefault(); e.returnValue = ''; } });
 
 export const stopStream = (s) => s?.getTracks().forEach((t) => t.stop());
@@ -240,7 +243,7 @@ async function startTake(id, d, sel) {
       if (run === R && S.phase === 'recording') { toast(t.kind === 'video' && s === d.screen ? 'Screen sharing stopped: saving the take.' : `The ${t.kind === 'audio' ? 'microphone' : 'camera'} went away: saving the take.`); stop(); }
     });
     run = R;
-    set({ phase: 'recording', project: id, take, startedAt: Date.now(), progress: 0, kind, paused: false });
+    set({ phase: 'recording', project: id, take, startedAt: Date.now(), progress: 0, kind, paused: false, target: sel.target, landed: null });
     return take;
   } catch (e) { ctx?.close().catch(() => {}); throw e; } // a mic-only take that didn't start lets go of its AudioContext
 }
@@ -280,7 +283,8 @@ function watchSave(id, take) {
     if (st?.done) {
       if (!st.ok) toast(st.error || 'Couldn’t save the take.');
       else afterTake(id, take);
-      return set({ phase: 'idle', progress: 0, take: null });
+      // landed: the canvas keeps saying "Saving the take…" until the project shows it (web/rec-live.js).
+      return set({ phase: 'idle', progress: 0, take: null, landed: st.ok ? { take, at: Date.now() } : null });
     }
     if (st) set({ progress: st.progress || 0 });
     setTimeout(tick, 700);
@@ -449,7 +453,7 @@ const ICON = {
   restart: '<svg viewBox="0 0 16 16" aria-hidden="true" class="line"><path d="M3.5 8a4.5 4.5 0 1 0 1.4-3.3"/><path d="M3 2.5v3h3"/></svg>',
   stop: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" rx="1.5"/></svg>',
 };
-let ctl = null, dockSlot = null, ctlTick = 0;
+let ctl = null, ctlTick = 0;
 const mmss = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
 
 function buildCtl() {
@@ -485,16 +489,23 @@ function buildCtl() {
   });
 }
 
-// Floating over the app, or docked in the script's bar while the script scrolls.
+// Floating over the app, or docked: in the script's bar while the script scrolls, else in the canvas's live view (B7).
+// Slots stack: the newest one shows the bar; under: true puts a slot below the others (the live view under the script).
 function placeCtl() {
   if (!ctl) return;
-  const docked = Boolean(dockSlot?.isConnected) && !ui.after;
-  const home = docked ? dockSlot : document.body;
+  const slot = [...docks].reverse().find((x) => x.isConnected);
+  const docked = Boolean(slot) && !ui.after;
+  const home = docked ? slot : document.body;
   if (ctl.parentNode !== home) home.append(ctl);
   ctl.classList.toggle('docked', docked);
 }
-export const dockControls = (slot) => { dockSlot = slot; renderCtl(); };
-export const undockControls = (slot) => { if (dockSlot === slot) dockSlot = null; renderCtl(); };
+const docks = [];
+export const dockControls = (slot, { under = false } = {}) => {
+  const i = docks.indexOf(slot); if (i >= 0) docks.splice(i, 1);
+  if (under) docks.unshift(slot); else docks.push(slot);
+  renderCtl();
+};
+export const undockControls = (slot) => { const i = docks.indexOf(slot); if (i >= 0) docks.splice(i, 1); renderCtl(); };
 
 function renderCtl() {
   if (S.phase !== 'recording' && ui.confirm) { ui.confirm = false; clearTimeout(ui.confirmT); } // stopped meanwhile
@@ -795,7 +806,7 @@ export async function recordPanel({ id, P, choices, opts = {}, settingsLink }) {
     close(true);
     // The script, if there is one, scrolls once the take starts; the recording controls sit in its bar meanwhile.
     prompterForTake(id, { onSession, stop, dock: dockControls, undock: undockControls });
-    set({ phase: 'starting', project: id });
+    set({ phase: 'starting', project: id, target: sel.target, landed: null });
     if (sel.countdown && !(await countdown(sel.countdown))) { closeDevices(d); return set({ phase: 'idle' }); }
     try { await startTake(id, d, sel); }
     catch (e) { closeDevices(d); set({ phase: 'idle' }); toast(`Couldn't start recording: ${e.message}`); }
@@ -856,4 +867,4 @@ function countdown(n, say = 'Recording starts… switch to what you want to reco
 }
 
 // For tests (headless Chromium with fake devices): the running take's streams.
-window.__studioRec = { session, streams: () => run?.d || dev, stop, pause, resume, restart, askRestart, deleteTake, restoreTake };
+window.__studioRec = { session, streams: liveStreams, stop, pause, resume, restart, askRestart, deleteTake, restoreTake };

@@ -18,6 +18,7 @@ import { makeRouter, legacyRoute, parseRoute, routeNeedsLookup } from './nav.js'
 import { TERMS } from './terms.js';
 import { renderProjects, setTypeNames } from './projects-home.js';
 import { makeStartScreen } from './start-screen.js';
+import { makeLiveView, liveMode, liveCard } from './rec-live.js';
 import { makeStylePicker } from './style-picker.js';
 import { renderSchedules } from './schedules.js';
 import { paintNight, painterFor, frameTime, edgeHTML, wireEdge, renderEdge, drawGhost, drawGuides, makeBackgroundSection } from './look.js';
@@ -794,9 +795,13 @@ async function openProject(id) {
     onPackage: () => setTab('packaging'),
   });
   $('.tab-body', el).append(start.el);
+  // While a take records here (B7): the canvas shows it live, then "Saving the take…" until it lands (web/rec-live.js).
+  const live = makeLiveView({ rec, id, hasTake, onChange: () => paintStart() });
+  $('.tab-body', el).append(live.el);
   paintStart = () => {
     const empty = !hasTake();
-    start.show(empty && tab === 'canvas');
+    const recording = live.update(tab === 'canvas');
+    start.show(empty && tab === 'canvas' && !recording);
     el.classList.toggle('no-take', empty);
     const hello = $('#emptyChat', el);
     // One next step (B2): the dock's. The script and hook chips help with Record, so they show only while Record is
@@ -1282,7 +1287,7 @@ async function openProject(id) {
       return true;
     },
   };
-  return { teardown: () => { if (projectPage?.id === id) projectPage = null; es.close(); picker.destroy(); chat.destroy(); offBadge(); waitBadge.remove(); pickers.destroy(); railRO.disconnect(); rail.destroy(); waveStop?.(); rdCmp?.destroy(); canvas.destroy(); scenes.destroy(); sound.destroy(); post.destroy(); packaging.destroy(); recorder.destroy(); blocks.destroy(); document.removeEventListener('click', closeMenus); document.removeEventListener('keydown', foldKeys); removeEventListener('message', onCutMessage); cutPanel.destroy(); clearBar(); } };
+  return { teardown: () => { if (projectPage?.id === id) projectPage = null; es.close(); picker.destroy(); chat.destroy(); offBadge(); waitBadge.remove(); pickers.destroy(); railRO.disconnect(); rail.destroy(); waveStop?.(); rdCmp?.destroy(); canvas.destroy(); scenes.destroy(); sound.destroy(); post.destroy(); packaging.destroy(); recorder.destroy(); live.destroy(); blocks.destroy(); document.removeEventListener('click', closeMenus); document.removeEventListener('keydown', foldKeys); removeEventListener('message', onCutMessage); cutPanel.destroy(); clearBar(); } };
 }
 
 // ---------- export receipt: prints out of a slot when an export finishes ----------
@@ -2066,6 +2071,9 @@ function makeCanvas(pane, { inspector, tools }, id, getP, hooks = {}) {
   }
   const layerCount = () => (layout || normalize(getP().layout, getP().type)).layers.length;
   const hasRecording = () => Boolean(mediaData?.items.some((x) => x.canvas));
+  // The first take recording or saving: the Media card says so (B7); repainted when that changes.
+  let liveKey = '';
+  const offLive = rec.onSession((S) => { const k = liveMode(S, { id, hasTake: hasRecording() }) || ''; if (k !== liveKey) { liveKey = k; renderMedia(); } });
   function wireMediaSection(host) {
     $('#mdAdd', host).onclick = (e) => { e.stopPropagation(); addLayerMenu(e.currentTarget, mediaActions, { layerCount: layerCount(), canLayer: hasRecording() }); };
     $('#mdNoteX', host).onclick = () => mediaNote(null);
@@ -2076,10 +2084,11 @@ function makeCanvas(pane, { inspector, tools }, id, getP, hooks = {}) {
   function renderMedia() {
     const host = mediaHost();
     if (!host) return;
-    const sig = JSON.stringify([mediaVer, layerCount()]);
+    const lv = liveCard(liveMode(rec.session(), { id, hasTake: hasRecording() }));
+    const sig = JSON.stringify([mediaVer, layerCount(), lv]);
     if (host.dataset.sig !== sig) {
       host.dataset.sig = sig;
-      $('#mdCurrent', host).replaceChildren(currentCard(mediaData, mediaActions));
+      $('#mdCurrent', host).replaceChildren(currentCard(mediaData, mediaActions, { live: lv }));
       const others = otherRows(mediaData, mediaActions, { layerCount: layerCount() });
       $('#mdOther', host).replaceChildren(...others);
       $('#mdOtherWrap', host).hidden = !others.length;
@@ -3709,7 +3718,7 @@ function makeCanvas(pane, { inspector, tools }, id, getP, hooks = {}) {
     zoomDrawing: () => Boolean(zoomDraw), startZoomDraw: () => startZoomDraw(),
     pause: () => { paused = true; master?.pause(); },
     resume: () => { paused = false; },
-    destroy: () => { teardownMedia(); document.removeEventListener('keydown', onKey); document.removeEventListener('click', closeMenus); },
+    destroy: () => { offLive(); teardownMedia(); document.removeEventListener('keydown', onKey); document.removeEventListener('click', closeMenus); },
   };
 }
 

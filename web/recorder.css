@@ -289,3 +289,103 @@
     display: none;
   }
 }
+
+/* ---------- the canvas while a take records (web/rec-live.js, B7): the picture, the mic and the docked bar ---------- */
+.rec-live {
+  position: absolute;
+  inset: 0;
+  z-index: 4; /* where the start screen sits */
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px;
+  background: var(--stage);
+  color: var(--stage-dim);
+}
+.rec-live[hidden] { display: none; }
+.rl-stage {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  container-type: size;
+}
+.rl-frame {
+  position: relative;
+  width: min(100cqw, 100cqh * 16 / 9);
+  aspect-ratio: 16 / 9;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--rec-frame);
+}
+.rl-frame > video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.rl-cam {
+  position: absolute;
+  right: 3%;
+  bottom: 4%;
+  width: 22%;
+  aspect-ratio: 1;
+  border-radius: 16px;
+  overflow: hidden;
+  border: 3px solid var(--white);
+  background: var(--stage-2);
+  transform: scaleX(-1); /* like a mirror, as in the record panel */
+}
+.rl-cam[hidden] { display: none; }
+.rl-cam video { width: 100%; height: 100%; object-fit: cover; }
+.rl-frame.cam-only > .rl-screen { display: none; }
+.rl-frame.cam-only .rl-cam { inset: 0; width: 100%; height: 100%; aspect-ratio: auto; border: 0; border-radius: 0; background: transparent; }
+.rl-tag {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 11px;
+  border-radius: 8px;
+  background: var(--pp-bar);
+  color: var(--white);
+  font-size: 12.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.rl-tag i { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); }
+.rec-live[data-mode="live"] .rl-tag i { animation: rl-blink 1.2s ease-in-out infinite; }
+.rec-live[data-mode="paused"] .rl-tag i, .rec-live[data-mode="starting"] .rl-tag i { background: var(--warn); }
+.rl-time:empty { display: none; }
+@keyframes rl-blink { 50% { opacity: 0.25; } }
+@media (prefers-reduced-motion: reduce) { .rec-live[data-mode="live"] .rl-tag i { animation: none; } }
+.rl-saving {
+  position: absolute;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--stage-dim);
+  font-size: 15px;
+}
+.rl-saving small { color: var(--stage-muted); font-size: 12.5px; }
+.rec-live[data-mode="saving"] .rl-saving { display: flex; }
+.rec-live[data-mode="saving"] .rl-frame > video, .rec-live[data-mode="saving"] .rl-cam, .rec-live[data-mode="saving"] .rl-tag { display: none; }
+.rec-live.mic-only .rl-frame > video, .rec-live.mic-only .rl-cam { display: none; }
+.rl-bar { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; min-height: 40px; }
+.rl-mic { flex: 1; min-width: 220px; display: flex; align-items: center; gap: 12px; font-size: 13px; }
+.rl-mic b { font-weight: 500; }
+.rl-meter { min-width: 120px; }
+.rl-micw { min-width: 72px; color: var(--stage-muted); font-size: 12px; }
+.rec-live.mic-only .rl-meter i { height: 22px; }
+.rec-live[data-mode="saving"] .rl-mic { visibility: hidden; }
+.rl-ctl { display: flex; justify-content: flex-end; }
+.rl-ctl:empty { display: none; }
+.rec-live .rc.docked .rc-state { display: none; } /* the time is on the picture */
+.rec-live[data-mode="saving"] .rl-ctl { visibility: hidden; } /* the bar's buttons wait; the top bar shows the save */
