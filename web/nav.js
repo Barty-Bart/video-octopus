@@ -51,7 +51,7 @@ export const SETTINGS_SECTION_GROUP = {
   recorder: 'recording', transcribe: 'recording',
   editing: 'editing', sound: 'editing', look: 'editing',
   render: 'export',
-  folders: 'storage', storage: 'storage', trash: 'storage', usage: 'storage',
+  folders: 'storage', storage: 'storage', playback: 'storage', trash: 'storage', usage: 'storage',
 };
 
 // The style pages (Flat 3): #/styles[/instructions|/memories|/kits], a style #/style/<formatId>/<tab> and a brand

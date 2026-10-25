@@ -3075,3 +3075,18 @@ body.in-project .bar .sp-sub { display: none; }
 .s2-approve:disabled { opacity: 1; color: var(--text-3); background: var(--surface-2); cursor: not-allowed; }
 .s2-fin { margin: 0 0 8px; font-size: 12px; font-weight: 600; color: var(--ok-ink); }
 .s2-fin.open { color: var(--warn-ink); }
+
+/* Playback (server/playback.mjs): a small quiet status by the time while an original is indexed or a 720p copy is
+   made; the picture plays meanwhile. And the question after an export: delete the editing copies? */
+.play-status { flex: none; max-width: min(260px, 30%); height: 22px; line-height: 22px; padding: 0 8px; border-radius: 6px; background: var(--seg); color: var(--faint); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; cursor: default; }
+.play-status::before { content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: var(--accent); vertical-align: 1px; opacity: 0.8; animation: play-status-pulse 1.6s ease-in-out infinite; }
+@keyframes play-status-pulse { 50% { opacity: 0.3; } }
+@media (prefers-reduced-motion: reduce) { .play-status::before { animation: none; } }
+.blank .play-status.blank-status { display: inline-block; max-width: 100%; margin-top: 10px; }
+.blank .play-status.blank-status[hidden] { display: none; }
+.copy-offer .job-top { flex-wrap: wrap; align-items: flex-start; }
+.copy-offer .job-top span { display: flex; flex-direction: column; gap: 2px; min-width: 200px; }
+.copy-offer { max-width: 560px; }
+.copy-offer .job-top strong { font-weight: 600; color: var(--text); font-size: 12.5px; }
+.copy-offer .job-top small { color: var(--muted); font-size: 11.5px; line-height: 1.4; }
+.copy-offer .co-again { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; color: var(--muted); font-size: 11.5px; cursor: pointer; }

@@ -41,7 +41,7 @@ import { STAGE_PANE, PANE_WORDS, paneOfTab, stageOfTab, stagesOf, stageForPane, 
 import * as rec from './recorder.js';
 import { HOTKEY } from './recorder.js';
 import { icon } from './icons.js';
-import { makeMediaActions, popMenu, addLayerMenu, currentCard, otherRows, removedRows, wireReorder, itemName, actionToast } from './media.js';
+import { makeMediaActions, popMenu, addLayerMenu, currentCard, otherRows, removedRows, wireReorder, itemName, actionToast, playbackCard } from './media.js';
 import { waiting, settled, clearChat, onAttention, pending, canOfferNotifications, offerNotifications, notificationsOn, soundOn, setSound,
   chatAgent, setWorking, setStopped, openItems, stateOf, describe } from './attention.js';
 import { agentPickers } from './agent-pickers.js';
@@ -405,7 +405,7 @@ async function importTakeFile(id, file) {
     const r = await fetch(`/api/projects/${encodeURIComponent(id)}/take-upload?name=${encodeURIComponent(file.name)}`, { method: 'POST', headers: { 'X-Studio': '1', 'Content-Type': 'application/octet-stream' }, body: file });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || `copying failed (${r.status})`);
-    toast(`${file.name} is the take. Making a playback copy…`);
+    toast(`${file.name} is the take.`);
     await askAlreadyEdited(id); // B9: "Is this video already edited?" (web/edited-import.js)
     return true;
   } catch (err) {
@@ -1040,7 +1040,7 @@ async function openProject(id) {
         <i><b style="width:${Math.round((job.progress || 0) * 100)}%"></b></i><span class="sub">${Math.round((job.progress || 0) * 100)}%</span></div></section>` : ''}
       <section class="ex-go">
         <button class="btn dark wide big" id="exGo"${ready && !job && STATUS?.ffmpeg !== false ? '' : ' disabled'}>${ICON.export}${job ? 'Exporting…' : P.renders.length ? 'Export a new version' : 'Export'}</button>
-        ${STATUS?.ffmpeg === false ? '<p class="sub">Exporting needs ffmpeg: <a href="#/setup">Setup → Tools</a> installs it.</p>' : ready ? '' : '<p class="sub">Add a recording first, and wait until its playback copies are ready.</p>'}
+        ${STATUS?.ffmpeg === false ? '<p class="sub">Exporting needs ffmpeg: <a href="#/setup">Setup → Tools</a> installs it.</p>' : ready ? '' : '<p class="sub">Add a recording first, and wait until it shows on the canvas.</p>'}
         <button class="btn wide" id="exLearn" title="${esc(P.pipeline?.learn?.ask || '')}">Study this project</button>
         <p class="sub ta-c">Saves reusable pieces and lessons into your library.</p></section>
     </div>`));
@@ -1053,7 +1053,7 @@ async function openProject(id) {
     $('#exLearn', box).hidden = !P.type;
     $('#exLearn', box).onclick = () => runStep({ id: 'learn', kind: 'claude' });
     $('#exGo', box).onclick = async () => {
-      if (!canvas.ready()) return toast('Add a recording first, and wait until its playback copies are ready.');
+      if (!canvas.ready()) return toast('Add a recording first, and wait until it shows on the canvas.');
       $('#exGo', box).disabled = true;
       try { await api(`/api/projects/${encodeURIComponent(id)}/export`, { layout: canvas.layout(), useCut: exUseCut && Boolean(P.export.cut), pngs: { ...canvas.exportLayers(), looks: canvas.lookPngs(canvas.layout()) }, captions: exKinds.captions(), built: exBuilt.choice(P.export.built) }); }
       catch (e) { toast(e.message); $('#exGo', box).disabled = false; }
@@ -1243,6 +1243,36 @@ async function openProject(id) {
 
   // live events
   const jobs = new Map();
+  // After an export: delete the 720p editing copies? (server/playback.mjs). The export came from the originals; the
+  // copies are caches the editor can make again, so Delete is for good (not the Bin). Don't ask again: Settings ›
+  // Storage › Playback has the same switch.
+  let copyOffer = null;
+  const gb = (b) => (b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(b / 1e6))} MB`);
+  async function offerCopyDelete() {
+    if (STATUS?.storage?.askDeleteCopies === false) return;
+    let pb;
+    try { pb = (await api(`/api/projects/${encodeURIComponent(id)}`)).playback; } catch { return; }
+    const n = pb?.copies?.editing?.files || 0, bytes = pb?.copies?.editing?.bytes || 0;
+    if (!n) return;
+    copyOffer = h(`<div class="job copy-offer" role="alertdialog" aria-labelledby="coT" aria-describedby="coS"><div class="job-top"><span><strong id="coT">Delete the 720p editing ${n === 1 ? 'copy' : 'copies'} (${gb(bytes)})?</strong>
+        <small id="coS">Your originals and the export stay. ${n === 1 ? 'It is' : 'They are'} only for smooth editing and can be made again, so ${n === 1 ? 'it is' : 'they are'} deleted for good, not moved to the Bin.</small></span>
+      <button class="btn small dark" data-a="del">Delete</button><button class="btn ghost small" data-a="keep">Keep</button></div>
+      <label class="co-again"><input type="checkbox" data-a="never"> Don’t ask again</label></div>`);
+    const close = async () => {
+      if ($('[data-a=never]', copyOffer)?.checked) {
+        try { await api('/api/app/settings', { section: 'storage', values: { askDeleteCopies: false } }); if (STATUS) STATUS.storage = { ...(STATUS.storage || {}), askDeleteCopies: false }; } catch {}
+      }
+      copyOffer = null; renderJobs();
+    };
+    $('[data-a=del]', copyOffer).onclick = async (e) => {
+      e.target.disabled = true;
+      try { const r = await api(`/api/projects/${encodeURIComponent(id)}/playback-copies-delete`, {}); toast(r.files ? `Deleted ${r.files === 1 ? 'the editing copy' : `${r.files} editing copies`}: ${gb(r.bytes)} free. The editor plays the originals now.` : 'Nothing to delete.'); }
+      catch (err) { toast(err.message); }
+      await close(); softRefresh();
+    };
+    $('[data-a=keep]', copyOffer).onclick = () => close();
+    renderJobs();
+  }
   // A built-in recorder take whose page closed mid-take: offer to finish it (the parts are kept until then).
   const recoverCards = () => (P.recUnfinished || []).filter((u) => u.take !== rec.session().take && !jobs.has(`rec-${u.take}`)).map((u) => {
     const at = new Date(u.started).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
@@ -1259,7 +1289,8 @@ async function openProject(id) {
     return row;
   });
   const renderJobs = () => {
-    $('#jobs', el).replaceChildren(...recoverCards(), ...[...jobs.values()].filter((j) => !(j.id === 'export' && tab === 'publish')).map((j) => {
+    // Playback jobs (quiet: indexing an original, a 720p copy) show as the canvas's small status, not here.
+    $('#jobs', el).replaceChildren(...recoverCards(), ...(copyOffer ? [copyOffer] : []), ...[...jobs.values()].filter((j) => !j.quiet && !(j.id === 'export' && tab === 'publish')).map((j) => {
       const row = h(`<div class="job"><div class="job-top"><span>${esc(j.label)}</span>${j.cancel ? '<button class="btn ghost small" title="Stop this export">Stop</button>' : ''}</div><i><b style="width:${Math.round(j.progress * 100)}%"></b></i></div>`);
       const stop = $('button', row);
       if (stop) stop.onclick = () => api(`/api/projects/${encodeURIComponent(id)}/export-stop`, {});
@@ -1288,8 +1319,15 @@ async function openProject(id) {
       return softRefresh();
     }
     if (ev.t === 'job') {
+      if (ev.quiet) {
+        if (ev.done) jobs.delete(ev.id); else jobs.set(ev.id, ev);
+        if (ev.done && !ev.ok && !ev.replay) toast(ev.label);
+        canvas.setPlayJobs([...jobs.values()].filter((j) => j.quiet));
+        return;
+      }
       if (ev.done) {
         jobs.delete(ev.id);
+        if (ev.ok && ev.file && !ev.folder && ev.kind !== 'audio' && !ev.replay) offerCopyDelete();
         if (!ev.ok) toast(ev.label);
         else if (ev.folder || ev.kind === 'audio') exKinds.finished(ev, () => { setTab('renders'); renderRenders(true); });
         else if (ev.file) {
@@ -2044,6 +2082,7 @@ const MEDIA_SECTION = `<section class="media-sec" id="mediaSec" aria-labelledby=
     <div class="layers" id="layerList" role="list" aria-label="On the canvas, top to bottom"></div></div>
   <div id="mdOtherWrap" hidden><div class="md-sub">Also in this video</div><div class="layers" id="mdOther" role="list" aria-label="Also in this video"></div></div>
   <div class="md-removed" id="mdRemoved"></div>
+  <div id="mdPlay"></div>
   <p class="vh" id="mdSay" aria-live="polite"></p></section>`;
 
 function makeCanvas(pane, { inspector, tools }, id, getP, hooks = {}) {
@@ -2063,6 +2102,53 @@ function makeCanvas(pane, { inspector, tools }, id, getP, hooks = {}) {
   try { const z = localStorage.getItem('studio.canvas.zoom'); if (z === '0.5' || z === '1') picZoom = Number(z); } catch {}
   let saved = []; // layouts saved with "+ Save layout" (the studio's .studio/layouts.json), shown as tiles in every project
   const media = (f) => `/api/projects/${encodeURIComponent(id)}/media?f=${encodeURIComponent(f)}`;
+  // A file's playback URL (P.proxies: its 720p copy or the original; P.playback.files[f].v changes with the file, so
+  // an original indexed in place, or a copy that lands, loads afresh instead of mixing old and new bytes).
+  const playUrl = (P, f) => { const p = f && P.proxies?.[f]; if (!p) return null; const v = P.playback?.files?.[f]?.v; return media(p) + (v ? `&v=${encodeURIComponent(v)}` : ''); };
+  function swapSources(P) {
+    const t = master?.currentTime || 0, wasPlaying = Boolean(master && !master.paused);
+    for (const [f, v] of videos) {
+      const u = playUrl(P, f);
+      if (!u || v.getAttribute('src') === u) continue;
+      const at = v === master ? t : v.currentTime, isMaster = v === master;
+      v.src = u;
+      v.addEventListener('loadedmetadata', () => { try { v.currentTime = at; } catch {} if (isMaster && wasPlaying) v.play().catch(() => {}); }, { once: true });
+    }
+  }
+  // Playback jobs (indexing an original, making a 720p copy): a small quiet status by the time, never in place of the
+  // picture. jobsNow: the page's job events with quiet set (app.js passes them in).
+  let playJobs = [];
+  function paintPlayStatus() {
+    const host = wrap && wrap.isConnected ? wrap : pane, el = host.querySelector('#playStatus');
+    if (!el) return;
+    const list = playJobs.filter((j) => !j.done);
+    el.hidden = !list.length;
+    const mk = host.querySelector('#mk');
+    if (mk) mk.hidden = list.length > 0; // (Make it now: only when nothing is being made)
+    if (!list.length) return;
+    const pct = Math.round(100 * list.reduce((t, j) => t + (j.progress || 0), 0) / list.length);
+    const copy = list.filter((j) => j.kind === 'copy'), index = list.filter((j) => j.kind === 'index');
+    const P = getP(), using = (f) => P.playback?.files?.[f]?.using;
+    const kind = copy.every((j) => j.needed) ? 'playback' : 'editing';
+    const text = index.length ? `Indexing for seeking · ${pct}%` : `Making ${copy.length > 1 ? `${copy.length} ${kind} copies` : `a 720p ${kind} copy`} · ${pct}%`;
+    el.textContent = text;
+    el.title = [...list.map((j) => j.label),
+      list.some((j) => using(j.file) === 'original') ? 'Editing the original meanwhile; it switches by itself when the copy is ready.' : '',
+      'Transcription, Clean up and export don’t wait for it.'].filter(Boolean).join('\n');
+  }
+  const setPlayJobs = (list) => { playJobs = list; paintPlayStatus(); };
+  // A video opened with nothing being made for it that still needs something: a file that can't play yet (after a
+  // restart mid-copy), or Optimise for editing chosen in Settings since it was made. Asked once per state of the files.
+  let playAsked = '';
+  function askForPlayback(P) {
+    const pb = P.playback;
+    if (!pb?.files) return;
+    const want = Object.entries(pb.files).filter(([f, x]) => !isSound(f) && !x.job && (x.using === null || (pb.mode === 'optimise' && !pb.copiesDeleted && x.using === 'original')));
+    const k = JSON.stringify([pb.mode, want.map(([f]) => f)]);
+    if (!want.length || k === playAsked) return;
+    playAsked = k;
+    api(`/api/projects/${encodeURIComponent(id)}/proxies`, {}).catch(() => {});
+  }
   const dims = () => getP().export.dims || {};
 
   // ---- shots ----
@@ -2114,8 +2200,12 @@ function makeCanvas(pane, { inspector, tools }, id, getP, hooks = {}) {
   function update() {
     const P = getP();
     const fresh = normalize(P.layout, P.type);
-    const key = JSON.stringify([P.canvas, P.proxies, P.export.dims, fresh.layers.map((x) => x.file)]);
+    // What plays can change under a built canvas (a copy lands, an original is indexed, copies are deleted): the
+    // videos swap source in place and keep their time. A file that can now play at all (or no longer) rebuilds.
+    const key = JSON.stringify([P.canvas, Object.fromEntries(Object.entries(P.proxies || {}).map(([f, v]) => [f, Boolean(v)])), P.export.dims, fresh.layers.map((x) => x.file)]);
+    askForPlayback(P);
     if (key !== mediaSig) { mediaSig = key; build(P); return; }
+    swapSources(P);
     // The video's look changed outside the canvas (another tab, auto-frame, Claude, Apply to all shots).
     if (base && !drag && !baseDirty && JSON.stringify(fresh) !== JSON.stringify(base)) {
       base = fresh; lookVer++;
@@ -2170,7 +2260,8 @@ function makeCanvas(pane, { inspector, tools }, id, getP, hooks = {}) {
     const host = mediaHost();
     if (!host) return;
     const lv = liveCard(liveMode(rec.session(), { id, hasTake: hasRecording() }));
-    const sig = JSON.stringify([mediaVer, layerCount(), lv]);
+    const pb = getP().playback || null;
+    const sig = JSON.stringify([mediaVer, layerCount(), lv, pb && [pb.mode, pb.own, pb.copies]]);
     if (host.dataset.sig !== sig) {
       host.dataset.sig = sig;
       $('#mdCurrent', host).replaceChildren(currentCard(mediaData, mediaActions, { live: lv }));
@@ -2179,6 +2270,7 @@ function makeCanvas(pane, { inspector, tools }, id, getP, hooks = {}) {
       $('#mdOtherWrap', host).hidden = !others.length;
       $('#mdRemoved', host).replaceChildren(...removedRows(mediaData, mediaActions));
       $('#mdAdd', host).hidden = Boolean(mediaData) && !hasRecording(); // a layer goes on top of a recording
+      $('#mdPlay', host).replaceChildren(...(pb && hasRecording() ? [playbackCard(pb, mediaActions)] : []));
     }
     if (ins) renderLayers();
   }
@@ -2215,13 +2307,19 @@ function makeCanvas(pane, { inspector, tools }, id, getP, hooks = {}) {
     const c = P.canvas;
     if (!c.screen && !c.cam && !c.audio) { showImport(); return; }
     const audioOnly = Boolean(c.audio && !c.screen && !c.cam);
-    const src = (f) => (f && P.proxies[f] ? media(P.proxies[f]) : null);
+    const src = (f) => playUrl(P, f);
+    // Only a file the browser can't play at all waits for its 720p copy (server/playback.mjs); everything else plays
+    // the original straight away.
     if ((c.screen && !src(c.screen)) || (c.cam && !src(c.cam))) {
-      const files = [c.screen, c.cam].filter(Boolean);
-      pane.replaceChildren(h(`<div class="blank"><h3>Getting your recording ready</h3><div>Making playback copies of ${esc(files.join(', '))}. This takes a moment for long takes.</div>
-        <div style="margin-top:12px"><button class="btn small" id="mk">Make them now</button></div></div>`));
+      const files = [c.screen, c.cam].filter((f) => f && !src(f));
+      const reason = (f) => P.playback?.files?.[f]?.why || 'it could not be read';
+      const why = files.length === 1 ? reason(files[0]) : files.map((f) => `${f}: ${reason(f)}`).join('; ');
+      pane.replaceChildren(h(`<div class="blank"><h3>Making a playback copy</h3><div>The browser can't play ${esc(files.join(' or '))} as it is (${esc(why)}), so Video Octopus is making a 720p copy to edit with. Your original stays as it is, and the export uses it.</div>
+        <div class="play-status blank-status" id="playStatus" hidden></div>
+        <div style="margin-top:12px"><button class="btn small" id="mk">Make it now</button></div></div>`));
       $('#mk', pane).onclick = () => api(`/api/projects/${encodeURIComponent(id)}/proxies`, {});
-      emptyInspector('The layout controls show up when the playback copies are ready.');
+      emptyInspector('The layout controls show up when the recording can play.');
+      paintPlayStatus();
       return;
     }
     wrap = h(`<div class="pane canvas-pane">
@@ -2234,6 +2332,7 @@ function makeCanvas(pane, { inspector, tools }, id, getP, hooks = {}) {
         <button class="tp-skip" id="nextScene" aria-label="Next scene">${TP_ICON.next}</button>
         <span class="time" id="time">0:00.0</span>
         <button class="tp-chip" id="sceneChip" hidden></button>
+        <span class="play-status" id="playStatus" role="status" hidden></span>
         <span class="gap"></span>
         <button class="btn small" id="noteMode" hidden title="Click a spot in the picture to leave a note there, at this moment">${PIN_ICON}Note</button>
         <label class="toggle" id="cutWrap" hidden title="Skip the parts the locked cut removes, like the export does"><input type="checkbox" role="switch" id="cutPlay"><span class="sw" aria-hidden="true"></span>Play the locked cut</label>
@@ -2307,8 +2406,9 @@ function makeCanvas(pane, { inspector, tools }, id, getP, hooks = {}) {
     const files = [c.cam, c.screen, c.audio, ...layout.layers.map((x) => x.file)].filter((f, i, a) => f && a.indexOf(f) === i && P.proxies[f]);
     for (const f of files) {
       const v = h(isSound(f) ? `<audio class="hidden-media" preload="auto" muted></audio>` : `<video class="hidden-media" preload="auto" playsinline muted></video>`);
-      v.src = media(P.proxies[f]); document.body.append(v); videos.set(f, v);
+      v.src = src(f); document.body.append(v); videos.set(f, v);
     }
+    paintPlayStatus();
     master = videos.get(c.cam) || videos.get(c.screen) || videos.get(c.audio);
     aoWave = audioOnly ? $('.ao-wave', wrap) : null;
     const play = $('#play', wrap), time = $('#time', wrap);
@@ -3791,6 +3891,7 @@ function makeCanvas(pane, { inspector, tools }, id, getP, hooks = {}) {
 
   return {
     setAspect: (a) => { if (base) setAspect(a); },
+    setPlayJobs,
     setScenes: (d) => { sceneData = d; const b = wrap && $('#noteMode', wrap); if (b) b.hidden = !d; if (!d) setNoteMode(false); chipKey = ''; if (ins) renderLayers(); },
     update, showImport, exportLayers, pngsFor, layerPngs, lookPngs,
     seek: (t) => { if (master) seek(t); }, time: () => master?.currentTime || 0,
@@ -3899,10 +4000,10 @@ function takeMessage(ev) {
   const micOnly = files.length > 0 && files.every(isSound);
   const camOnly = !micOnly && files.length > 0 && !files.some((f) => /_screen\./i.test(f)) && files.some((f) => /_webcam\./i.test(f));
   if (ev.block) return micOnly ? `Mic-only take added to the ${ev.blockLabel || 'new'} block${secs}: its sound plays over the background.`
-    : `Take added to the ${ev.blockLabel || 'new'} block${secs}. Making a playback copy…`;
+    : `Take added to the ${ev.blockLabel || 'new'} block${secs}.`;
   if (micOnly) return `Mic-only take added${secs}. It plays over the layout's background; Clean up transcribes it.`;
-  if (camOnly) return `Camera take added${ev.layer ? ' as a new layer' : ''}${secs}. Making a playback copy and framing the camera…`;
-  return `Take added${ev.layer ? ' as a new layer' : ''}${secs}. Making playback copies and framing the camera…`;
+  if (camOnly) return `Camera take added${ev.layer ? ' as a new layer' : ''}${secs}. Framing the camera…`;
+  return `Take added${ev.layer ? ' as a new layer' : ''}${secs}. Framing the camera…`;
 }
 
 // The look before anything else (the Settings page doesn't load the status itself).

@@ -254,7 +254,7 @@ test('Delete items older than 30 days keeps the newer ones', async () => {
 
 test('web: Settings › Storage has Trash; Recordings rows have Delete with Undo', () => {
   const settings = readFileSync(new URL('../web/settings.js', import.meta.url), 'utf8');
-  assert.match(settings, /\['folders', 'storage', 'trash', 'usage'\]/);
+  assert.match(settings, /\['folders', 'storage', 'playback', 'trash', 'usage'\]/);
   assert.match(settings, /DRAW\.trash = \(V, save\) => trashSection/);
   const trash = readFileSync(new URL('../web/trash.js', import.meta.url), 'utf8');
   assert.match(trash, /\/api\/trash\/empty', \{ confirm: true/);

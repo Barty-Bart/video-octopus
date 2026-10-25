@@ -272,3 +272,9 @@ a.memory-level { text-decoration: none; }
   .sk-table :is(th, td):nth-child(2), .sk-table :is(th, td):nth-child(3) { display: none; }
 }
 .gear svg.ic { stroke-width: 1.8; }
+
+/* Settings › Storage › Playback: the space the 720p editing copies use */
+.pb-copies p { margin: 8px 0; }
+.pb-list { list-style: none; margin: 4px 0 12px; padding: 0; display: grid; gap: 4px; }
+.pb-list li { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.pb-list li .sub { white-space: nowrap; }
