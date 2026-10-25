@@ -552,6 +552,7 @@ body.in-home main { height: 100%; }
 .divider { font-size: 11px; color: var(--faint); display: flex; align-items: center; gap: 10px; }
 .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: var(--line-3); }
 .note { font-size: 12px; color: var(--muted); }
+.note-offer { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .error { font-size: 12px; color: var(--bad); }
 .working { padding: 8px 14px; font-size: 12px; color: var(--muted); display: flex; gap: 8px; align-items: center; border-top: 1px solid var(--line-3); }
 .spin { width: 12px; height: 12px; border: 2px solid var(--line-2); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; flex: none; }

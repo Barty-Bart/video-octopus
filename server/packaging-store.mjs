@@ -133,19 +133,21 @@ export class PackagingStore extends ProfileStore {
       const s = this.sheet(project, id);
       const made = cells.map((c) => this.saveItem(this.newItem(project, {
         origin: 'sheet-cell', sheet: s.id, cell: c.n, box: c.box, stored: c.stored, size: c.size, prompt: s.prompt, revisedPrompt,
-        resources: s.resources, name: `Idea ${c.n}`,
+        resources: s.resources, name: `Idea ${c.n}`, brief: s.brief || '',
       })));
       return this.saveSheet({ ...s, status: 'done', hash: stored.sha256, ext: stored.ext, bytes: stored.size, size, revisedPrompt,
         boxes, items: made.map((x) => x.id), problem, wire, finished: now() });
     });
   }
   newItem(project, { origin, stored, size = null, status = 'candidate', parent = null, sheet = null, cell = null, box = null,
-    prompt = '', revisedPrompt = null, resources = [], name = '', note = '', wire = null }) {
+    prompt = '', revisedPrompt = null, resources = [], name = '', note = '', wire = null, brief = '', idea = null }) {
     if (!ORIGINS.has(origin)) fail('Unknown card origin.');
     if (!STATUSES.has(status)) fail('Unknown card status.');
     return { id: randomUUID(), project, kind: 'thumbnail', origin, status, parent, sheet, cell, box,
       hash: stored.sha256, ext: stored.ext || '.png', bytes: stored.size, size, prompt, revisedPrompt, provider: origin === 'uploaded' ? null : 'codex',
-      resources, name: String(name).slice(0, 120), note: String(note).slice(0, 2000), star: false, winner: false, ...(wire ? { wire } : {}), created: now() };
+      resources, name: String(name).slice(0, 120), note: String(note).slice(0, 2000), star: false, winner: false, ...(wire ? { wire } : {}),
+      // The idea it carries into the script (B8, server/idea-script.mjs): the brief typed next to Generate, Codex's line.
+      ...(brief ? { brief: String(brief).slice(0, 4000) } : {}), ...(idea ? { idea } : {}), created: now() };
   }
   addItem(project, fields) {
     if (fields.parent) this.item(project, fields.parent);

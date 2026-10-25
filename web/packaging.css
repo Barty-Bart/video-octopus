@@ -48,6 +48,17 @@
 .pg-menu .menu { top: 32px; width: 240px; }
 .pg-empty { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 4px; padding: 18px; border: 1px dashed var(--line-2); border-radius: var(--radius); background: var(--panel-2); color: var(--muted); }
 .pg-empty b { color: var(--text); font-weight: 600; }
+/* B8: an empty board's big action, Generate 6 ideas, with the idea typed right there */
+.pg-start { align-items: center; text-align: center; gap: 10px; padding: 40px 24px; border-style: solid; background: var(--panel); }
+.pg-start > b { font-size: 20px; letter-spacing: -0.01em; }
+.pg-start > span { max-width: 52ch; color: var(--text-2); }
+.pg-brief { width: min(100%, 520px); min-height: 84px; resize: vertical; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); color: var(--text); font: inherit; }
+.pg-brief:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pg-go6 { height: 44px; padding: 0 22px; font-size: 15px; font-weight: 600; border-radius: 12px; }
+.pg-cost { color: var(--muted); font-size: 12px; }
+/* B8: after Use this idea */
+.pg-used { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 12px; border-radius: var(--radius); background: var(--accent-soft); color: var(--text); font-size: 13px; }
+.pg-used > span { flex: 1; min-width: 200px; }
 .pg-skel { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .pg-skel i { aspect-ratio: 16 / 9; border-radius: var(--radius); background: var(--panel-3); animation: pg-pulse 1.4s ease-in-out infinite; }
 @keyframes pg-pulse { 50% { opacity: 0.5; } }

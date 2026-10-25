@@ -754,7 +754,10 @@ async function openProject(id) {
   sound = makeSound({ host: $('#insKit', el), id, getP: () => P, media: () => canvas.media(), history });
   const post = makePostKit({ pane: $('[data-pane=post]', el), id, getP: () => P, empty: (run) => rail.empty('post', '', { run }) });
   // Packaging (web/packaging.js): thumbnails with Codex; a main thumbnail finishes the rail's Package step.
-  const packaging = makePackaging({ pane: $('[data-pane=packaging]', el), id, makeChat, onChange: () => softRefresh() });
+  // Use this idea (B8): the project chat offers "Ask Claude to outline it"; the button only sends that message.
+  const outline = (ask) => { setFold(false); chat.send(ask); };
+  const packaging = makePackaging({ pane: $('[data-pane=packaging]', el), id, makeChat, onChange: () => softRefresh(), outline,
+    ideaUsed: ({ name, ask }) => chat.offer(`${name} is in Record’s script as an outline.`, `Ask ${window.STUDIO_AGENT || 'Claude'} to outline it`, () => outline(ask)) });
   // Scenes: the production sheet scene by scene, notes, pins and direct edits (web/scenes.js).
   let doneNotes = -1;
   const scenes = makeScenes({
@@ -1815,7 +1818,13 @@ function makeChat(root, id, ext = {}, opts = {}) {
     if (pinned && !ev.replay) toBottom();
   }
 
-  return { handle, send: (text) => send(text), sendSkill: (name) => send(`/${name} for this project`), note: (text) => handle({ t: 'note', text }), reveal,
+  // A note with one button (Use this idea's "Ask Claude to outline it"); the button goes once pressed.
+  const offer = (text, label, run) => {
+    const n = add(h(`<div class="note note-offer"><span>${esc(text)}</span> <button type="button" class="btn small">${esc(label)}</button></div>`));
+    $('button', n).onclick = (e) => { e.currentTarget.remove(); run(); };
+    if (pinned) toBottom();
+  };
+  return { handle, send: (text) => send(text), sendSkill: (name) => send(`/${name} for this project`), note: (text) => handle({ t: 'note', text }), reveal, offer,
     paintProposals: () => { for (const n of [...propBlocks]) paintProposal(n); },
     setStep: (name) => { if (name === stepName) return; stepName = name; paintComposer(); },
     destroy: () => { follow.disconnect(); grown.disconnect(); clearChat(id); } };

@@ -1,16 +1,18 @@
 // The Packaging tab (Phase 1 MVP): a chat with Codex, Generate (six ideas in one image, cut into cards), a simple board
 // (star, winners up to 3, the main thumbnail, Refine, old thumbnails) and, in the inspector, the working title, the
 // winners and this video's resources. Optional and never blocking. Server: server/packaging.mjs.
-import { $, esc, h, api, toast } from './ui.js';
+import { $, esc, h, api, toast, confirmBox } from './ui.js';
 import { mountResources } from './resources.js';
 
 const STAR = '<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M7 1.4l1.7 3.6 3.9.5-2.9 2.7.7 3.9L7 10.2l-3.4 1.9.7-3.9L1.4 5.5l3.9-.5z"/></svg>';
 const ORIGIN = { 'sheet-cell': 'From a sheet', refined: 'Refined · 1280 × 720', uploaded: 'Your thumbnail', chat: 'From the chat' };
 
 // pane: the tab's pane; makeChat: app.js's chat builder; onChange(): the project view refreshes (the rail's Package step).
-export function makePackaging({ pane, id, makeChat, onChange }) {
+// ideaUsed({ name, ask }): a card's idea went into Record's script (B8); the project chat offers "Ask Claude to outline
+// it" (ask: the message it sends). outline(ask): sends it in the project chat now.
+export function makePackaging({ pane, id, makeChat, onChange, ideaUsed, outline }) {
   const P = `/api/packaging/${encodeURIComponent(id)}`;
-  let view = null, chat = null, events = null, busy = false, started = false, timer = 0, insBox = null, resources = null;
+  let view = null, chat = null, events = null, busy = false, started = false, timer = 0, insBox = null, resources = null, used = null;
   const more = new Set();
 
   pane.innerHTML = `<div class="pg">
@@ -75,9 +77,11 @@ export function makePackaging({ pane, id, makeChat, onChange }) {
         <button type="button" class="pg-ic${x.star ? ' on' : ''}" data-act="star" aria-pressed="${x.star}" aria-label="${esc(`Star ${x.name || 'this card'}`)}" title="Star (shortlist)">${STAR}</button>
         <button type="button" class="btn ghost small${x.winner ? ' on' : ''}" data-act="winner" aria-pressed="${x.winner}"${rejected ? ' disabled' : ''}>Winner</button>
         <button type="button" class="btn ghost small" data-act="refine"${rejected || x.origin === 'uploaded' ? ' disabled' : ''}>Refine</button>
+        ${main ? '<button type="button" class="btn small pg-use" data-act="use" title="Put this idea into Record’s script as an outline">Use this idea</button>' : ''}
         <details class="pg-menu"><summary class="btn ghost small" aria-label="${esc(`More for ${x.name || 'this card'}`)}">⋯</summary>
           <div class="menu">
             <button type="button" class="mi" data-act="main"${rejected ? ' disabled' : ''}>${main ? 'Main thumbnail ✓' : 'Make it the main thumbnail'}</button>
+            <button type="button" class="mi" data-act="use">Use this idea (outline in the script)</button>
             <button type="button" class="mi" data-act="more"${x.origin === 'uploaded' ? '' : ''}>${more.has(x.id) ? 'Not for the next Generate' : 'More like this (next Generate)'}</button>
             <button type="button" class="mi" data-act="reject">${rejected ? 'Bring back' : 'Reject'}</button>
           </div></details>
@@ -93,16 +97,30 @@ export function makePackaging({ pane, id, makeChat, onChange }) {
     else if (latest?.status === 'failed') notes.push(`<p class="notice pg-fail">${esc(latest.failure?.message || 'The last Generate failed.')}</p>`);
     else if (latest?.problem) notes.push(`<p class="notice">${esc(latest.problem)}</p>`);
     if (view.pending === 'refine') notes.push('<p class="pg-run"><span class="spin" aria-hidden="true"></span>Codex is refining a card to 1280 × 720…</p>');
+    if (used) notes.push(`<p class="pg-used" role="status"><span><b>${esc(used.name)}</b> ${used.written === 'appended' ? 'is under your script in Record' : used.written === 'already' ? 'is already in Record’s script' : 'is in Record’s script as an outline'}.</span>
+      <button type="button" class="btn small primary" data-u="ask">Ask ${esc(window.STUDIO_AGENT || 'Claude')} to outline it</button><button type="button" class="btn ghost small" data-u="x" aria-label="Put this away">✕</button></p>`);
     status.innerHTML = notes.join('');
+    status.querySelectorAll('[data-u]').forEach((b) => (b.onclick = () => { const ask = used?.ask; used = null; paint(); if (b.dataset.u === 'ask' && ask) outline?.(ask); }));
     const skeleton = latest?.status === 'running' ? `<div class="pg-skel" aria-hidden="true">${'<i></i>'.repeat(6)}</div>` : '';
+    // An empty board: Generate is its big action (B8), with the idea typed right here (the same brief as the chat's field).
+    const typing = document.activeElement?.classList.contains('pg-brief') ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
     grid.innerHTML = skeleton + (b.items.length ? b.items.map(card).join('') : skeleton ? ''
-      : '<div class="pg-empty"><b>No thumbnails yet</b><span>Generate makes six ideas in one image and cuts them into cards here. You can also upload thumbnails you already have.</span></div>');
+      : `<div class="pg-empty pg-start"><b>Start with the idea</b><span>Say what the video is about. Codex draws six thumbnail ideas in one image and cuts them into cards here; you can also upload thumbnails you already have.</span>
+        <label class="vh" for="pgBrief">What the video is about</label><textarea id="pgBrief" class="pg-brief" rows="3" maxlength="2000" placeholder="Describe your idea…"></textarea>
+        <button type="button" class="btn primary pg-go6">Generate 6 ideas</button><small class="pg-cost">One generation on your ChatGPT plan.</small></div>`);
     for (const n of grid.querySelectorAll('.pg-card')) wireCard(n, b.items.find((x) => x.id === n.dataset.id));
+    const brief = $('.pg-brief', grid);
+    if (brief) {
+      brief.value = gen.elements.brief.value;
+      brief.oninput = () => { gen.elements.brief.value = brief.value; };
+      brief.onkeydown = (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); gen.requestSubmit(); } };
+      $('.pg-go6', grid).onclick = () => gen.requestSubmit();
+      if (typing) { brief.focus(); brief.setSelectionRange(...typing); }
+    }
     paintGenerate();
   }
   function paintGenerate() {
-    const go = $('.pg-go', pane);
-    if (go) {
+    for (const go of pane.querySelectorAll('.pg-go, .pg-go6')) {
       go.disabled = busy || !view?.status?.available;
       go.title = !view?.status?.available ? view?.status?.reason || '' : busy ? 'Codex is working' : 'One image with six ideas (3 × 2), cut into six cards';
     }
@@ -127,6 +145,7 @@ export function makePackaging({ pane, id, makeChat, onChange }) {
       if (act === 'winner') return mark(x, { winner: !x.winner });
       if (act === 'main') return mark(x, { main: view.board.main !== x.id });
       if (act === 'reject') return mark(x, { rejected: x.status !== 'rejected' });
+      if (act === 'use') return useIdea(x);
       if (act === 'more') {
         if (more.has(x.id)) more.delete(x.id); else { if (more.size >= 2) more.delete(more.values().next().value); more.add(x.id); }
         return paint();
@@ -139,6 +158,23 @@ export function makePackaging({ pane, id, makeChat, onChange }) {
         } catch (e) { toast(e.message); }
       }
     }));
+  }
+
+  // Use this idea (B8): its outline stub goes into Record's script. A script with text is never overwritten: asked
+  // first, the outline goes under it or nothing changes. Then the project chat offers "Ask Claude to outline it".
+  async function useIdea(x) {
+    try {
+      let r = await api(`${P}/items/${encodeURIComponent(x.id)}/use`, {});
+      if (r.exists) {
+        const yes = await confirmBox({ title: 'Record’s script already has text', ok: 'Add it under the script', cancel: 'Skip',
+          text: `It has ${r.words} word${r.words === 1 ? '' : 's'}. Add the outline of ${r.idea?.name || 'this idea'} under it? Nothing is replaced.` });
+        if (!yes) return toast('Skipped: the script is as it was.');
+        r = await api(`${P}/items/${encodeURIComponent(x.id)}/use`, { append: true });
+      }
+      used = { name: r.idea?.name || x.name || 'The idea', written: r.written, ask: r.ask };
+      paint();
+      ideaUsed?.({ name: used.name, ask: r.ask });
+    } catch (e) { toast(e.message); }
   }
 
   gen.onsubmit = async (e) => {
@@ -171,7 +207,7 @@ export function makePackaging({ pane, id, makeChat, onChange }) {
       if (!x) return '<li class="pg-slot empty"><span>Empty</span></li>';
       const main = b.main === x.id;
       return `<li class="pg-slot${main ? ' main' : ''}" data-id="${esc(x.id)}"><img src="${img(x)}" alt="">
-        <span class="pg-slot-tx"><b>${esc(x.name || 'Card')}</b>${main ? '<span class="pg-tag">Main</span>' : `<button type="button" class="nc-link" data-act="main">Make main</button>`}
+        <span class="pg-slot-tx"><b>${esc(x.name || 'Card')}</b>${main ? '<span class="pg-tag">Main</span><button type="button" class="nc-link" data-act="use">Use this idea</button>' : `<button type="button" class="nc-link" data-act="main">Make main</button>`}
         <button type="button" class="nc-link" data-act="out">Take out</button></span></li>`;
     }).join('');
     const keep = $('.pg-title input', insBox)?.value;
@@ -197,7 +233,7 @@ export function makePackaging({ pane, id, makeChat, onChange }) {
     };
     insBox.querySelectorAll('.pg-slot[data-id]').forEach((li) => {
       const x = b.items.find((y) => y.id === li.dataset.id);
-      li.querySelectorAll('[data-act]').forEach((btn) => (btn.onclick = () => mark(x, btn.dataset.act === 'main' ? { main: true } : { winner: false })));
+      li.querySelectorAll('[data-act]').forEach((btn) => (btn.onclick = () => (btn.dataset.act === 'use' ? useIdea(x) : mark(x, btn.dataset.act === 'main' ? { main: true } : { winner: false }))));
     });
     resources?.teardown?.();
     resources = $('.pg-res', insBox);

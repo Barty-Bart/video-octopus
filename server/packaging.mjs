@@ -25,6 +25,7 @@ import { addResource, updateResource, archiveResource, getResource, listResource
 import { RESOURCE_LEVELS, parseScope } from './scope-chain.mjs';
 import { SHEET_GRID, THUMB_SIZE, sheetBoxes, cutBoxes, fitThumbnail, imageSize, imageType, extensionFor } from './images.mjs';
 import { autoName } from './naming.mjs';
+import { parseIdeaLine, ideaOf, outlineStub, writeIdeaScript, OUTLINE_ASK } from './idea-script.mjs';
 
 const MAX_UPLOAD = 20 * 1024 * 1024;
 const MAX_ATTACHED = 4;
@@ -191,7 +192,7 @@ async function keepRefined(project, pending, source, revisedPrompt, tmp, wire = 
   return use((s) => {
     const parent = s.item(project, pending.parent);
     return [s.addItem(project, { origin: 'refined', parent: parent.id, stored: storedOf(stored), size, prompt: pending.prompt, revisedPrompt,
-      resources: parent.resources || [], name: `${parent.name || 'Idea'} · refined`, note, wire })];
+      resources: parent.resources || [], name: `${parent.name || 'Idea'} · refined`, note, wire, brief: parent.brief || '', idea: parent.idea || null })];
   });
 }
 
@@ -218,7 +219,7 @@ function nameCards(project, sheet, reply) {
   use((s) => s.tx(() => {
     for (const id of sheet.items || []) {
       const x = s.item(project, id);
-      if (ideas.has(x.cell)) s.saveItem({ ...x, name: `Idea ${x.cell} · ${ideas.get(x.cell)}`.slice(0, 120) });
+      if (ideas.has(x.cell)) s.saveItem({ ...x, name: `Idea ${x.cell} · ${ideas.get(x.cell)}`.slice(0, 120), idea: parseIdeaLine(ideas.get(x.cell)) });
     }
   }));
   const dir = projectDir(project);
@@ -419,6 +420,21 @@ export async function packagingRoute(req, res, url, { send, body }) {
       if (b.main === true) appendWorklog(dir, `Packaging: chose the main thumbnail (${r.item.name || 'a card'}).`);
       boardChanged(project, 'mark');
       return reply(r);
+    }
+    // Use this idea (B8): its outline stub goes into Record's script (script.md). A script with text is never
+    // overwritten: the answer says it exists, and the page asks before sending append: true (or skips).
+    if (action === 'items' && sub && op === 'use') {
+      const { item, sheet, title } = use((s) => {
+        const x = s.item(project, sub);
+        let sh = null;
+        if (x.sheet) { try { sh = s.sheet(project, x.sheet); } catch {} }
+        return { item: x, sheet: sh, title: s.packagingMeta(project).title || '' };
+      });
+      const idea = ideaOf(item, { sheet, title });
+      const stub = outlineStub(idea);
+      const r = writeIdeaScript(dir, stub, { append: b.append === true });
+      if (r.written === 'new' || r.written === 'appended') appendWorklog(dir, `Packaging: put ${item.name || 'an idea'} into the script as an outline.`);
+      return reply({ ...r, idea, stub, ask: OUTLINE_ASK });
     }
 
     // Everything below talks to the Packaging chat (Codex).
