@@ -1,3 +1,9 @@
+# Unreleased
+
+- **Dropped files are in Recordings.** A video file you drop or import into a video now shows in **Recordings** next to your takes, marked **Imported**, named after the original file ("Screen Recording 2026-10-24 at 10.02.11.mov") and with the video it's in. It is listed where it already is, in that video's `source/` folder: nothing is copied a second time. Files imported before this update show up too, by their original name when the video's WORKLOG says it, else by the file's name. **Open video** goes to the video.
+- **Deleting an imported file works like a take.** **Delete** in Recordings, and **Delete recording** in the editor's Media section, ask the same question. **Remove from this video** keeps the file: it moves to the recordings folder, so it stays in Recordings and you can use it again (Undo puts it back in the video). **Delete recording** takes it out of the video and out of Recordings and moves it to your computer's Bin (the studio's trash when there is no Bin), with Undo. Both are refused while Claude or an export is using the video's files.
+- **Start a video from an imported file.** Once a file is back in Recordings on its own, **Start a video from it** moves the file into the new video instead of copying it, so it is never in two places.
+
 # v0.1.0-beta.21
 
 - **One next step.** The dock above the message box is the only place that says what's next, and everything else agrees with it. Projects names the dock's step (a finished video with only an optional step left says "Done · Next: Package (optional)"). The Cut panel's **Save and lock the cut** is the big button only while Lock is the next step; before that it says the dock's step comes first, and it no longer promises that planning the scenes comes next. The Blocks band offers **Split into sections** only while that is the next step. A new video's chat offers **Outline a script** and **Give me 5 hooks** while Record is next ("Before you record…").

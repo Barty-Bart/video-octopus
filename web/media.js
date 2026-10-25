@@ -50,15 +50,16 @@ export function actionToast(text, acts) {
 // Delete recording's question. Resolves { choice: 'video' | 'bin', remember } or null (Cancel, Esc, a click outside).
 // bin: where the computer's Bin is ('the Trash', 'the Recycle Bin'), or null when there is none (then it says the
 // studio's trash). inRecordings: the take is in the Recordings folder too.
-export function deleteChoice({ name, recording = true, inRecordings = true, bin = null }) {
+// video: the video's name when asked from Recordings (an imported file there, A17): the answers name it.
+export function deleteChoice({ name, recording = true, inRecordings = true, bin = null, video = null }) {
   return new Promise((done) => {
     const where = bin ? `${bin} on this computer` : 'the studio’s trash (this computer has no Bin Video Octopus can use)';
     const m = h(`<div class="modal cf-modal"><div class="dialog cf dc" role="dialog" aria-modal="true" aria-labelledby="dcT" aria-describedby="dcD">
       <h3 id="dcT">${esc(recording ? 'Delete this recording?' : `Delete ${name}?`)}</h3>
       <p class="sub cf-text" id="dcD">${esc(recording ? name : 'Pick what happens to it.')}</p>
       <div class="dc-opts" role="group" aria-label="What to delete">
-        <button type="button" class="dc-opt" data-c="video"><b>Remove from this video</b><small>${esc(inRecordings ? 'It stays in Recordings, so you can use it again. Undo brings it back here.' : 'Its files go to the studio’s trash. Undo brings it back here.')}</small></button>
-        <button type="button" class="dc-opt dc-bin" data-c="bin"><b>Delete recording</b><small>${esc(`${inRecordings ? 'Removes it from this video and from Recordings' : 'Removes it from this video'}, and moves the files to ${where}.`)}</small></button>
+        <button type="button" class="dc-opt" data-c="video"><b>${esc(video ? `Remove from “${video}”` : 'Remove from this video')}</b><small>${esc(inRecordings ? `It stays in Recordings, so you can use it again. Undo brings it back ${video ? 'into the video' : 'here'}.` : 'Its files go to the studio’s trash. Undo brings it back here.')}</small></button>
+        <button type="button" class="dc-opt dc-bin" data-c="bin"><b>Delete recording</b><small>${esc(`${inRecordings ? `Removes it from ${video ? `“${video}”` : 'this video'} and from Recordings` : 'Removes it from this video'}, and moves the files to ${where}.`)}</small></button>
       </div>
       <label class="dc-remember"><input type="checkbox" id="dcRemember"> Don’t ask again (Settings › Storage › Trash changes it)</label>
       <div class="actions"><button type="button" class="btn ghost" data-a="no">Cancel</button></div></div></div>`);
@@ -123,29 +124,35 @@ export function makeMediaActions(ctx) {
       if (r) toast(`${itemName(item.id)} is on top as a layer. Drag its handle in Media to reorder.`);
     },
     // Remove from this video: the files go to the studio's trash; the take stays in Recordings.
-    async remove(item, { recording = false } = {}) {
-      const name = recording ? 'Recording' : itemName(item.id);
+    // An imported file (A17) moves to the recordings folder instead, so it stays in Recordings (r.parked).
+    async remove(item, { recording = false, video = null } = {}) {
+      const name = recording ? 'Recording' : item.name || itemName(item.id);
       const r = await run('/media-remove', { item: item.id }, { title: recording ? 'Remove this recording from the video?' : 'Remove from this video?', ok: 'Remove' });
       if (!r) return;
       const after = r.canvas ? (r.activeTake ? ` The recording is ${itemName(r.activeTake)} again.` : ' The video has no recording now.') : '';
-      actionToast(`${name} removed from this video: moved to the studio’s trash${item.inRecordings ? ', and it’s still in Recordings' : ''}.${after}`, [['Undo', () => restore(r.trash, recording ? 'The recording' : name)]]);
+      const from = video ? `“${video}”` : 'this video';
+      const text = r.parked ? `${name} removed from ${from}. It’s in Recordings, so you can use it again.${after}`
+        : `${name} removed from ${from}: moved to the studio’s trash${item.inRecordings ? ', and it’s still in Recordings' : ''}.${after}`;
+      actionToast(text, [['Undo', () => restore(r.trash, recording ? 'The recording' : name)]]);
     },
     // Delete recording: the question (or the remembered answer), then Remove from this video or Delete to the Bin.
-    async deleteRecording(item, { recording = true } = {}) {
+    // video: the video's name, when asked from Recordings (an imported file there, A17).
+    async deleteRecording(item, { recording = true, video = null } = {}) {
       const prefs = ctx.prefs?.() || {};
       let choice = ['video', 'bin'].includes(prefs.deleteRecording) ? prefs.deleteRecording : null;
       if (!choice) {
-        const a = await deleteChoice({ name: itemName(item.id), recording, inRecordings: item.inRecordings !== false, bin: prefs.bin || null });
+        const a = await deleteChoice({ name: item.name || itemName(item.id), recording, inRecordings: item.inRecordings !== false, bin: prefs.bin || null, video });
         if (!a) return;
         choice = a.choice;
         if (a.remember) ctx.remember?.(choice);
       }
-      if (choice === 'video') return this.remove(item, { recording });
+      if (choice === 'video') return this.remove(item, { recording, video });
       const r = await run('/media-delete', { item: item.id }, { title: 'This take is in other videos too', ok: 'Delete recording' });
       if (!r) return;
-      const name = recording ? 'Recording' : itemName(item.id);
+      const name = recording ? 'Recording' : item.name || itemName(item.id);
       const after = r.canvas ? (r.activeTake ? ` The recording is ${itemName(r.activeTake)} again.` : ' The video has no recording now.') : '';
-      const gone = r.recordings ? 'from this video and Recordings' : 'from this video';
+      const from = video ? `“${video}”` : 'this video';
+      const gone = r.recordings ? `from ${from} and Recordings` : `from ${from}`;
       if (r.bin) {
         const back = r.bin.putBack ? ` To get it back later, open ${r.bin.where} and use Put Back.` : '';
         actionToast(`${name} deleted ${gone}: moved to ${r.bin.where}.${after}${back}`, r.bin.undo ? [['Undo', () => fromBin(r.bin.undo, name)]] : []);

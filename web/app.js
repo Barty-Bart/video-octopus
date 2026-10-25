@@ -244,7 +244,8 @@ async function home(route, nav = null) {
     const paintNotes = () => { const box = $('.sys-notes', main); if (!box) return; box.innerHTML = systemNotes(); wireSystemNotes(box, paintNotes); };
     wireSystemNotes($('.sys-notes', main), paintNotes);
   }
-  if (view === 'recordings') renderRecordings(main, takes);
+  // Recordings also lists the files dropped or imported into videos, where they are (A17).
+  if (view === 'recordings') renderRecordings(main, await api('/api/recordings').catch(() => takes));
   if (view === 'scheduled') page = await renderSchedules(main, nav).catch((e) => { main.replaceChildren(h(`<div class="home-wrap"><div class="notice">${esc(e.message)}</div></div>`)); return null; });
   if (view === 'skills') page = await renderSkills(main, { counts });
   if (view === 'library') page = renderLibrary(main, $('#libSide', el));
@@ -274,14 +275,39 @@ async function rememberDelete(choice) {
   } catch (e) { toast(e.message); }
 }
 
+// A file dropped or imported into a video (A17): listed where it is, in that video's source/, named after the original
+// file and marked Imported. Open video goes to it; Delete asks the Media section's question (web/media.js
+// deleteChoice): Remove from that video keeps the file (it moves to the recordings folder and stays here), Delete
+// recording sends it to the Bin. The server refuses while Claude or an export uses the video's files.
+function importRow(t, { reload } = {}) {
+  const video = t.projects?.[0] || t.project;
+  const row = h(`<div class="take-row imported"><span class="ti" aria-hidden="true">${TAKE_ICON}</span>
+    <span class="tt"><b>${esc(t.name)}<span class="pill accent">Imported</span></b><span class="sub">${esc(takeWhat(t))} · ${gb(t.bytes)} · in “${esc(video)}”</span></span>
+    <span class="tr-acts"><button class="btn small" data-a="open" title="${esc(`Open “${video}”, the video this file is in`)}">Open video</button>
+    <button class="btn ghost small danger icon-l" data-a="del" title="Remove it from its video (it stays here), or delete it to the Bin" aria-label="${esc(`Delete ${t.name}`)}">${icon('trash', 14)}Delete</button></span></div>`);
+  $('[data-a=open]', row).onclick = () => { location.hash = `#/p/${encodeURIComponent(t.project)}`; };
+  const actions = makeMediaActions({ id: t.project, refresh: () => reload?.(), note: (text) => { if (text) toast(text); }, prefs: () => STATUS.storage || {}, remember: rememberDelete });
+  const del = $('[data-a=del]', row);
+  del.onclick = async () => {
+    del.disabled = true;
+    try { await actions.deleteRecording({ id: t.item, name: t.name, inRecordings: true, imported: true }, { recording: false, video }); }
+    finally { if (row.isConnected) del.disabled = false; }
+  };
+  return row;
+}
+
 function takeRow(t, { reload } = {}) {
+  if (t.inVideo) return importRow(t, { reload });
   const where = t.projects?.length ? ` · in ${t.projects.map((n) => `“${n}”`).join(', ')}` : t.used ? ' · in a video' : '';
+  // An imported file taken off its video waits in the recordings folder (import.json): named after the original file.
+  const label = t.imported ? t.name : takeLabel(t.id);
   const bin = STATUS.storage?.bin || null;
   const delTip = bin ? `Move this take to ${bin} (videos that use it keep their own copies)` : 'Move this take to the studio’s trash (Undo brings it back)';
   const row = h(`<div class="take-row"><span class="ti" aria-hidden="true">${TAKE_ICON}</span>
-    <span class="tt"><b>${esc(takeLabel(t.id))}</b><span class="sub">${esc(takeWhat(t))} · ${gb(t.bytes)}${esc(where)}</span></span>
-    <span class="tr-acts"><button class="btn small" data-a="start" title="Make an Untitled video with this take and open it">Start a video from it</button>
-    <button class="btn ghost small danger icon-l" data-a="del" title="${esc(delTip)}" aria-label="${esc(`Delete the take of ${takeLabel(t.id)}`)}">${icon('trash', 14)}Delete</button></span></div>`);
+    <span class="tt"><b>${esc(label)}${t.imported ? '<span class="pill accent">Imported</span>' : ''}</b><span class="sub">${esc(takeWhat(t))} · ${gb(t.bytes)}${esc(where)}</span></span>
+    <span class="tr-acts"><button class="btn small" data-a="start" title="${esc(t.imported ? 'Make an Untitled video with this file and open it (the file moves into it, so it isn’t copied)' : 'Make an Untitled video with this take and open it')}">Start a video from it</button>
+    <button class="btn ghost small danger icon-l" data-a="del" title="${esc(delTip)}" aria-label="${esc(t.imported ? `Delete ${label}` : `Delete the take of ${label}`)}">${icon('trash', 14)}Delete</button></span></div>`);
+  const what = t.imported ? label : `The take of ${label}`;
   $('[data-a=start]', row).onclick = () => newVideo({ take: t.id });
   // Delete: the take's folder goes to the computer's Bin (server/trash.mjs; the studio's trash when there's no Bin), with
   // Undo while it can. Refused while it records. When videos use it, they're named and it asks first: each keeps its own
@@ -292,20 +318,20 @@ function takeRow(t, { reload } = {}) {
     try {
       let r = await api('/api/takes/delete', { take: t.id });
       if (r.ok === false && r.confirm) {
-        if (!(await confirmBox({ title: 'Delete this take from Recordings?', text: r.confirm, ok: 'Delete take', videos: r.videos }))) { del.disabled = false; return; }
+        if (!(await confirmBox({ title: t.imported ? 'Delete this file from Recordings?' : 'Delete this take from Recordings?', text: r.confirm, ok: t.imported ? 'Delete' : 'Delete take', videos: r.videos }))) { del.disabled = false; return; }
         r = await api('/api/takes/delete', { take: t.id, confirm: true });
       }
       await reload?.();
       const undoTrash = async () => {
-        try { await api('/api/takes/restore', { trash: r.trash }); toast('The take is back in Recordings.'); } catch (e) { toast(e.message); }
+        try { await api('/api/takes/restore', { trash: r.trash }); toast(`${what} is back in Recordings.`); } catch (e) { toast(e.message); }
         await reload?.();
       };
       const undoBin = async () => {
-        try { await api('/api/trash/from-bin', { token: r.bin.undo }); toast('The take is back in Recordings.'); } catch (e) { toast(e.message); }
+        try { await api('/api/trash/from-bin', { token: r.bin.undo }); toast(`${what} is back in Recordings.`); } catch (e) { toast(e.message); }
         await reload?.();
       };
-      if (r.bin) actionToast(`The take of ${takeLabel(t.id)} is in ${r.bin.where}.${r.bin.putBack ? ' Put Back there brings it back later.' : ''}`, r.bin.undo ? [['Undo', undoBin]] : []);
-      else actionToast(`The take of ${takeLabel(t.id)} is in the studio’s trash.`, [['Undo', undoTrash]]);
+      if (r.bin) actionToast(`${what} is in ${r.bin.where}.${r.bin.putBack ? ' Put Back there brings it back later.' : ''}`, r.bin.undo ? [['Undo', undoBin]] : []);
+      else actionToast(`${what} is in the studio’s trash.`, [['Undo', undoTrash]]);
     } catch (e) {
       del.disabled = false;
       toast(e.message);
@@ -318,12 +344,12 @@ function renderRecordings(main, takes) {
   main.replaceChildren(h(`<div class="home-wrap">
     <div class="home-head"><div class="hh-title"><h1>Recordings</h1><div class="sub mono">${esc(tilde(STATUS.recordingsDir))}</div></div>
       <button class="btn rec" id="rec2"><span class="rec-dot"></span>Record a new take</button></div>
-    <p class="sub lead">Every take you've recorded, newest first. Start a video from one and Video Octopus copies it in. ${STATUS.storage?.bin ? `Delete moves a take to ${esc(STATUS.storage.bin)}.` : 'Deleted takes wait in Settings › Storage › Trash.'}</p>
+    <p class="sub lead">Every take you've recorded and every file you've dropped or imported into a video, newest first. Start a video from a take and Video Octopus copies it in; an imported file stays where it is, in its video. ${STATUS.storage?.bin ? `Delete moves it to ${esc(STATUS.storage.bin)}.` : 'Deleted takes wait in Settings › Storage › Trash.'}</p>
     <div class="take-list wide" id="all"></div></div>`));
   $('#rec2', main).onclick = () => newVideo({ record: true });
   const all = $('#all', main);
   const reload = async () => {
-    const fresh = await api('/api/takes').catch(() => null);
+    const fresh = await api('/api/recordings').catch(() => null);
     if (fresh && main.isConnected) renderRecordings(main, fresh);
   };
   if (!takes.length) all.append(h(`<div class="empty"><b>No recordings yet</b><span class="sub">Press Record a new take to make one.</span></div>`));

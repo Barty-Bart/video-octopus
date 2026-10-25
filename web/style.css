@@ -488,6 +488,8 @@ body.in-home main { height: 100%; }
 .tt b { display: block; font-weight: 500; }
 .tt .sub { display: block; }
 .take-row .tr-acts { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; flex: none; }
+.take-row .tt b { overflow-wrap: anywhere; }
+.take-row .tt b .pill { margin-left: 8px; vertical-align: 1px; }
 @media (max-width: 560px) {
   .take-row { flex-wrap: wrap; }
   .take-row .tt { flex-basis: calc(100% - 46px); }
