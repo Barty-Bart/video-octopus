@@ -132,14 +132,14 @@ test('B5a: after a partial Build, scenes the picked render doesnâ€™t reach are â
     assert.equal(row.line, null, `${tone}: said once (A14)`);
   }
   // A reached scene keeps its picture and its line; an approved scene outside the picked render is quiet but says Approved.
-  assert.deepEqual(sceneRow({ tone: 'none', text: 'To review', built: true, inRender: true }), { quiet: false, picture: null, line: 'To review' });
-  assert.deepEqual(sceneRow({ tone: 'ok', text: 'Approved', built: true, inRender: false }), { quiet: true, picture: null, line: 'Approved' });
+  assert.deepEqual(sceneRow({ tone: 'none', text: 'To review', built: true, inRender: true }), { quiet: false, picture: null, line: 'To review', busy: false });
+  assert.deepEqual(sceneRow({ tone: 'ok', text: 'Approved', built: true, inRender: false }), { quiet: true, picture: null, line: 'Approved', busy: false });
 });
 
 test('B5a: Scenes uses the shared tone rules and prints the row label from them', async () => {
   const { readFileSync } = await import('node:fs');
   const src = readFileSync(new URL('../web/scenes.js', import.meta.url), 'utf8');
-  assert.match(src, /import \{ TONE_LABEL, TONE_DOT, sceneTone, sceneRow \} from '\.\/scene-tone\.js'/);
+  assert.match(src, /import \{ TONE_LABEL, TONE_DOT, sceneTone, sceneRow, buildLegend \} from '\.\/scene-tone\.js'/);
   assert.ok(!/const TONE_LABEL =/.test(src), 'one copy of the labels');
   assert.ok(!src.includes("'<span class=\"s2-nbl\">Not built yet</span>'"), 'the picture label comes from sceneRow');
   assert.match(src, /row\.line == null \? ''/);

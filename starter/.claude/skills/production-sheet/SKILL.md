@@ -121,6 +121,15 @@ Get approval before anything is built. Their notes go into the sheet, and lastin
 
 ## 6. Build from it
 
-The creator approves the plan in Video Octopus (Approve plan): it writes a top-level `"approved"` into the sheet, and the build waits for it. Never add or change that key yourself; when they ask for changes, change the plan, say what changed and stop. The sheet is the brief for the rest of the edit: scenes, zooms, B-roll, sound, the render. As scenes get built, set each scene's `status` (`planned` → `built` → `approved`); `sheet.py status` shows progress. Render into `renders/` with the next version number (`<project>_intro_v2.mp4`) on the sheet's timeline, so Video Octopus's Scenes tab plays each scene from the newest render. Review happens there: notes per scene in `work/notes.json`, on the sheet's scene ids.
+The creator approves the plan in Video Octopus (Approve plan): it writes a top-level `"approved"` into the sheet, and the build waits for it. Never add or change that key yourself; when they ask for changes, change the plan, say what changed and stop. The sheet is the brief for the rest of the edit: scenes, zooms, B-roll, sound, the render.
+
+**Mark each scene as you build it**, with one command per scene (never edit the statuses by hand):
+
+```
+python3 ../../.claude/skills/production-sheet/scripts/sheet.py mark work/production.json building 3   # starting scene 3
+python3 ../../.claude/skills/production-sheet/scripts/sheet.py mark work/production.json built 3      # scene 3 is done
+```
+
+`mark` changes only that scene's `status` (`planned` → `building` → `built`; `approved` stays the creator's) and replaces the file in one step. Video Octopus watches it and shows the build's progress per scene: the dock says "Build the intro · scene 3 of 10", and Scenes marks each scene queued, building or built (scenes outside this build, such as the body during Build the intro, say "Not in this build"). Mark only the scenes this step builds; a one-scene preview render (`renders/<project>_scene3_preview.mp4`) counts as that scene built too. `sheet.py status` shows the counts. Render into `renders/` with the next version number (`<project>_intro_v2.mp4`) on the sheet's timeline, so Video Octopus's Scenes tab plays each scene from the newest render. Review happens there: notes per scene in `work/notes.json`, on the sheet's scene ids.
 
 When the creator asks for a change that alters the plan, update the sheet first, then the edit.

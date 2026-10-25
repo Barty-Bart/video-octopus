@@ -509,7 +509,7 @@ export function pipelineStatus(dir, type, opts = {}) {
     return { id: step.id, label: step.label, name: step.name || step.label || step.id, stage, makes: makesOf(d),
              what: String(what).replaceAll('{blocks}', blockList(fmt)), where: step.where || (kind === 'app' ? '' : 'what changed, in Claude’s reply'), show,
              kind, action: step.action || null,
-             skill: step.skill || null, ask: step.ask || '', brief: step.brief || null, motion: step.motion || null, optional, done, ...(changed ? { changed: true } : {}), ...(unlocked ? { unlocked: true } : {}), ...(awaiting ? { awaiting: 'approve', ...(restale ? { again: true } : {}) } : {}), ...(byImport && done ? { byImport: true } : {}),
+             skill: step.skill || null, ask: step.ask || '', brief: step.brief || null, motion: step.motion || null, ...(step.scenes ? { scenes: String(step.scenes) } : {}), optional, done, ...(changed ? { changed: true } : {}), ...(unlocked ? { unlocked: true } : {}), ...(awaiting ? { awaiting: 'approve', ...(restale ? { again: true } : {}) } : {}), ...(byImport && done ? { byImport: true } : {}),
              skipped: optional && !done && skippedIds.has(step.id),
              subs: step.subs ? step.subs.map((x) => ({ id: x.id, label: x.label, done: x.files.some((f) => globExists(dir, f)) })) : null,
              ...(opts.lines && done ? { line: byImport ? 'Done · already edited' : doneLine(dir, step, worklog) } : {}) };

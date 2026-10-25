@@ -32,7 +32,8 @@ export function makeTimeline(host, o) {
     return out;
   }
   const gone = (t) => removed().some(([s, e]) => t >= s && t < e);
-  const toneCol = (col, tone) => ({ ok: col.ok, changed: col.accent, notes: col.sel, sent: col.warn }[tone] || col.faint);
+  // fresh / building / queued: a running Build's progress per scene (B5b).
+  const toneCol = (col, tone) => ({ ok: col.ok, fresh: col.ok, building: col.accent, changed: col.accent, notes: col.sel, sent: col.warn }[tone] || col.faint);
 
   // The Words lane with shots: "/" marks on top of the words (click, drag to another word, Delete), the cut's joins
   // still open the Cut tab; anywhere else scrubs.

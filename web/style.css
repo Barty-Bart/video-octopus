@@ -843,6 +843,14 @@ iframe.sf { position: absolute; left: 0; top: 0; border: 0; background: transpar
 /* A scene no render has built yet (an intro render, a body scene): no picture, no approval (web/scenes.js builtSc). */
 .s2-th.nb { background: repeating-linear-gradient(135deg, var(--panel-2) 0 6px, var(--panel-3) 6px 12px); box-shadow: inset 0 0 0 1px var(--line); }
 .s2-nbl { position: absolute; inset: auto 0 4px 0; text-align: center; font-size: 9.5px; font-weight: 600; letter-spacing: 0.02em; color: var(--text-2); white-space: nowrap; }
+/* a Build running with progress per scene (B5b): the bar and legend say how far ("Building · scene 3 of 10"); a
+   queued or building scene's picture is quiet and says so, the one building with a spinner */
+.s2-prog.build i.run { background: var(--accent); animation: bk-pulse 1.2s ease-in-out infinite; }
+.s2-bl { display: inline-flex; align-items: center; gap: 6px; color: var(--text-2); font-weight: 600; }
+.s2-bl .spin, .s2-nbl .spin { display: inline-block; width: 9px; height: 9px; border-width: 1.5px; vertical-align: -1px; margin-right: 3px; }
+.s2-th.busy { box-shadow: inset 0 0 0 1.5px var(--accent); }
+.s2-th.busy .s2-nbl { color: var(--accent-text); }
+@media (prefers-reduced-motion: reduce) { .s2-prog.build i.run { animation: none; } }
 .s2-prog i.nb, .s2-legend i.nb { background: transparent; box-shadow: inset 0 0 0 1px var(--line-2); }
 .nc-nb { margin: 8px 0 0; }
 /* Export → Video's "What goes in": a built block's row (web/exportbuilt.js). */
@@ -2661,6 +2669,12 @@ body.in-project .bar .sp-sub { display: none; }
 .dk-prog .d { background: var(--ok); }
 .dk-prog .r { background: var(--accent); animation: bk-pulse 1.2s ease-in-out infinite; }
 .dk-time { flex: none; font-family: var(--mono); font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+/* a Build's progress per scene (B5b): more scenes, a wider row of segments; past 14, one bar */
+.dk-prog.many { width: 84px; gap: 2px; }
+.dk-prog.bar { width: 72px; gap: 0; }
+.dk-prog.bar i { border-radius: 0; }
+.dk-prog.bar i:first-child { border-radius: 2px 0 0 2px; }
+.dk-prog.bar i:last-child { border-radius: 0 2px 2px 0; }
 /* a take recording into this video: "Recording 0:42 · Stop" (not another Record · Start) */
 .dk-strip.rec { border-color: var(--bad); background: var(--bad-soft); }
 .dk-pill.rec { padding: 1px 2px; background: transparent; }

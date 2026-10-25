@@ -437,6 +437,16 @@ export function makeRail({ root, id, getP, hooks }) {
   const GREEN_MS = 4000;
   // A label in three lengths; the strip shows the one its fit level allows (data-fit 0 full, 1 short, 2 and up shortest).
   const lbl = (full, short = full, tiny = short) => `<span class="l0">${esc(full)}</span><span class="l1">${esc(short)}</span><span class="l2">${esc(tiny)}</span>`;
+  // A Build step's progress per scene (B5b, server/build-progress.mjs; null when Claude marks no scene, and the strip
+  // then shows how long it has run, as before): "scene 3 of 10" while one builds, "10 of 10 built" at the end.
+  const buildText = (b) => {
+    if (!b?.marked || !b.total) return '';
+    if (b.current) return `scene ${b.current.k} of ${b.total}`;
+    return b.built >= b.total ? `${b.built} of ${b.total} built, rendering` : `${b.built} of ${b.total} built`;
+  };
+  const buildProg = (b) => b.total <= 14
+    ? `<span class="dk-prog${b.total > 8 ? ' many' : ''}" aria-hidden="true">${b.order.map((sid) => `<i class="${{ built: 'd', building: 'r' }[b.states[sid]] || ''}"></i>`).join('')}</span>`
+    : `<span class="dk-prog bar" aria-hidden="true"><i class="d" style="flex:${b.built}"></i><i class="r" style="flex:${b.current ? 1 : 0}"></i><i style="flex:${Math.max(0, b.total - b.built - (b.current ? 1 : 0))}"></i></span>`;
   const runWord = (s) => (s.kind === 'app' ? (s.action === 'import' ? 'Start' : 'Open') : 'Run');
   const mmss = (sec) => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
   const elapsed = () => { const at = getP().runningAt; return at ? mmss(Math.max(0, (Date.now() - at) / 1000)) : ''; };
@@ -483,9 +493,9 @@ export function makeRail({ root, id, getP, hooks }) {
     const nl = notesLeft(P);
     openItems(id, 'notes', nl ? { count: nl.count, text: nl.text, read: () => hooks.openNotes?.() } : null);
     paintState(rs);
-    const sig = JSON.stringify([mode, cur?.id, rs && runText(rs), nd, green, notes, waiting, sheetOpen, p.steps.map((s) => [s.id, s.done, s.skipped]), Boolean(P.runningAt), rec && [rec.mode, rec.mode === 'saving' ? rec.progress : 0]]);
+    const sig = JSON.stringify([mode, cur?.id, rs && runText(rs), rs && buildText(P.build), nd, green, notes, waiting, sheetOpen, p.steps.map((s) => [s.id, s.done, s.skipped]), Boolean(P.runningAt), rec && [rec.mode, rec.mode === 'saving' ? rec.progress : 0]]);
     clearInterval(ticker); ticker = 0;
-    if (mode === 'run' && !rs.subs?.length && P.runningAt) ticker = setInterval(() => { const t = dockHost?.querySelector('.dk-time'); if (t) t.textContent = elapsed(); }, 1000);
+    if (mode === 'run' && !rs.subs?.length && !buildText(P.build) && P.runningAt) ticker = setInterval(() => { const t = dockHost?.querySelector('.dk-time'); if (t) t.textContent = elapsed(); }, 1000);
     if (mode === 'rec' && rec.ms != null) ticker = setInterval(() => { const t = dockHost?.querySelector('.dk-time'), r = hooks.recording?.(); if (t && r?.ms != null) t.textContent = mmss(r.ms / 1000); }, 500);
     if (sig === dockSig) return fitDock();
     dockSig = sig;
@@ -503,9 +513,11 @@ export function makeRail({ root, id, getP, hooks }) {
         <span class="dk-name"><span class="vh">Record: </span><b>${esc(word)}</b>${sub}</span>
         ${live ? `<button type="button" class="dk-run dk-stop" data-a="rec-stop" aria-label="Stop the take">${ICON.stop}${lbl('Stop')}</button>` : ''}</div>`;
     } else if (mode === 'run') {
-      const subs = rs.subs || [], k = subs.findIndex((x) => !x.done);
-      const sub = subs.length ? (k < 0 ? 'finishing' : `${subs[k].label}, ${k + 1} of ${subs.length}`) : '';
+      const subs = rs.subs || [], k = subs.findIndex((x) => !x.done), bt = buildText(P.build);
+      // Build with per-scene progress (B5b): "Build the intro · scene 3 of 10", one segment per scene.
+      const sub = subs.length ? (k < 0 ? 'finishing' : `${subs[k].label}, ${k + 1} of ${subs.length}`) : bt || '';
       const prog = subs.length ? `<span class="dk-prog" aria-hidden="true">${subs.map((x, i) => `<i class="${x.done ? 'd' : i === k ? 'r' : ''}"></i>`).join('')}</span>`
+        : bt ? buildProg(P.build)
         : P.runningAt ? `<span class="dk-time" aria-hidden="true" title="How long it has been running">${elapsed()}</span>` : '';
       html = `<div class="dk-strip run${sheetOpen ? ' open' : ''}"><span class="dk-pill run"><span class="spin" aria-hidden="true"></span><span class="dk-pt">Running</span></span>
         <span class="dk-name"><span class="vh">Running: </span><b>${esc(rs.name)}</b>${sub ? `<span class="dk-sub"> · ${esc(sub)}</span>` : ''}</span>

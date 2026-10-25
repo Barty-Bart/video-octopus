@@ -31,6 +31,7 @@ import { profileRoute, profileBusy, killProfileResearch, createConfiguredProject
 import { UNTITLED, autoName, nameFromReply, namingContext, onAutoRename } from './naming.mjs';
 import { memoryRoute } from './memory.mjs';
 import { packagingRoute, resourcesRoute, packagingBusy, killPackaging } from './packaging.mjs';
+import { startBuildRun, endBuildRun, buildProgress, noteBuildFiles } from './build-progress.mjs';
 import { learningRoute, learningProjectContext, projectLearning, guardLearnedStep, learningBusy, killLearning, approveLearnedPlan, unapproveLearnedPlan } from './learning.mjs';
 import { assistantRoute, killAssistant, assistantBusy } from './assistant.mjs';
 import { onSettingsChange, restartWhenIdle, section, transcribeHow } from './settings.mjs';
@@ -116,7 +117,7 @@ function chatFor(id) {
     // The chat panel's Model and Effort for this video (server/agent-choices.mjs), over the studio default.
     chat.agentChoice = () => agentChoice(id, chat.engine);
     chat.listeners.add((ev) => broadcast(id, ev));
-    chat.listeners.add((ev) => { if (ev.t === 'busy' && !ev.busy) stepRuns.delete(id); });
+    chat.listeners.add((ev) => { if (ev.t === 'busy' && !ev.busy) { stepRuns.delete(id); endBuildRun(id); } });
     // Save changes → Claude (B6): when the turn after the Save ends, count what came of the items it sent, for the
     // Scenes panel and one line in the chat ("Claude finished · 2 notes done, 1 still open").
     chat.listeners.add((ev) => {
@@ -345,6 +346,7 @@ function watchProject(id, dir) {
       // just now): that's already done, so it becomes the package's starting point instead of a change waiting for Claude.
       const doc = files.some((f) => f === 'work/blocks.json' || f === 'project.json');
       if (doc) owner.onDocFiles(id, dir);
+      noteBuildFiles(id, dir, files); // a scene marked building between two page reads (B5b)
       for (const n of onProjectFiles(dir, files) || []) broadcast(id, { t: 'note', text: `Added to the change package: ${n.text}` });
     } catch (e) { console.error('cut sync:', e.message); }
   };
@@ -376,6 +378,7 @@ async function startStep(id, dir, stepId) {
     patchState({ noKeyTold: { ...(state().noKeyTold || {}), [tx.fallback]: new Date().toISOString() } });
   }
   stepRuns.set(id, { step: stepId, at: Date.now() });
+  startBuildRun(id, dir, step); // a Build step: its progress per scene, from the sheet's marks (B5b)
   clearUnfinished(id);
   await chatFor(id).send(text, { brief: { step: stepId, name: String(step?.name || step?.label || stepId).slice(0, 60) } });
   noteStep(id, stepId);
@@ -455,6 +458,8 @@ function projectView(id, dir) {
     roles: r, canvas: canvasSources(dir), proxies, pipeline,
     running: busy ? stepRuns.get(id)?.step || null : null, // the step Claude is working on (the dock on the message box)
     runningAt: busy ? stepRuns.get(id)?.at || null : null, // when it started (the dock shows how long it has run)
+    // A Build step's progress per scene while it runs (server/build-progress.mjs; null until Claude marks a scene).
+    build: busy && stepRuns.get(id) ? buildProgress(id, dir) : null,
     cut: cutPlan(dir), busy, renders: listRenders(dir),
     export: exportInfo(id, dir), recorder: recorderChoices(id, styleOf(id, pinned)), recUnfinished: unfinishedTakes(id), scenes: scenesSummary(dir), kit: kitSummary(dir, meta), editing: section('editing'),
     brandColors: profilePalette(id) ?? section('look').colors, // Settings → Look → Brand (and the Brand kit): the canvas's border picker offers them
@@ -797,7 +802,11 @@ async function route(req, res) {
     if (b.retry === true) {
       try {
         const c = chatFor(id);
-        if (c.lastBrief?.step && !c.busy) { stepRuns.set(id, { step: c.lastBrief.step, at: Date.now() }); clearUnfinished(id); }
+        if (c.lastBrief?.step && !c.busy) {
+          stepRuns.set(id, { step: c.lastBrief.step, at: Date.now() }); clearUnfinished(id);
+          const meta = projectMeta(dir), st = meta?.type ? pipelineStatus(dir, meta.type) : null;
+          startBuildRun(id, dir, st?.steps.find((x) => x.id === c.lastBrief.step));
+        }
         await c.retry();
         return send(res, 200, { ok: true });
       } catch (e) { return send(res, 409, { error: e.message }); }

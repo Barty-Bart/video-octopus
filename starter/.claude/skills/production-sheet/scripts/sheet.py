@@ -6,6 +6,7 @@
   python3 sheet.py check    work/production.json [--words WORDS.json [--edl EDL]] [--skills ../../.claude/skills]
   python3 sheet.py view     work/production.json [--md work/production.md] [--html work/production.html]
   python3 sheet.py status   work/production.json            # what's planned / built / approved per crew role
+  python3 sheet.py mark     work/production.json building 3  # set scene 3's status (planned/building/built/approved)
 
 draft   splits the transcript into sentences and makes one scene per sentence (short ones merge), with
         intro scenes marked "dynamic" and body scenes "calm". Layouts, visuals and transitions start empty
@@ -15,8 +16,11 @@ draft   splits the transcript into sentences and makes one scene per sentence (s
 check   flags gaps and overlaps, scenes outside the words, transitions closer than 3 s, full-screen intro
         talking-head stretches without a zoom, B-roll without a source, skills not installed, and unfilled fields.
 view    writes a readable table (Markdown) and a storyboard page (HTML, light/dark) to approve.
+mark    sets the status of one or more scenes (by id) while building: "building" when you start a scene, "built"
+        when it is done. Video Octopus watches it and shows the build's progress per scene. Only the scenes' status
+        changes; the file is replaced in one step, so it is never read half written.
 """
-import argparse, html, json, re, sys
+import argparse, html, json, os, re, sys, tempfile
 from collections import Counter, defaultdict
 from fractions import Fraction
 from pathlib import Path
@@ -236,6 +240,29 @@ def cmd_status(a):
         print(f"{role:10s} " + ", ".join(f"{k}: {v}" for k, v in c.items() if v))
 
 
+STATUSES = ("planned", "building", "built", "approved")
+
+
+def cmd_mark(a):
+    path = Path(a.sheet)
+    sh = json.load(open(path, encoding="utf-8"))
+    want = {str(x) for x in a.ids}
+    found = set()
+    for s in sh.get("scenes", []):
+        if str(s.get("id")) in want:
+            s["status"] = a.status
+            found.add(str(s.get("id")))
+    missing = sorted(want - found)
+    if missing:
+        sys.exit(f"no scene with id {', '.join(missing)} in {path} (nothing changed)")
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".production-", suffix=".tmp")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(sh, f, indent=1, ensure_ascii=False)
+    os.chmod(tmp, os.stat(path).st_mode & 0o777)
+    os.replace(tmp, path)
+    print(f"scene{'s' if len(found) > 1 else ''} {', '.join(sorted(found, key=lambda x: (len(x), x)))}: {a.status}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -247,8 +274,10 @@ def main():
     p.add_argument("--edl", help="with --words: the cut the sheet is on (source-time words are mapped onto it)")
     p = sub.add_parser("view"); p.add_argument("sheet"); p.add_argument("--md"); p.add_argument("--html")
     p = sub.add_parser("status"); p.add_argument("sheet")
+    p = sub.add_parser("mark"); p.add_argument("sheet"); p.add_argument("status", choices=STATUSES)
+    p.add_argument("ids", nargs="+", help="scene ids")
     a = ap.parse_args()
-    {"draft": cmd_draft, "check": cmd_check, "view": cmd_view, "status": cmd_status}[a.cmd](a)
+    {"draft": cmd_draft, "check": cmd_check, "view": cmd_view, "status": cmd_status, "mark": cmd_mark}[a.cmd](a)
 
 
 if __name__ == "__main__":

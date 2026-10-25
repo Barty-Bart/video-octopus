@@ -2411,12 +2411,14 @@ function makeCanvas(pane, { inspector, tools }, id, getP, hooks = {}) {
       clips: clipList,
       selected: () => selected,
       select: (ref) => { if (ref && itemOf(ref)) { selected = ref; reframe = false; renderFrameBar(); } },
-      scenes: () => (sceneData ? sceneData.scenes.map((x) => ({ id: x.id, n: x.n, start: cmap().toSource(x.start), end: cmap().toSource(x.end), title: x.title, on: x.id === pickedScene })) : []),
+      // While a Build runs with progress per scene (B5b), each scene's state underlines it: built green, building accent.
+      scenes: () => (sceneData ? sceneData.scenes.map((x) => ({ id: x.id, n: x.n, start: cmap().toSource(x.start), end: cmap().toSource(x.end), title: x.title, on: x.id === pickedScene,
+        tone: { built: 'fresh', building: 'building' }[getP().build?.states?.[String(x.id)]] || '' })) : []),
       notes: () => (sceneData ? sceneData.notes.filter((n) => n.t != null).map((n) => ({ id: n.id, t: cmap().toSource(n.t), n: sceneData.notes.filter((x) => x.scene === n.scene).indexOf(n) + 1, tone: n.status })) : []),
       pickScene: (sid) => { pickedScene = sid; },
       openNote: (nid) => { const n = sceneData?.notes.find((x) => x.id === nid); if (n) hooks.openScene?.(n.scene); },
       openScene: (sid) => hooks.openScene?.(sid),
-      sig: () => (sceneData ? [pickedScene, sceneData.notes.map((n) => n.id + n.status).join(), getP().export.cut?.file].join('/') : '') + joinSig() + zoomSig() + (cutOn ? '|cut' : ''),
+      sig: () => (sceneData ? [pickedScene, sceneData.notes.map((n) => n.id + n.status).join(), getP().export.cut?.file, JSON.stringify(getP().build?.states || null)].join('/') : '') + joinSig() + zoomSig() + (cutOn ? '|cut' : ''),
       // The scene graphics (what each scene shows, from the production sheet) and the join check's flags.
       graphics: () => (sceneData ? sceneData.scenes.filter((x) => x.visual).map((x) => ({ id: x.id, sid: x.id, n: x.n, start: cmap().toSource(x.start), end: cmap().toSource(x.end), label: shownOf(x), text: x.visual, on: x.id === pickedScene })) : []),
       joins: () => getP().joins || [],

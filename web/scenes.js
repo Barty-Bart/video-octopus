@@ -11,7 +11,7 @@ import { makeSceneTimeline } from './scenetimeline.js';
 import { makeCutTrim, cutMapper, sec } from './cuttrim.js';
 import { makeCompare, previousOf, versionName } from './compare.js';
 import { sandboxURL } from './sandbox-painter.js';
-import { TONE_LABEL, TONE_DOT, sceneTone, sceneRow } from './scene-tone.js';
+import { TONE_LABEL, TONE_DOT, sceneTone, sceneRow, buildLegend } from './scene-tone.js';
 
 const LS = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch {} return null; };
 const mmss = (s) => { const m = /^(\d+):(\d+(?:\.\d+)?)$/.exec(String(s).trim()); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
@@ -260,7 +260,9 @@ export function makeScenes({ pane, inspector, id, getP, onCount, onScenes, histo
   // The picked render reaches this scene (no render picked: nothing to show it in, so it doesn't count as outside it).
   const inRender = (s) => !renderFile || reaches(s);
   // web/scene-tone.js: a scene the picked render doesn't reach (an intro-only build) is "Not in this build" (B5a).
-  const toneOf = (s) => sceneTone({ approved: Boolean(D.approved[s.id]), notes: notesOf(s.id).filter((n) => n.status !== 'resolved'), built: builtSc(s), inRender: inRender(s) });
+  // While a Build runs, its progress per scene wins (B5b, P.build: queued / building / built / not in this build).
+  const runOf = (s) => getP()?.build?.states?.[String(s.id)] || null;
+  const toneOf = (s) => sceneTone({ approved: Boolean(D.approved[s.id]), notes: notesOf(s.id).filter((n) => n.status !== 'resolved'), built: builtSc(s), inRender: inRender(s), run: runOf(s) });
   const toneText = (s, tone = toneOf(s)) => {
     if (tone !== 'notes') return TONE_LABEL[tone];
     const k = realNotes(s.id).filter((n) => n.status === 'open').length;
@@ -406,7 +408,7 @@ export function makeScenes({ pane, inspector, id, getP, onCount, onScenes, histo
       notes: () => D.notes.filter((n) => n.t != null && n.kind !== 'change').map((n) => ({ id: n.id, t: n.t, n: numberOf(n), tone: n.status, on: n.id === noteSel })),
       pickScene: (sid) => select(sid), pickNote: (nid) => { noteSel = nid; const n = D.notes.find((x) => x.id === nid); if (n) select(n.scene); setTab('notes'); },
       openScene: (sid) => { select(sid); setMode('scene'); },
-      sig: () => [sel, noteSel, D.notes.map((n) => n.id + n.status).join(), Object.keys(D.approved).join(), trim.version(), trim.lensAt()?.i].join('/'),
+      sig: () => [sel, noteSel, D.notes.map((n) => n.id + n.status).join(), Object.keys(D.approved).join(), trim.version(), trim.lensAt()?.i, JSON.stringify(getP()?.build?.states || null)].join('/'),
     });
     player.tl.setData({ words: D.words, peaks: wholePeaks(), note: `${D.scenes.length} scenes · ${D.words.length} words` });
     // The scene timeline is on the view (axNow): the cut as it is now, with the scene's start kept in place.
@@ -718,7 +720,7 @@ export function makeScenes({ pane, inspector, id, getP, onCount, onScenes, histo
   function setStrip(on) { listFold[mode] = on; LS(`studio.scenes.strip.${mode}`, on ? '1' : '0'); renderList(); requestAnimationFrame(() => fitTl()); }
   function renderStrip() {
     const groups = D.sections?.length ? D.sections : [{ id: '', label: '', scenes: D.scenes.map((x) => x.id) }];
-    const dot = (t) => (t === 'ok' ? 'var(--ok)' : t === 'changed' || t === 'question' || t === 'waiting' ? 'var(--accent)' : t === 'notes' ? 'var(--sel)' : t === 'sent' ? 'var(--warn)' : 'var(--line-2)');
+    const dot = (t) => (t === 'ok' || t === 'fresh' ? 'var(--ok)' : t === 'building' ? 'var(--accent)' : t === 'changed' || t === 'question' || t === 'waiting' ? 'var(--accent)' : t === 'notes' ? 'var(--sel)' : t === 'sent' ? 'var(--warn)' : 'var(--line-2)');
     player.lh.innerHTML = `<button class="s2-unfold" aria-label="Show the scene list" title="Show the scene list">»</button>`;
     $('.s2-unfold', player.lh).onclick = () => setStrip(false);
     player.list.replaceChildren(...groups.map((g, gi) => {
@@ -740,7 +742,12 @@ export function makeScenes({ pane, inspector, id, getP, onCount, onScenes, histo
     const tones = D.scenes.map(toneOf);
     const appr = tones.filter((t) => t === 'ok').length, chg = tones.filter((t) => t === 'changed' || t === 'question').length, nb = tones.filter((t) => t === 'unbuilt').length, ni = tones.filter((t) => t === 'notin').length;
     const rest = Math.max(0, D.scenes.length - appr - chg - nb - ni);
-    player.lh.innerHTML = `<div class="s2-lt"><b>${D.scenes.length} scenes</b><span class="sub">${D.sections?.length > 1 ? `${D.sections.length} sections · ` : ''}${clock(D.scenes.at(-1).end)}</span></div>
+    const bl = buildLegend(getP()?.build), B = getP()?.build;
+    player.lh.innerHTML = bl ? `<div class="s2-lt"><b>${D.scenes.length} scenes</b><span class="sub">${D.sections?.length > 1 ? `${D.sections.length} sections · ` : ''}${clock(D.scenes.at(-1).end)}</span></div>
+      <div class="s2-prog build" role="progressbar" aria-label="${esc(bl)}" aria-valuemin="0" aria-valuemax="${B.total}" aria-valuenow="${B.built}"><i class="ok" style="flex:${B.built}"></i><i class="run" style="flex:${B.current ? 1 : 0}"></i><i style="flex:${Math.max(0, B.total - B.built - (B.current ? 1 : 0))}"></i></div>
+      <div class="s2-legend sub" role="status"><span class="s2-bl">${B.current ? '<span class="spin" aria-hidden="true"></span>' : ''}${esc(bl)}</span>${B.order.length < D.scenes.length ? `<span><i class="nb"></i>${D.scenes.length - B.order.length} not in this build</span>` : ''}</div>
+      <button class="s2-foldlist" aria-label="Fold the list to a strip" title="Fold the list to a strip of scene numbers">«</button>`
+    : `<div class="s2-lt"><b>${D.scenes.length} scenes</b><span class="sub">${D.sections?.length > 1 ? `${D.sections.length} sections · ` : ''}${clock(D.scenes.at(-1).end)}</span></div>
       <div class="s2-prog" title="${appr} approved · ${chg} to rewatch · ${rest} to review${ni ? ` · ${ni} not in this build` : ''}${nb ? ` · ${nb} not built yet` : ''}"><i class="ok" style="flex:${appr}"></i><i class="chg" style="flex:${chg}"></i><i style="flex:${rest}"></i>${ni + nb ? `<i class="nb" style="flex:${ni + nb}"></i>` : ''}</div>
       <div class="s2-legend sub"><span><i class="ok"></i>${appr} approved</span><span><i class="chg"></i>${chg} to rewatch</span><span><i></i>${rest} to review</span>${ni ? `<span><i class="nb"></i>${ni} not in this build</span>` : ''}${nb ? `<span><i class="nb"></i>${nb} not built yet</span>` : ''}</div>
       <button class="s2-foldlist" aria-label="Fold the list to a strip" title="Fold the list to a strip of scene numbers">«</button>`;
@@ -763,7 +770,7 @@ export function makeScenes({ pane, inspector, id, getP, onCount, onScenes, histo
         const tone = toneOf(s), th = thumbs.get(`${renderFile}|${s.id}`);
         const row = sceneRow({ tone, text: toneText(s, tone), built: builtSc(s), inRender: inRender(s) });
         const b = h(`<button class="s2-row${s.id === sel ? ' on' : ''}" role="listitem" data-id="${esc(s.id)}" aria-current="${s.id === sel}">
-          <span class="s2-th${row.quiet ? ' nb' : ''}"><img alt=""${th && !row.quiet ? ` src="${th}"` : ' hidden'}>${row.picture ? `<span class="s2-nbl">${esc(row.picture)}</span>` : ''}<span class="s2-n">${s.n}</span></span>
+          <span class="s2-th${row.quiet ? ' nb' : ''}${row.busy ? ' busy' : ''}"><img alt=""${th && !row.quiet ? ` src="${th}"` : ' hidden'}>${row.picture ? `<span class="s2-nbl">${row.busy ? '<span class="spin" aria-hidden="true"></span>' : ''}${esc(row.picture)}</span>` : ''}<span class="s2-n">${s.n}</span></span>
           <span class="s2-rt"><b>${esc(s.title)}</b>${s.line ? `<span class="s2-line" title="${esc(s.line)}">“${esc(s.line)}”</span>` : ''}<span class="sub"><span class="mono">${clock(s.start)}</span>${row.line == null ? '' : `<i style="background:${TONE_DOT[tone]}"></i>${esc(row.line)}`}</span></span>
           <span class="s2-now" hidden>▶ NOW</span></button>`);
         b.onclick = () => select(s.id);
