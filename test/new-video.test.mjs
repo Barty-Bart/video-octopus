@@ -212,7 +212,7 @@ test('New video: Untitled video with the last-used style and format, a style or 
   let worklog = '';
   for (const st of steps.filter((x) => !x.optional)) {
     const d = st.done || {}, put = (rel, text) => { mkdirSync(dirname(join(dir, rel)), { recursive: true }); writeFileSync(join(dir, rel), text); };
-    if (d.files?.length) put(d.files[0].replace('*', 'x'), 'x');
+    if (d.files?.length) put(d.files[0].replaceAll('*', 'x'), 'x');
     else if (Array.isArray(d.json)) put(d.json[0], JSON.stringify({ [d.json[1]]: true }));
     else if (d.worklog) worklog += `- ${d.worklog}\n`;
   }

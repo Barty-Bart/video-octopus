@@ -199,7 +199,8 @@ test('binEntry: no Bin → null and the entry stays; an odd name is refused', as
 });
 
 // ---- the Bin itself, with fake commands and a fake home: never the real Trash ----
-test('macOS: Finder first (Put Back works), the path as one argument, never in the script', async () => {
+// The quote-laden folder name is not a valid Windows file name; the macOS path is what this test checks.
+test('macOS: Finder first (Put Back works), the path as one argument, never in the script', { skip: process.platform === 'win32' && 'macOS file names' }, async () => {
   const home = join(tmp, 'home-a'); mkdirSync(join(home, '.Trash'), { recursive: true });
   const item = join(tmp, 'entry "a"; do shell script'); mkdirSync(item);
   const calls = [];

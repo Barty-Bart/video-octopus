@@ -23,7 +23,8 @@ const freePort = () => new Promise((done, fail) => {
 });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-test('a Claude Code that quits at once: the server stays up, the chat says to sign in, Send again works', { timeout: 60000 }, async (t) => {
+// The fake CLI and login shell here are POSIX scripts; the EPIPE guard itself is the same code on Windows.
+test('a Claude Code that quits at once: the server stays up, the chat says to sign in, Send again works', { timeout: 60000, skip: process.platform === 'win32' && 'POSIX fake CLI' }, async (t) => {
   // The stand-in: answers --version and `auth status` (not signed in), closes its input unread and quits.
   const fake = join(bin, 'claude');
   writeFileSync(fake, `#!${process.execPath}
