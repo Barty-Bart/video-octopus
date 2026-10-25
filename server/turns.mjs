@@ -40,7 +40,8 @@ const turns = new Map();  // project id -> the turn running now
 
 export function trackTurns(id, chat, { broadcast }) {
   chat.listeners.add((ev) => {
-    if (ev.t === 'user') {
+    // 'turn': Send again (ChatSession.retry) sends the last message or brief without a second user line in the chat.
+    if (ev.t === 'user' || ev.t === 'turn') {
       // Adapters mark startup/auth discovery busy before echoing the user's message.
       // Attach its metadata without discarding that turn's already-captured files.
       const before = turns.get(id)?.before ?? null;
@@ -85,7 +86,9 @@ export function trackTurns(id, chat, { broadcast }) {
         const st = meta?.type ? pipelineStatus(dir, meta.type) : null;
         const step = st ? [...st.steps, ...(st.more || [])].find((x) => x.id === t.step) : null;
         if (!step) return;
-        const reason = oneLine(t.error) || (t.ok ? oneLine(t.text) : '') || 'Stopped before it finished.';
+        // What's missing, in Video Octopus's words ("Build the intro didn't produce its video."), not Claude's last
+        // sentence, which may say it was done (A18). An error says itself; Read still opens Claude's reply.
+        const reason = oneLine(t.error) || (t.ok ? `${step.name} didn’t produce ${step.makes || 'its result'}.` : '') || 'Stopped before it finished.';
         setProjectState(id, { unfinished: step.done ? null : { step: step.id, name: step.name, reason, ts: t.error ? null : t.textTs || null, at: Date.now() } });
         broadcast({ t: 'files' });
       });

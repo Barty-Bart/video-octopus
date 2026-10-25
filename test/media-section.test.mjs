@@ -323,6 +323,19 @@ test('an uploaded video can come in as a layer: the canvas take stays', async ()
   assert.match(readFileSync(join(dir, 'WORKLOG.md'), 'utf8'), /Imported overlay.mp4 as a new layer/);
 });
 
+test('a dropped screen recording becomes the take’s screen, not a camera; another video stays as it is', async () => {
+  const dir = project('dropped');
+  const files = await studioMod.importUpload(dir, Readable.from([Buffer.from('a video')]), 'Screen Recording 2026-10-24 at 10.02.11.mov');
+  assert.deepEqual(files, ['Screen Recording 2026-10-24 at 10.02.11_screen.mov']);
+  const r = studioMod.roles(dir);
+  assert.equal(r.screen, files[0]);
+  assert.equal(r.webcam, null);
+  assert.equal(meta(dir).activeTake, 'Screen Recording 2026-10-24 at 10.02.11');
+  const other = project('dropped-clip');
+  assert.deepEqual(await studioMod.importUpload(other, Readable.from([Buffer.from('a video')]), 'my clip.mov'), ['my clip.mov']);
+  assert.equal(studioMod.roles(other).screen, null);
+});
+
 test('the web side: media.css uses tokens and is linked; the editor has Delete recording and the Media menu', () => {
   const web = (f) => readFileSync(new URL(`../web/${f}`, import.meta.url), 'utf8');
   const css = web('media.css').replace(/\/\*[\s\S]*?\*\//g, '');

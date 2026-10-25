@@ -457,6 +457,8 @@ export class ChatSession {
     if (this.busy) throw new Error(`${ENGINES[this.engine] || 'The agent'} is working: wait for it to finish.`);
     if (!this.lastSend) throw new Error('Nothing to send again: Video Octopus restarted since. Type the message again.');
     this.emit({ t: 'note', text: 'Sent again.' });
+    // Not kept in the log: it tells turns.mjs which step (or message) this turn is for, as the user line did.
+    this.emit({ t: 'turn', text: this.lastSend, ...(this.lastBrief ? { brief: this.lastBrief } : {}) });
     return this.send(this.lastSend, { echo: false, brief: this.lastBrief, ...(this.lastImages?.length ? { images: this.lastImages } : {}) });
   }
 

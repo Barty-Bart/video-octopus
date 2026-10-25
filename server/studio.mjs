@@ -315,7 +315,10 @@ export async function importUpload(dir, req, name, { keepActive = false } = {}) 
   const stem = basename(String(name), extname(String(name))).replace(/[^\w.() -]/g, '_').replace(/^[.\s]+/, '').slice(0, 80) || 'take';
   let take = stem;
   for (let i = 2; sources(dir).some((f) => f.startsWith(take)); i++) take = `${stem} (${i})`;
-  const file = isAudio(ext) ? `${take}_audio${ext}` : `${take}${ext}`;
+  // A screen recording by its name (macOS "Screen Recording 2026-10-24 at 10.02.11.mov", "Bildschirmaufnahme …",
+  // QuickTime's and Windows' screen captures, "screencast") lands as the take's screen, not as a camera (A17).
+  const screenName = /screen[\s_-]*(recording|capture|cast)|screencast|bildschirmaufnahme|enregistrement de l.écran|grabación de pantalla|schermopname|registrazione schermo/i.test(stem);
+  const file = isAudio(ext) ? `${take}_audio${ext}` : screenName && !/_screen$/i.test(take) ? `${take}_screen${ext}` : `${take}${ext}`;
   mkdirSync(join(dir, 'source'), { recursive: true });
   const part = join(dir, 'source', `.${file}.part`);
   try { await pipeline(req, createWriteStream(part)); } catch (e) { rmSync(part, { force: true }); throw e; }
@@ -407,6 +410,18 @@ const blockList = (fmt) => {
 
 // opts.lines: each done step's line from its files (the dock's done moment and chat marker, the stage list); opts.seen: the steps done when
 // the page last looked (local state, index.mjs), so `finished` is the newest step that finished since then.
+// What a step makes, in words, from its done rule: "Build the intro didn't produce its video" (the dock, turns.mjs).
+const MAKES = [[/^renders\/.*\.(mp4|mov)$/i, 'its video'], [/production\.json$/, 'the scene plan (work/production.json)'], [/joins\.json$/, 'the checked cut (work/joins.json)'],
+  [/blocks\.json$/, 'the sections (work/blocks.json)'], [/edl_manual\.json$/, 'the edited cut (work/edl_manual.json)'], [/words\.json$/, 'the transcript'],
+  [/rough_map\.json$/, 'the rough cut (work/rough_map.json)'], [/post\.(md|json)$/, 'the post (post.md)'], [/packaging\.json$/, 'a main thumbnail'], [/zooms\.json$/, 'its zooms'], [/^source\//, 'a take']];
+export function makesOf(d = {}) {
+  const file = d.files?.[0] || (Array.isArray(d.json) ? d.json[0] : '') || (typeof d.kept === 'string' ? d.kept : '');
+  const m = file && MAKES.find(([re]) => re.test(file));
+  if (m) return m[1];
+  if (file) return file;
+  return d.worklog ? `its line in WORKLOG.md ("${d.worklog}")` : 'its result';
+}
+
 export function pipelineStatus(dir, type, opts = {}) {
   const p = PIPELINES();
   const fmt = p.formats[formatId(type)];
@@ -430,7 +445,7 @@ export function pipelineStatus(dir, type, opts = {}) {
     prevStage = stage;
     const show = step.show && TABS.has(step.show.tab) ? { tab: step.show.tab, target: String(step.show.target || step.show.tab) } : null;
     const what = step.what || (kind === 'app' ? 'Opens a part of Video Octopus for you to do this step.' : step.skill ? `Claude runs the ${step.skill} skill for this project.` : 'Claude does this step in the chat.');
-    return { id: step.id, label: step.label, name: step.name || step.label || step.id, stage,
+    return { id: step.id, label: step.label, name: step.name || step.label || step.id, stage, makes: makesOf(d),
              what: String(what).replaceAll('{blocks}', blockList(fmt)), where: step.where || (kind === 'app' ? '' : 'what changed, in Claude’s reply'), show,
              kind, action: step.action || null,
              skill: step.skill || null, ask: step.ask || '', brief: step.brief || null, motion: step.motion || null, optional, done, ...(changed ? { changed: true } : {}),

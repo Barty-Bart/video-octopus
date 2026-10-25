@@ -155,7 +155,7 @@ test('Send again re-sends the last message or brief once, and says so', async ()
   c.lastBrief = { step: 'intro', name: 'Build the intro' };
   await c.retry();
   assert.deepEqual(sent, [['Build the intro brief', { echo: false, brief: { step: 'intro', name: 'Build the intro' } }]]);
-  assert.deepEqual(ev.map((e) => e.text), ['Sent again.']);
+  assert.deepEqual(ev.map((e) => [e.t, e.text, e.brief?.step]), [['note', 'Sent again.', undefined], ['turn', 'Build the intro brief', 'intro']], 'the step is tracked again (Didn’t finish)');
   c.busy = true;
   await assert.rejects(() => c.retry(), /is working/);
 });
