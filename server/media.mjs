@@ -23,13 +23,19 @@
 //   too (so it leaves Recordings); then the whole trash entry goes to the computer's Bin (os-trash.mjs). Other videos
 //   using the take are named and asked about first (they keep their own copies). With no Bin it stays in the studio's
 //   trash. Refused while the take is recording or saving.
+// Imported files (A17): a file dropped or imported into a video (studio.mjs importUpload) stays where it landed, in
+// source/, and Recordings lists it there (importedRecordings below), named after the original file (project.json
+// imports; for older imports the WORKLOG line "Imported <name> as the take: source/<file>", else the file's name) and
+// marked Imported. There is no second copy. Its two delete answers follow the takes': Remove from this video moves the
+// file itself to the recordings folder (<recordings>/<name>/ with import.json), so it stays in Recordings and nothing is
+// copied; Delete recording sends it to the Bin like a take's files (it was its only copy, so it leaves Recordings too).
 // - /media-restore { trash }: the Undo. Everything comes back where it was; the canvas take only if nobody changed it
 //   meanwhile. Layer order and visibility are the canvas's own (layout.layers order, hidden; saved through /layout).
-import { existsSync, readdirSync, statSync, rmSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync, rmSync, mkdirSync } from 'node:fs';
 import { join, basename } from 'node:path';
-import { readJSON, writeJSON, mtime } from './util.mjs';
+import { readJSON, writeJSON, mtime, settings } from './util.mjs';
 import { projectMeta, saveProjectMeta, projectMedia, roles, takeKey, isAudio, isTakeFile, probe, proxyName, proxyRunning,
-  makeProxies, appendWorklog } from './studio.mjs';
+  makeProxies, appendWorklog, projectsRoot, IMPORT_NOTE } from './studio.mjs';
 import { normalize, newLayers } from '../web/layout.js';
 import { trashRoot, moveAside, newTrashEntry, TRASH_NAME, takeFolder, takeBusy, projectsUsing } from './browser-recorder.mjs';
 
@@ -50,13 +56,10 @@ export function mediaItems(dir) {
   // The files the canvas shows (roles: the active take's screen and camera, else its main file).
   const canvas = roles(dir), shown = [canvas.screen, canvas.webcam, canvas.main].filter(Boolean);
   const blocks = blocksOf(dir);
-  const groups = new Map();
-  for (const f of projectMedia(dir)) {
-    const k = takeKey(f);
-    if (!groups.has(k)) groups.set(k, []);
-    groups.get(k).push(f);
-  }
+  const groups = mediaGroups(dir);
+  const log = worklog(dir);
   const items = [...groups].map(([key, files]) => {
+    const name = importName(key, files, meta, log);
     const info = files.map((f) => {
       const p = probe(dir, f);
       let bytes = 0, at = 0;
@@ -74,7 +77,10 @@ export function mediaItems(dir) {
       recorded: STAMP.test(key) || (meta.takes || []).includes(key),
       picture: info.some((x) => x.role !== 'sound'),
       take: files.some(isTakeFile),
-      inRecordings: Boolean(takeFolder(key) && existsSync(takeFolder(key))), // Delete recording takes that copy too
+      // In Recordings: a take whose recordings-folder copy is there (Delete recording takes that copy too), or an
+      // imported file, which Recordings lists where it is (A17).
+      inRecordings: Boolean(recordedCopy(key, meta)) || Boolean(name),
+      ...(name ? { imported: true, name } : {}),
       canvas: shown.some((f) => files.includes(f)),
       layers, blocks: usedBy,
     };
@@ -82,6 +88,85 @@ export function mediaItems(dir) {
   const rank = (x) => (x.canvas ? 0 : x.layers.length ? 1 : 2);
   items.sort((a, b) => rank(a) - rank(b) || b.at - a.at);
   return { items, work: canvasWork(dir, items.find((x) => x.canvas)), removed: removedEntries(basename(dir)) };
+}
+
+// source/'s media by item (studio.mjs takeKey): key -> files.
+function mediaGroups(dir) {
+  const groups = new Map();
+  for (const f of projectMedia(dir)) {
+    const k = takeKey(f);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(f);
+  }
+  return groups;
+}
+const worklog = (dir) => { try { return readFileSync(join(dir, 'WORKLOG.md'), 'utf8').replace(/\r\n/g, '\n'); } catch { return ''; } };
+const reEsc = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// The recordings folder's copy of this project's take, or null. Only the project's own takes (project.json takes, or a
+// recorder stamp): an imported clip.mp4 is not the take some other video parked as recordings/clip.
+function recordedCopy(key, meta) {
+  if (!STAMP.test(key) && !(meta.takes || []).includes(key)) return null;
+  const folder = takeFolder(key);
+  return folder && existsSync(folder) ? folder : null;
+}
+
+// An imported file's name for Recordings, or null when the item isn't one. Imported: a video (or a sound file named like
+// a mic-only take) in source/ that is none of the project's takes and wasn't copied from the library for a block.
+// Its name: the original file's (project.json imports, written since A17; for older imports the WORKLOG line
+// "Imported <name> as the take|a new layer: source/<file>"), else the file's own name.
+export function importName(key, files, meta = {}, log = '') {
+  if (STAMP.test(key) || (meta.takes || []).includes(key) || !files.some(isTakeFile)) return null;
+  const rec = meta.imports?.[key];
+  if (rec?.name) return String(rec.name);
+  const lines = log.split('\n');
+  // A take from the recordings folder under another name (a folder another recorder made: "My take/clip.mov"):
+  // there, or named in its WORKLOG line ("Imported take My take: clip.mov").
+  const takeLine = /: (?:Imported|Recorded) take .+?: (.+)$/;
+  for (const f of files) {
+    if (lines.some((l) => l.includes(` from the library into source/${f} for a block`))) return null;
+    if ((meta.takes || []).some((t) => { const d = takeFolder(t); return d && existsSync(join(d, f)); })) return null;
+    if (lines.some((l) => takeLine.exec(l)?.[1].split(', ').includes(f))) return null;
+  }
+  for (const f of files) {
+    const re = new RegExp(`: Imported (.+) as (?:the take|a new layer): source/${reEsc(f)}$`);
+    for (let i = lines.length - 1; i >= 0; i--) { const m = re.exec(lines[i]); if (m) return m[1]; }
+  }
+  const main = files.find((f) => !isAudio(f)) || files.find(isTakeFile);
+  return main;
+}
+
+// Recordings' imported files (A17): every video's imports, where they are. One row each, with the video that uses it.
+// Archived videos are left out, as their takes' usage is.
+export function importedRecordings() {
+  let names = [];
+  try { names = readdirSync(projectsRoot()); } catch { return []; }
+  const out = [];
+  for (const n of names) {
+    if (n.startsWith('.') || n.startsWith('_')) continue;
+    const dir = join(projectsRoot(), n), meta = projectMeta(dir);
+    if (!meta) continue;
+    const log = worklog(dir);
+    for (const [key, files] of mediaGroups(dir)) {
+      const name = importName(key, files, meta, log);
+      if (!name) continue;
+      let bytes = 0, at = 0;
+      for (const f of files) { try { const st = statSync(join(dir, 'source', f)); bytes += st.size; at = Math.max(at, st.mtimeMs); } catch {} }
+      const main = files.find((f) => !isAudio(f)) || files[0];
+      out.push({ id: `${n}/${key}`, imported: true, inVideo: true, project: n, item: key, name, files, bytes,
+        at: meta.imports?.[key]?.at || at, duration: probe(dir, main)?.duration || null, used: true, projects: [meta.name || n] });
+    }
+  }
+  return out.sort((a, b) => b.at - a.at);
+}
+
+// A free folder in the recordings folder for an imported file taken off its video: its key, else "<key> (2)"…
+function parkFolder(key) {
+  const root = settings().recordingsDir;
+  mkdirSync(root, { recursive: true });
+  const base = key.replace(/[^\w .()-]/g, '_').replace(/^[.\s]+/, '').slice(0, 100) || 'imported';
+  let n = base;
+  for (let i = 2; existsSync(join(root, n)); i++) n = `${base} (${i})`;
+  return n;
 }
 
 // What was made from the canvas take since it went on the canvas: a transcript, a cut, a scene plan, renders.
@@ -202,7 +287,7 @@ export function removeMedia(dir, key, opts = {}) {
 
 // The item's files go to a new entry of the studio's trash; project.json forgets it. Returns the remove's answer.
 // stamp: Delete recording also moves the recordings folder's copy of that take into the entry (as take/).
-function moveOut(dir, key, { items, item }, { stamp = null } = {}) {
+function moveOut(dir, key, { items, item }, { stamp = null, parkable = true } = {}) {
   const files = item.files.map((x) => x.file);
   const meta = projectMeta(dir) || {};
   const layout = normalize(meta.layout, meta.type);
@@ -210,12 +295,21 @@ function moveOut(dir, key, { items, item }, { stamp = null } = {}) {
   const entry = newTrashEntry(key.replace(/[^\w .()-]/g, '_').slice(0, 100) || 'media');
   const root = join(trashRoot(), entry);
   const manifest = { v: 1, kind: KIND, at: Date.now(), project: id, item: key, files: [], proxies: [] };
+  // Remove from this video, for an imported file: the file itself moves to the recordings folder, so it stays in
+  // Recordings (A17). Its files are named after the folder there (clip (2)/clip (2).mp4), so it is one item, not two.
+  const park = !stamp && parkable && item.imported ? parkFolder(key) : null;
+  if (park) manifest.parked = { folder: park, files: {} };
   for (const f of files) {
-    moveAside(join(dir, 'source', f), join(root, 'project', 'source', f));
+    if (park) {
+      const to = park + f.slice(key.length);
+      moveAside(join(dir, 'source', f), join(settings().recordingsDir, park, to));
+      manifest.parked.files[f] = to;
+    } else moveAside(join(dir, 'source', f), join(root, 'project', 'source', f));
     manifest.files.push(f);
     const px = proxyName(f);
     if (!isAudio(f) && existsSync(join(dir, px))) { moveAside(join(dir, px), join(root, 'project', px)); manifest.proxies.push(px); }
   }
+  if (park) writeJSON(join(settings().recordingsDir, park, IMPORT_NOTE), { v: 1, name: item.name, at: meta.imports?.[key]?.at || item.at || Date.now(), from: { project: id, item: key }, parked: Date.now() });
   if (stamp) {
     const from = takeFolder(stamp);
     moveAside(from, join(root, 'take'));
@@ -240,8 +334,10 @@ function moveOut(dir, key, { items, item }, { stamp = null } = {}) {
   const saved = { ...meta, ...next };
   if (saved.activeTake == null) { delete saved.activeTake; delete saved.activeSince; }
   writeJSON(join(dir, 'project.json'), saved);
-  appendWorklog(dir, `${stamp ? `Deleted ${key} (from this video and from Recordings)` : `Removed ${key} from the video`} (Media): ${files.join(', ')}${stamp ? ` and recordings/${stamp}` : ''} moved to the studio's trash (${entry})${item.canvas ? fallback ? `; the canvas take is ${fallback} again` : '; the video has no take now' : ''}`);
-  return { ok: true, item: key, trash: entry, files, canvas: item.canvas, activeTake: fallback, recordings: Boolean(stamp) };
+  const where = park ? `moved to Recordings (recordings/${park}; playback copies to the studio's trash, ${entry})` : `moved to the studio's trash (${entry})`;
+  const deleted = Boolean(stamp) || (!parkable && Boolean(item.imported)); // out of Recordings too
+  appendWorklog(dir, `${deleted ? `Deleted ${key} (from this video and from Recordings)` : `Removed ${key} from the video`} (Media): ${files.join(', ')}${stamp ? ` and recordings/${stamp}` : ''} ${where}${item.canvas ? fallback ? `; the canvas take is ${fallback} again` : '; the video has no take now' : ''}`);
+  return { ok: true, item: key, trash: entry, files, canvas: item.canvas, activeTake: fallback, recordings: deleted, ...(park ? { parked: park } : {}) };
 }
 
 // ---- Delete recording: from this video and from Recordings, then to the computer's Bin ----
@@ -251,14 +347,14 @@ function moveOut(dir, key, { items, item }, { stamp = null } = {}) {
 // Undo works as for a remove. toBin(entry) → { where, how, undo } or null. Returns the remove's answer with { bin, others }.
 export async function deleteRecording(dir, key, { confirm = false, busy = null, toBin = async () => null } = {}) {
   const id = basename(dir);
-  const folder = takeFolder(key);
-  const stamp = folder && existsSync(folder) ? key : null;
+  const stamp = recordedCopy(key, projectMeta(dir) || {}) ? key : null;
   if (stamp && takeBusy(stamp)) throw refuse(takeBusy(stamp));
   const others = stamp ? projectsUsing(stamp).filter((u) => u.id !== id) : [];
   const ask = others.length ? [`${others.map((u) => `“${u.name}”`).join(', ')} ${others.length > 1 ? 'also use' : 'also uses'} this take. ${others.length > 1 ? 'They keep their own copies' : 'It keeps its own copy'}; this video’s copy and the one in Recordings go to the Bin.`] : [];
   const c = checkRemove(dir, key, { confirm, busy, ask });
   if (c.ok === false) return { ...c, others: others.map((u) => u.name), videos: others.map((u) => ({ id: u.id, name: u.name })) };
-  const r = moveOut(dir, key, c, { stamp });
+  // An imported file is its own only copy: it goes to the Bin, out of this video and Recordings (it isn't parked).
+  const r = moveOut(dir, key, c, { stamp, parkable: false });
   const bin = await toBin(r.trash);
   return { ...r, bin, others: others.map((u) => u.name) };
 }
@@ -270,14 +366,21 @@ export function restoreMedia(dir, entry, { busy = null } = {}) {
   const root = join(trashRoot(), entry), m = readJSON(join(root, 'manifest.json'), null);
   if (!m || m.kind !== KIND) throw new Error('That isn’t removed media.');
   if (m.project !== basename(dir)) throw new Error('That was removed from another video.');
+  // An imported file taken off the video waits in the recordings folder (A17): it comes back from there.
+  const park = m.parked?.folder ? join(settings().recordingsDir, m.parked.folder) : null;
+  const from = (f) => (park ? join(park, m.parked.files[f] || f) : join(root, 'project', 'source', f));
   for (const f of m.files) {
-    if (!existsSync(join(root, 'project', 'source', f))) throw new Error('Those files aren’t in the trash any more.');
+    if (!existsSync(from(f))) throw new Error(park ? 'It isn’t in Recordings any more: a video uses it now, or it was deleted.' : 'Those files aren’t in the trash any more.');
     if (existsSync(join(dir, 'source', f))) throw refuse(`source/${f} is in the project again already.`);
   }
   // A deleted recording: its take goes back to Recordings as well.
   const takeBack = m.take && existsSync(join(root, 'take')) ? takeFolder(m.take) : null;
   if (takeBack && existsSync(takeBack)) throw refuse('A take with that name is back in Recordings already.');
-  for (const f of m.files) moveAside(join(root, 'project', 'source', f), join(dir, 'source', f));
+  for (const f of m.files) moveAside(from(f), join(dir, 'source', f));
+  if (park) {
+    rmSync(join(park, IMPORT_NOTE), { force: true });
+    if (!readdirSync(park).some((n) => !n.startsWith('.'))) rmSync(park, { recursive: true, force: true });
+  }
   if (takeBack) moveAside(join(root, 'take'), takeBack);
   for (const px of m.proxies || []) if (!existsSync(join(dir, px))) moveAside(join(root, 'project', px), join(dir, px));
 

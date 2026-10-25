@@ -42,7 +42,7 @@ import { blocksRoute, blocksSummary, blocksContext, prepareState, stepBrief, not
 import { makePackageOwner, UI_ROUTES } from './package-owner.mjs';
 import { shotsRoute, readShotsAndZooms, shotsContext, onShotNotes } from './shots.mjs';
 import { recRoute, unfinishedTakes, recorderChoices, recorderBusy } from './browser-recorder.mjs';
-import { mediaRoute } from './media.mjs';
+import { mediaRoute, importedRecordings } from './media.mjs';
 import { trashRoute, binEntry } from './trash.mjs';
 import { agentChoice, setAgentChoice, choiceView, codexModels } from './agent-choices.mjs';
 import { ccSource } from './claude-source.mjs';
@@ -649,6 +649,11 @@ async function route(req, res) {
     } catch (e) { return send(res, 400, { error: e.message }); }
   }
   if (p === '/api/takes') return send(res, 200, listTakes().map((t) => ({ ...t, duration: takeDuration(t) })));
+  // The Recordings page: the takes, and the files dropped or imported into videos, listed where they are (A17,
+  // server/media.mjs importedRecordings), newest first.
+  if (p === '/api/recordings') {
+    return send(res, 200, [...listTakes().map((t) => ({ ...t, duration: takeDuration(t) })), ...importedRecordings()].sort((a, b) => b.at - a.at));
+  }
   // Settings › Storage › Trash (list, Put back, Empty trash) and the Recordings page's Delete with its Undo (server/trash.mjs).
   if (await trashRoute(req, res, url, { send, body, busy: mediaBusy, emit: broadcast })) return;
   // Saved layouts (the canvas's "+ Save layout"), shared by every project of the studio (server/saved-layouts.mjs).

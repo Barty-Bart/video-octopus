@@ -9,7 +9,7 @@ import { pipeline } from 'node:stream/promises';
 import { readJSON, writeJSON, mtime, settings } from './util.mjs';
 import { needsYou, needsSummary } from './cutreview.mjs';
 import { projectMeta, saveProjectMeta, roles, probe, lockedCut, appendWorklog, makeProxies, proxyName, formatTemplate, formatId,
-  blockTypes, listTakes, pipelineStatus, MEDIA, isAudio, isTakeFile, projectMedia } from './studio.mjs';
+  blockTypes, listTakes, pipelineStatus, MEDIA, isAudio, projectMedia, takeIntoSource } from './studio.mjs';
 import { snapSegments } from '../web/layout.js';
 import { takeOf, wordsOf, settleShots, takeBlockPresets, setTakeBlockPresets } from './shots.mjs';
 import { normalizeDoc, sequence, kindOf, placeByRule, layoutSig, moveBlock, setEdge, insertAt, removeFromRow,
@@ -284,13 +284,11 @@ async function upload(req, dir, name) {
   return `source/${n}`;
 }
 // Clone a recorder take into source/ without touching the canvas take (APFS clone: instant, no extra space).
+// An imported file waiting in Recordings moves in instead (studio.mjs takeIntoSource), as one of the video's imports.
 function cloneTake(dir, takeDir) {
-  const files = readdirSync(takeDir).filter((f) => isTakeFile(f) && !f.startsWith('.'));
-  if (!files.length) throw new Error('That take has no video or sound files.');
-  mkdirSync(join(dir, 'source'), { recursive: true });
-  for (const f of files) if (!existsSync(join(dir, 'source', f))) copyFileSync(join(takeDir, f), join(dir, 'source', f), constants.COPYFILE_FICLONE);
+  const { files, imported } = takeIntoSource(dir, takeDir);
   const meta = projectMeta(dir) || {};
-  saveProjectMeta(dir, { takes: [...new Set([...(meta.takes || []), basename(takeDir)])] });
+  saveProjectMeta(dir, imported ? { imports: { ...(meta.imports || {}), [basename(takeDir)]: imported } } : { takes: [...new Set([...(meta.takes || []), basename(takeDir)])] });
   const cam = files.find((f) => /_webcam\./i.test(f)) || files.find((f) => !/_screen\./i.test(f)) || files[0];
   const screen = files.find((f) => /_screen\./i.test(f) && f !== cam);
   return { files, file: `source/${cam}`, screen: screen ? `source/${screen}` : undefined };

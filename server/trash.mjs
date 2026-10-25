@@ -25,7 +25,7 @@
 //   it put it: the entry comes back here, then is put back as above.
 import { existsSync, readdirSync, lstatSync, rmSync } from 'node:fs';
 import { join, basename } from 'node:path';
-import { readJSON } from './util.mjs';
+import { readJSON, settings } from './util.mjs';
 import { projectDir, projectMeta } from './studio.mjs';
 import { trashRoot, TRASH_NAME, deleteTake, restoreTake } from './browser-recorder.mjs';
 import { restoreMedia } from './media.mjs';
@@ -67,8 +67,10 @@ function describe(n) {
     if (m.project && !video) item.why = 'Its video is gone or archived, so it can’t go back there.';
     else if (!existsSync(join(root, 'take')) && !m.project) item.why = 'Its files aren’t in the trash any more.';
   } else if (m?.kind === 'media-removed') {
-    item.what = m.take ? `Deleted recording, was in “${video || m.project}” and Recordings` : `Removed from “${video || m.project}”`;
+    item.what = m.take ? `Deleted recording, was in “${video || m.project}” and Recordings` : m.parked ? `Removed from “${video || m.project}”; the file waits in Recordings` : `Removed from “${video || m.project}”`;
     if (!video) item.why = 'Its video is gone or archived, so it can’t go back there.';
+    // An imported file taken off its video (A17) is in the recordings folder, not here; Put back fetches it from there.
+    else if (m.parked && !existsSync(join(settings().recordingsDir, m.parked.folder))) item.why = 'Its file isn’t in Recordings any more: a video uses it now, or it was deleted.';
   } else if (m?.kind === 'discarded') {
     item.what = 'Dropped by Restart while recording';
     item.why = 'It was never saved as a take, so there’s nothing to put back.';

@@ -159,15 +159,16 @@ test('refused while the take records or saves, and while Claude or an export is 
   assert.ok(existsSync(join(recordings, B)) && existsSync(join(dir, 'source', `${A}_webcam.mp4`)), 'nothing moved');
 });
 
-test('an imported file (no Recordings copy) goes to the Bin from the video alone', async () => {
+test('an imported file (listed in Recordings where it is, A17) goes to the Bin, out of the video and Recordings', async () => {
   const A = '2026-10-24_13-00-00';
   take(A);
   const dir = project('imp', [A]);
   writeFileSync(join(dir, 'source', 'clip.mp4'), 'imported');
-  assert.equal(media.mediaItems(dir).items.find((x) => x.id === 'clip').inRecordings, false);
+  assert.equal(media.mediaItems(dir).items.find((x) => x.id === 'clip').inRecordings, true);
   const r = await mediaCall(dir, '/media-delete', { item: 'clip' });
   assert.equal(r.code, 200, JSON.stringify(r.body));
-  assert.equal(r.body.recordings, false);
+  assert.equal(r.body.recordings, true);
+  assert.ok(!media.importedRecordings().some((x) => x.project === 'imp'), 'gone from Recordings');
   assert.ok(existsSync(join(fakeBin, r.body.trash, 'project', 'source', 'clip.mp4')));
 });
 

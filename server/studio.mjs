@@ -1,7 +1,7 @@
 // The studio folder: projects, recorder takes, imports, proxies, pipeline status, skills.
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync, copyFileSync, cpSync, renameSync, rmSync, createWriteStream, constants, openSync, readSync, closeSync } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
-import { join, basename, extname } from 'node:path';
+import { join, basename, extname, dirname } from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { settings, readJSON, writeJSON, globExists, mtime, slugify, studioTool, APP_DIR, h264 } from './util.mjs';
@@ -291,7 +291,11 @@ export function listTakes() {
       const files = readdirSync(d).filter((f) => isTakeFile(f) && !f.startsWith('.'));
       const bytes = files.reduce((t, f) => t + statSync(join(d, f)).size, 0);
       // transcribed: "Transcribe new recordings" wrote its words into the take's own tr/ folder (schedules.mjs)
-      return { id: basename(d), files, bytes, at: mtime(d), used: used.has(basename(d)), projects: by.get(basename(d)) || [], transcribed: existsSync(join(d, 'tr', 'words.json')) };
+      // An imported file taken off its video (Media › Remove from this video) waits here with import.json: Recordings
+      // names it after the original file and marks it Imported (A17).
+      const imp = readJSON(join(d, IMPORT_NOTE), null);
+      return { id: basename(d), files, bytes, at: mtime(d), used: used.has(basename(d)), projects: by.get(basename(d)) || [], transcribed: existsSync(join(d, 'tr', 'words.json')),
+        ...(imp ? { imported: true, name: String(imp.name || files[0]) } : {}) };
     })
     .filter((t) => t.files.length)
     .sort((a, b) => b.at - a.at);
@@ -313,23 +317,59 @@ export function importTake(dir, takeId) {
   return importTakeFrom(dir, join(settings().recordingsDir, takeId));
 }
 
+// A take folder's files into the project's source/: a clone (APFS: instant, no extra space) of a recorder take, or, for an
+// imported file waiting in Recordings (import.json, A17), the file itself, moved, so it is never in two places. The
+// folder then goes (with what Video Octopus made in it: import.json, a tr/ transcript, which is copied below).
+// { files, imported: { name, at } | null }.
+export const IMPORT_NOTE = 'import.json';
+export function takeIntoSource(dir, takeDir) {
+  const files = readdirSync(takeDir).filter((f) => isTakeFile(f) && !f.startsWith('.'));
+  if (!files.length) throw new Error('That take has no video or sound files.');
+  mkdirSync(join(dir, 'source'), { recursive: true });
+  const imp = readJSON(join(takeDir, IMPORT_NOTE), null);
+  if (!imp) {
+    for (const f of files) {
+      const to = join(dir, 'source', f);
+      if (!existsSync(to)) copyFileSync(join(takeDir, f), to, constants.COPYFILE_FICLONE);
+    }
+    return { files, imported: null };
+  }
+  for (const f of files) if (existsSync(join(dir, 'source', f))) throw new Error(`source/${f} is in this video already.`);
+  for (const f of files) moveFile(join(takeDir, f), join(dir, 'source', f));
+  if (existsSync(join(takeDir, 'tr', 'words.json')) && !['work/tr/words.json', 'work/words.json'].some((f) => existsSync(join(dir, f)))) {
+    try { cpSync(join(takeDir, 'tr'), join(dir, 'work', 'tr'), { recursive: true }); } catch {}
+  }
+  const rest = readdirSync(takeDir).filter((n) => n !== IMPORT_NOTE && n !== 'tr' && !n.startsWith('.'));
+  if (!rest.length) rmSync(takeDir, { recursive: true, force: true });
+  else rmSync(join(takeDir, IMPORT_NOTE), { force: true });
+  return { files, imported: { name: String(imp.name || files[0]), at: imp.at || Date.now() } };
+}
+// rename, or across disks a copy that is complete before the original goes.
+export function moveFile(from, to) {
+  mkdirSync(dirname(to), { recursive: true });
+  if (existsSync(to)) throw new Error(`${to} is already there.`);
+  try { renameSync(from, to); }
+  catch (e) {
+    if (e.code !== 'EXDEV') throw e;
+    copyFileSync(from, to, constants.COPYFILE_EXCL);
+    rmSync(from, { force: true });
+  }
+}
+
 // The same for a take folder anywhere (a take the recorder just saved). The take becomes the active one,
 // unless it's added as a layer (keepActive), which leaves the canvas take as it is.
 export function importTakeFrom(dir, takeDir, how = 'Imported', { keepActive = false } = {}) {
   const takeId = basename(takeDir);
-  const files = readdirSync(takeDir).filter((f) => isTakeFile(f) && !f.startsWith('.'));
-  if (!files.length) throw new Error('That take has no video or sound files.');
-  mkdirSync(join(dir, 'source'), { recursive: true });
-  for (const f of files) {
-    const to = join(dir, 'source', f);
-    if (!existsSync(to)) copyFileSync(join(takeDir, f), to, constants.COPYFILE_FICLONE);
-  }
+  const { files, imported } = takeIntoSource(dir, takeDir);
   const meta = projectMeta(dir) || {};
   const active = keepActive && meta.activeTake ? meta.activeTake : keepActive ? (meta.takes || [])[0] || takeId : takeId;
   // activeSince: cuts saved before this moment belong to an earlier take (see lockedCut).
   const since = active !== meta.activeTake && (meta.activeTake || (meta.takes || []).length) ? { activeSince: Date.now() } : {};
-  saveProjectMeta(dir, { takes: [...new Set([...(meta.takes || []), takeId])], activeTake: active, ...since });
-  appendWorklog(dir, `${how} take ${takeId}${keepActive ? ' as a new layer' : ''}: ${files.join(', ')}`);
+  // An imported file moves into the video and is one of its imports again, not a take (it isn't in Recordings twice).
+  const list = imported ? { imports: { ...(meta.imports || {}), [takeId]: imported } } : { takes: [...new Set([...(meta.takes || []), takeId])] };
+  saveProjectMeta(dir, { ...list, activeTake: active, ...since });
+  appendWorklog(dir, imported ? `Moved ${imported.name} from Recordings into the video${keepActive ? ' as a new layer' : ''}: ${files.map((f) => `source/${f}`).join(', ')}`
+    : `${how} take ${takeId}${keepActive ? ' as a new layer' : ''}: ${files.join(', ')}`);
   // A take transcribed before it was in a project (its tr/ folder, from "Transcribe new recordings") brings its
   // transcript when it becomes the canvas take of a project that has none: the Transcribe step is done already.
   if (active === takeId && existsSync(join(takeDir, 'tr', 'words.json')) && !['work/tr/words.json', 'work/words.json'].some((f) => existsSync(join(dir, f)))) {
@@ -356,6 +396,9 @@ export async function importUpload(dir, req, name, { keepActive = false } = {}) 
   try { await pipeline(req, createWriteStream(part)); } catch (e) { rmSync(part, { force: true }); throw e; }
   if (!statSync(part).size) { rmSync(part, { force: true }); throw new Error('The file was empty.'); }
   renameSync(part, join(dir, 'source', file));
+  // project.json imports: the original file's name, for Recordings (A17: an imported file is listed where it is, in
+  // source/, named after the file it came from; no second copy is made).
+  const imported = { name: basename(String(name)).slice(0, 200), at: Date.now() };
   if (keepActive) {
     // A project made by hand may not say which take is on the canvas: it's named now, so the layer can't take its place.
     const before = projectMeta(dir) || {};
@@ -363,11 +406,12 @@ export async function importUpload(dir, req, name, { keepActive = false } = {}) 
       const main = roles(dir).take.find((f) => f !== file);
       if (main) saveProjectMeta(dir, { activeTake: takeKey(main) });
     }
+    saveProjectMeta(dir, { imports: { ...(projectMeta(dir)?.imports || {}), [takeKey(file)]: imported } });
     appendWorklog(dir, `Imported ${name} as a new layer: source/${file}`);
     return [file];
   }
   const meta = projectMeta(dir) || {};
-  saveProjectMeta(dir, { activeTake: take, ...(meta.activeTake ? { activeSince: Date.now() } : {}) });
+  saveProjectMeta(dir, { activeTake: take, imports: { ...(meta.imports || {}), [takeKey(file)]: imported }, ...(meta.activeTake ? { activeSince: Date.now() } : {}) });
   appendWorklog(dir, `Imported ${name} as the take: source/${file}`);
   return [file];
 }

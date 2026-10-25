@@ -143,6 +143,9 @@ test('Use an older take puts it on the canvas; work on the current take is asked
 
 test('Remove moves a layer’s files to the trash; Undo restores project.json and the files exactly', async () => {
   const dir = project('rm');
+  // clip.mp4 counts as a take of this project here (a recordings-folder take), so it goes to the trash; an imported
+  // file is parked in the recordings folder instead (test/imports-recordings.test.mjs).
+  writeJ(join(dir, 'project.json'), { ...meta(dir), takes: [A, B, B2, 'clip'] });
   const before = meta(dir), files = sourceFiles(dir);
   const r = await call(dir, '/media-remove', { item: 'clip' });
   assert.equal(r.code, 200, JSON.stringify(r.body));
