@@ -21,7 +21,7 @@ Save useful preferences with **Remember this**, review proposed lessons, and reu
 | Packaging (preview) | An optional first stage for thumbnails: a Packaging tab with a Codex chat, **Generate** (six ideas in one image, cut into cards), refine one to 1280 × 720, star / winners (up to 3) / main thumbnail, old thumbnails, and resources (photos, logos, style notes) at All channels, a channel or one video. Image generation uses your own Codex sign-in with a ChatGPT plan and counts against that plan; no API key is used. Only synthetic, fake-Codex runs are tested so far. See [Packaging and resources](docs/learning-and-storage.md#packaging-and-resources). |
 | Project formats | YouTube tutorial, faceless explainer, Short and product explainer. |
 
-> **v0.1.0-beta.22 — source update.** Dropped and imported files show in Recordings where they already are (no second copy), the editor's top bar can no longer disappear and its logo reads ‹ Projects, and no sideways scroll on a phone. Includes beta.21's flow changes (one Next, Plan Approve, per-scene Build progress, locked cut, Undo for Claude's steps, live recording view, idea → script, Claude states everywhere) and everything before.
+> **v0.1.0-beta.23 — source update.** Setup finds Python environments in your project and app folders (and can ask your agent to look further), Parakeet transcription on Apple Silicon, and recordings you can edit straight away: keep originals or optimise for editing with a 720p copy, export always from the originals, and an offer to delete the copies after export. Includes beta.22's imported files in Recordings and the ‹ Projects way back, beta.21's flow changes, and everything before.
 
 ### Six bundled starter skills
 

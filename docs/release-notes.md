@@ -1,4 +1,4 @@
-# Unreleased
+# v0.1.0-beta.23
 
 - **Check my computer finds the Python you already have.** It now also looks for `.venv`, `venv` and `env` folders up to two folders deep in Movies, Documents, Downloads, Desktop, Developer, Projects, code, src and dev, one folder deep in your home folder, next to your studio, and in apps' data (`~/Library/Application Support` on a Mac, so OpenToolkit's speech environment shows up). It reads folder names only, never follows links, skips hidden folders, app bundles, photo and video libraries and node_modules, and stops after 1,500 folders, 2 seconds or 16 environments. The status line says exactly where it looked.
 - **A best match with Use this.** Setup › Python environments puts the best environment first (Python 3.10+, NumPy and the most transcription engines; another app's own environment ranks after a project's) with **Use this**. You still confirm, and its imports are checked again before it is selected.
@@ -13,6 +13,8 @@
 - **Delete the copies after an export.** After an export, if the video has 720p editing copies, Video Octopus asks "Delete the 720p editing copies (3.7 GB)? Your originals and the export stay." **Delete** removes them for good, not to the Bin, because they are only caches that can be made again. **Keep** leaves them. **Don't ask again** turns the question off (Settings › Storage › Playback turns it back on). If you edit the video again with Optimise on, the copies are made again in the background. Settings › Storage › Playback also lists the space copies use in each video, with **Delete all copies**.
 - **Exports are always full quality.** As before, every export reads the original files in `source/`, never a 720p copy, in both modes. A new test now checks this.
 - **Smoother copies on Windows and Linux.** A 720p copy now has a keyframe every 15 frames. In Chromium that takes scrubbing a 10-minute copy made on Windows or Linux from 9 to 22 frames a second up to 60.
+
+Verified with 507 unit tests on Node 24.22.1 and 22.22.1, the format-skill and learning runtimes, one real Parakeet run on this Mac with cached models (English on v2, Detect on v3), seek measurements on 10–12 minute synthetic 1440p files, and disposable browser runs with fake agents (Setup's best match and the ask button, Parakeet in Settings, playing originals with a copy landing mid-play, the delete-copies card after export). Not run: Windows or Linux natively, and a real agent's whole-computer search. This is a source update on main; the downloadable tagged prerelease remains separate.
 
 # v0.1.0-beta.22
 

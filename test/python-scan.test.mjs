@@ -23,7 +23,7 @@ const ALL = { numpy: '2', 'mlx-whisper': '0.4', 'parakeet-mlx': '0.5', 'faster-w
 
 test('finds project and app environments one or two folders deep, and nothing deeper or hidden', t => {
   const { dir, venv, base } = home(t);
-  const motion = venv('Movies/motion-design/.venv'), deep2 = venv('Documents/clients/acme/venv'), homeLevel = venv('scratch/env');
+  const motion = venv('Movies/video-tools/.venv'), deep2 = venv('Documents/clients/acme/venv'), homeLevel = venv('scratch/env');
   const app = venv('Library/Application Support/Pico/Speech/venv');
   const tooDeep = venv('Documents/a/b/c/.venv'), hidden = venv('Movies/.secret/.venv'), modules = venv('Projects/site/node_modules/x/.venv');
   const apple = venv('Library/Application Support/com.apple.something/x/venv'), bundle = venv('Movies/Edit.fcpbundle/.venv');
@@ -73,7 +73,7 @@ test('the studio\'s parent folder is searched for sibling projects', t => {
 
 test('ranks a project environment with every engine first, an app\'s own environment after it, a bare one last', async t => {
   const { venv, base } = home(t);
-  const motion = venv('Movies/motion-design/.venv'), app = venv('Library/Application Support/Pico/Speech/venv'), bare = venv('Desktop/tests/.venv');
+  const motion = venv('Movies/video-tools/.venv'), app = venv('Library/Application Support/Pico/Speech/venv'), bare = venv('Desktop/tests/.venv');
   const whisperOnly = venv('Downloads/ai-video-studio/.venv');
   const pkgs = { [motion]: ALL, [app]: ALL, [whisperOnly]: { numpy: '2', 'mlx-whisper': '0.4' }, [bare]: {} };
   const r = await scanPython(base, { arm64: true }, async p => ({ version: '3.12.14', arch: 'arm64', prefix: p, packages: pkgs[p] || {} }));
