@@ -34,7 +34,7 @@ import { patchOf, applyPatch, reconcile, frameLooks, touches, rowKeys, hiddenOf,
 import { withoutKeys, shotsWithoutProposals, zoomsWithoutProposals, proposalsOf, proposalWhat, proposalWords } from './shots.js';
 import { makeZooms } from './zoomsui.js';
 import { makeRail } from './rail.js';
-import { STAGE_PANE, PANE_WORDS, paneOfTab, stageOfTab, stagesOf, stageForPane, parseProjectHash, stageHash, landingStage,
+import { STAGE_PANE, PANE_WORDS, paneOfTab, stageOfTab, stagesOf, stageForPane, stageToOpen, parseProjectHash, stageHash, landingStage,
   rememberStage, recallStage, recallLegacyTab, firstNotedScene } from './stages.js';
 import * as rec from './recorder.js';
 import { HOTKEY } from './recorder.js';
@@ -777,7 +777,7 @@ async function openProject(id) {
   // The step rail (web/rail.js): five stage chips in the bar, the next step docked on the message box, Show me, the
   // tabs' empty states and the first-time help, all from the steps' own words.
   rail = makeRail({ root: el, id, getP: () => P, hooks: {
-    runStep: (s) => runStep(s), setTab: (t, hint) => setTab(t, hint), goStage: (name) => goStage(name), stage: () => stage, marks: () => ({ ...marks }),
+    runStep: (s, from) => runStep(s, { from }), setTab: (t, hint) => setTab(t, hint), goStage: (name) => goStage(name), stage: () => stage, marks: () => ({ ...marks }),
     glowTab: (t, why, hint) => markTab(t, why, hint), applyNotes: () => scenes.apply(), openCutList: () => { setTab('cut'); cutPanel.openList(); },
     learn: () => runStep({ id: 'learn', kind: 'claude' }), status: () => STATUS, composer: (name) => chat.setStep(name),
     readReply: (ts) => { setFold(false); requestAnimationFrame(() => chat.reveal(ts)); },
@@ -999,7 +999,10 @@ async function openProject(id) {
     };
   }
 
-  async function runStep(s) {
+  // from: where Run was pressed ('dock', 'empty', 'menu', 'help'): a Claude step then opens its own stage as it starts
+  // (B11, web/stages.js stageToOpen); Run pressed inside a pane (the Blocks band, the Cut panel's Lock, the ⋯ menu)
+  // leaves you there. A step Claude starts from the chat never comes through here.
+  async function runStep(s, { from = null } = {}) {
     rail.dismissDone(); // Run puts the strip's green "done" away
     if (s.kind === 'app' && s.action === 'import') { setTab('canvas', s.stage); canvas.showImport(); return; }
     if (s.kind === 'app' && s.action === 'open-cut') { setTab('cut', s.stage); return; }
@@ -1007,7 +1010,9 @@ async function openProject(id) {
     if (s.kind === 'app' && s.action === 'open-packaging') { setTab('packaging', s.stage); return; }
     if (s.id === 'post-kit') { setTab('post', 'Publish'); return; } // Publish's Post section writes the kit (work/post.json and post.md)
     try { await api(`/api/projects/${encodeURIComponent(id)}/step`, { step: s.id }); }
-    catch (e) { toast(e.message); }
+    catch (e) { toast(e.message); return; }
+    const go = stageToOpen(s, { from, current: stage, names: stageNames() });
+    if (go) goStage(go);
   }
 
   // Cut tab: the Cut Editor (web/cut-editor/, built in: server/cuteditor.mjs gives it the project's files), in a frame

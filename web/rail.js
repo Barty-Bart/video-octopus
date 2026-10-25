@@ -40,7 +40,7 @@ const SHOW_WHERE = { sections: 'on the timeline', zooms: 'on the timeline', pict
 const showLabel = (show) => `Show me ${SHOW_WHERE[show?.target] || { packaging: 'in Packaging', canvas: 'on the canvas', cut: 'in Cut', scenes: 'in Scenes', renders: 'in Publish', post: 'in Publish' }[show?.tab] || 'where'}`;
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-// hooks: runStep(step), setTab(tab, stage?) (a pane by its old tab name; stage: the stage to select when it opens that
+// hooks: runStep(step, from) (from: 'dock' | 'empty' | 'menu' | 'help', where Run was pressed), setTab(tab, stage?) (a pane by its old tab name; stage: the stage to select when it opens that
 // pane), goStage(name) (open a stage's workspace), stage() (the selected stage), marks() ({ <stage>: why } for the "new"
 // dots), glowTab(tab, why, stage?), applyNotes() (Save changes → Claude), openCutList() (what Clean up left for you),
 // newestRender() (selects it on the Renders tab), learn(), status() → /api/status (help), composer(<the running step's
@@ -77,11 +77,12 @@ export function makeRail({ root, id, getP, hooks }) {
   }
   const needs = () => { const P = getP(); return stepOf('prepare')?.done && P.prepare?.needs > 0 ? P.prepare.needs : 0; };
   const sendNotes = (s) => s?.action === 'open-scenes' && getP().scenes?.open > 0;
-  function run(s) {
+  // from: where Run was pressed ('dock', 'empty', 'menu', 'help'); the step's stage then opens as it starts (B11).
+  function run(s, from) {
     if (!s) return;
     dismissDone();
     if (sendNotes(s)) return hooks.applyNotes();
-    hooks.runStep(s);
+    hooks.runStep(s, from);
   }
   async function railOp(body) {
     try { getP().pipeline = await api(`${url}/rail`, body); } catch (e) { toast(e.message); return; }
@@ -361,9 +362,10 @@ export function makeRail({ root, id, getP, hooks }) {
       closePop();
       if (a === 'show') return show(s.show, s.name, true, s.stage);
       if (a === 'again' && s.kind !== 'app' && s.id !== 'post-kit' && !confirm(`Run “${s.name}” again?`)) return;
-      // Run from a stage's list: the step's stage opens as it starts (Show me does the same).
-      hooks.goStage?.(s.stage);
-      run(s);
+      // Run from a stage's list: the step's stage opens as it starts (B11: runStep; Show me does the same). Save changes
+      // → Claude opens it here.
+      if (sendNotes(s)) hooks.goStage?.(s.stage);
+      run(s, 'menu');
     }));
     if (had) (pop.querySelector(`[data-a="${had.a}"]${had.s ? `[data-s="${CSS.escape(had.s)}"]` : ''}`) || pop).focus({ preventScroll: true });
   }
@@ -529,9 +531,9 @@ export function makeRail({ root, id, getP, hooks }) {
     const cur = current(), s = running() || cur;
     if (!['info', 'close', 'show'].includes(a)) closeSheet();
     switch (a) {
-      case 'run': return run(cur);
+      case 'run': return run(cur, 'dock');
       case 'skip': return cur && skip(cur);
-      case 'pre': return run(cur && before(cur));
+      case 'pre': return run(cur && before(cur), 'dock');
       case 'needs': return hooks.openCutList();
       case 'info': return sheetOpen ? closeSheet(true) : openSheet();
       case 'close': return closeSheet(true);
@@ -780,7 +782,7 @@ export function makeRail({ root, id, getP, hooks }) {
       ? `<p class="em-run" role="status"><span class="spin" aria-hidden="true"></span><span><b>${esc(rs.name)}</b> is running${asks.length ? ' · waiting for you in the chat' : ''}</span></p>${asks.length ? '<button type="button" class="nc-run" data-a="em-answer">Answer in the chat</button>' : ''}`
       : cur ? `<button type="button" class="nc-run" data-a="em-run">${ICON.play}${esc(own ? cur.name : `Next: ${cur.name}`)}</button>` : '';
     acts.append(h('<button type="button" class="nc-link" data-a="em-help">How the steps work</button>'));
-    $('[data-a=em-run]', acts)?.addEventListener('click', () => (own ? (dismissDone(), runOwn()) : run(cur)));
+    $('[data-a=em-run]', acts)?.addEventListener('click', () => (own ? (dismissDone(), runOwn()) : run(cur, 'empty')));
     $('[data-a=em-answer]', acts)?.addEventListener('click', () => waitingHere()[0]?.focus?.());
     $('[data-a=em-help]', acts).onclick = () => openHelp(true);
   }
@@ -819,7 +821,7 @@ export function makeRail({ root, id, getP, hooks }) {
       modal.hidden = true; modal.replaceChildren(); modal.onclick = null;
       document.removeEventListener('keydown', onKey, true);
       saveSeen();
-      if (start && cur) run(cur); else back?.focus?.({ preventScroll: true });
+      if (start && cur) run(cur, 'help'); else back?.focus?.({ preventScroll: true });
     };
     const onKey = (e) => {
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(false); }

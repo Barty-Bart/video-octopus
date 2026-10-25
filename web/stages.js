@@ -139,6 +139,19 @@ export function stageForPane(tab, { current = null, hint = null, hasTake = true,
   return names.find((n) => STAGE_PANE[n] === pane) || current;
 }
 
+// Running a step takes you to its stage (B11, TRIAGE §C): Run pressed in the dock, in an empty state, in a stage's step
+// list or on the first-time help's Start opens the stage the step belongs to (pipelines.json `stage`: Clean up → Cut).
+// A step Claude starts from the chat doesn't move you, nor does Run pressed inside a pane (the Blocks band, the Cut
+// panel's Lock, the ⋯ menu: you are where its result shows), nor being on that stage already. Returns the stage to
+// open, or null to stay.
+export const RUN_OPENS_STAGE = ['dock', 'empty', 'menu', 'help'];
+export function stageToOpen(step, { from = null, current = null, names = STAGE_ORDER } = {}) {
+  if (!step || !RUN_OPENS_STAGE.includes(from)) return null;
+  const st = step.stage;
+  if (!st || !names.includes(st) || st === current) return null;
+  return st;
+}
+
 // The first scene with notes still open (not resolved), in the scenes' order: where Polish opens Scenes.
 export function firstNotedScene(data) {
   const scenes = data?.scenes || [], notes = data?.notes || [];

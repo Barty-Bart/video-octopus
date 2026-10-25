@@ -41,3 +41,40 @@ test('B2: Projects names the dock’s step (pipeline current), also when only an
   assert.equal(finished.current, dock('finished').name);
   assert.equal(finished.currentOptional, true);
 });
+
+test('B11: Run in the dock, an empty state, a stage’s list or the help opens the step’s stage; the chat and panes don’t', async () => {
+  const { stageToOpen, RUN_OPENS_STAGE } = await import('../web/stages.js');
+  const PIPELINES = JSON.parse((await import('node:fs')).readFileSync(new URL('../core/pipelines.json', import.meta.url), 'utf8'));
+  const prepare = { id: 'prepare', ...PIPELINES.shared.prepare };
+  assert.equal(prepare.stage, 'Cut'); // Clean up → Cut
+  const names = ['Package', 'Record', 'Cut', 'Plan', 'Build', 'Polish', 'Publish'];
+  assert.deepEqual(RUN_OPENS_STAGE, ['dock', 'empty', 'menu', 'help']);
+  for (const from of RUN_OPENS_STAGE) assert.equal(stageToOpen(prepare, { from, current: 'Record', names }), 'Cut', from);
+  // Already there: stay.
+  assert.equal(stageToOpen(prepare, { from: 'dock', current: 'Cut', names }), null);
+  // Claude starting a step from the chat, or Run pressed inside a pane (Blocks band, Cut panel, ⋯ menu): stay.
+  for (const from of ['chat', null, undefined, 'band', 'pane']) assert.equal(stageToOpen(prepare, { from, current: 'Record', names }), null, String(from));
+  // A stage this project doesn't show, or a step without one (Learn from this project): stay.
+  assert.equal(stageToOpen({ id: 'package', stage: 'Package' }, { from: 'dock', current: 'Record', names: names.filter((n) => n !== 'Package') }), null);
+  assert.equal(stageToOpen({ id: 'learn', kind: 'claude' }, { from: 'dock', current: 'Record', names }), null);
+  assert.equal(stageToOpen(null, { from: 'dock', names }), null);
+  // Every step's own stage is one the bar has: Build the intro → Build, Plan the scenes → Plan.
+  const tut = PIPELINES.formats.tutorial.steps.map((s) => (typeof s === 'string' ? { id: s, ...PIPELINES.shared[s] } : s));
+  assert.equal(stageToOpen(tut.find((s) => s.id === 'intro'), { from: 'empty', current: 'Polish', names }), 'Build');
+  assert.equal(stageToOpen(tut.find((s) => s.id === 'plan'), { from: 'menu', current: 'Cut', names }), 'Plan');
+});
+
+test('B11: the page wires it: rail passes where Run was pressed, runStep opens the stage after the step starts', async () => {
+  const { readFileSync } = await import('node:fs');
+  const rail = readFileSync(new URL('../web/rail.js', import.meta.url), 'utf8'), app = readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
+  assert.match(rail, /case 'run': return run\(cur, 'dock'\)/);
+  assert.match(rail, /run\(cur, 'empty'\)/);
+  assert.match(rail, /run\(s, 'menu'\)/);
+  assert.match(rail, /run\(cur, 'help'\)/);
+  assert.match(app, /runStep: \(s, from\) => runStep\(s, \{ from \}\)/);
+  const body = app.slice(app.indexOf('async function runStep(s, { from = null } = {})'), app.indexOf('// Cut tab: the Cut Editor'));
+  assert.ok(body.indexOf('/step`') < body.indexOf('stageToOpen('), 'the stage opens once the step has started');
+  // The Blocks band and the Cut panel's Lock call runStep without a from: they stay where they are.
+  assert.match(app, /runStep: \(sid\) => \{ const s = P\.pipeline\?\.steps\.find\(\(x\) => x\.id === sid\); if \(s\) runStep\(s\); \}/);
+  assert.match(app, /runLock: \(s\) => runStep\(s\)/);
+});
