@@ -394,9 +394,10 @@ export async function learningRoute(req,res,url,{send,body,serveFile}) {
         if(action==='chat-sessions'){if(b.op==='new')c.newSession();else if(b.op==='open')c.openSession(String(b.log||''));return reply(c.sessions());}
         if(action==='chat-compact'){await c.compact();return reply({ok:true});}
         if(c.busy||extractionStatus(studio,id)?.status==='running')throw Error('Wait for reference extraction or the current study to finish.');
-        const s=current(st=>st.get('sessions',id));if(action==='run'&&!s.references.length)throw Error('Add a reference first, or discuss research in the chat.');if(action==='chat'&&!String(b.text||'').trim())throw Error('Write a message first.');
+        const s=current(st=>st.get('sessions',id));if(action==='run'&&!s.references.length)throw Error('Add a reference first, or discuss research in the chat.');if(action==='chat'&&b.retry!==true&&!String(b.text||'').trim())throw Error('Write a message first.');
         current(st=>st.change(id,b.revision??s.revision,x=>{x.status='running';}));
-        try {await c.send(action==='run'?'Study the supplied references and write the evidence-backed proposal described in your context. Resume completed extraction work when available.':String(b.text||'').slice(0,40000),{brief:b.memoryReview===true?{name:'Review lessons'}:action==='run'?{name:'Research brief'}:null});}
+        // Send again (a turn that stopped): the last message or brief, as it was.
+        try {if(action==='chat'&&b.retry===true){await c.retry();return reply({ok:true});}await c.send(action==='run'?'Study the supplied references and write the evidence-backed proposal described in your context. Resume completed extraction work when available.':String(b.text||'').slice(0,40000),{brief:b.memoryReview===true?{name:'Review lessons'}:action==='run'?{name:'Research brief'}:null});}
         catch(e){current(st=>{const row=st.get('sessions',id);st.change(id,row.revision,x=>{x.status='failed';x.error=e.message;});});throw e;}
         return reply({ok:true});
       }

@@ -303,13 +303,15 @@ try {
     return `${text}; Show me → the proposed shot on the picture; Keep all → kept, the block says all decided`;
   });
 
-  await check('Auto: a change outside the project comes back as a card that says where', async () => {
+  await check('Auto: a change outside the project comes back as the waiting banner that says where', async () => {
     await page.fill('#input', 'WRITE-OUTSIDE please log this'); await page.press('#input', 'Enter');
-    await page.waitForSelector('#msgs .ask:not(.closed)', { timeout: 15000 });
-    const why = await page.textContent('#msgs .ask:not(.closed) .ask-why');
-    must(why === 'Outside this project: notes/log.md', `the card says: ${why}`);
+    await page.waitForSelector('.wait-banner:not([hidden]) [data-w="0"]', { timeout: 15000 });
+    const why = await page.textContent('.wait-banner:not([hidden]) .ask-why');
+    must(why === 'Outside this project: notes/log.md', `the banner says: ${why}`);
+    must(!(await page.$('#msgs .ask:not(.closed)')), 'the request is shown once (the banner), not also as a card in the chat');
     await shot('08-outside-card');
-    await page.click('#msgs .ask:not(.closed) [data-a="0"]');
+    await page.click('.wait-banner:not([hidden]) [data-w="0"]');
+    await page.waitForSelector('#msgs .perm-line:not([hidden])', { timeout: 10000 });
     await page.waitForFunction(() => /left the notes alone/.test(document.querySelector('#msgs').textContent), null, { timeout: 10000 });
     must(!existsSync(join(STUDIO, 'notes', 'log.md')), 'the file outside the project was written');
     const b = fakeLog().find((x) => x.tool === 'Bash' && /notes\//.test(x.input?.command || ''));

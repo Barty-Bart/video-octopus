@@ -1336,19 +1336,31 @@ function makeChat(root, id, ext = {}, opts = {}) {
   const tools = new Map();
   const cards = new Map();
   let busy = false;
-  // Waiting for an answer: a banner over the messages with Allow / Deny right there, and the tab's title, the editor's
-  // top bar badge, a desktop notification and an optional sound (web/attention.js). Cleared when it's answered or
-  // withdrawn, when the turn ends, and on a new session.
+  // Waiting for an answer: one banner over the messages (Bart, 25 Oct: a permission request shows once, here). It says
+  // which tool and what for, with Details (the command, or the file from the project's folder and its change) and
+  // Allow / Always for … / Deny. The chat keeps only a history line once it's answered ("Allowed: Bash · npm test").
+  // A question keeps its card in the chat (its options are the answer); the banner points at it. The tab's title, the
+  // editor's top bar badge, a desktop notification and an optional sound come with it (web/attention.js). Cleared when
+  // it's answered or withdrawn, when the turn ends, and on a new session.
+  const who = () => opts.agent || window.STUDIO_AGENT || 'Claude';
   const waits = new Map(); // request id -> the permission or question event
   const waitBar = h('<div class="wait-banner" role="alert" aria-live="assertive" hidden></div>');
   msgs.before(waitBar);
+  let waitOpen = false, waitShown = '';
+  const flash = (n) => { n.classList.remove('flash'); void n.offsetWidth; n.classList.add('flash'); };
   const focusCard = (rid) => {
     opts.unfold?.();
+    const ev = waits.get(rid);
+    // A permission request lives in the banner: bring it into view and put focus on Allow.
+    if (!ev || ev.t === 'permission') {
+      setTimeout(() => { flash(waitBar); waitBar.querySelector('[data-w="1"]')?.focus({ preventScroll: false }); }, 60);
+      return;
+    }
     const c = cards.get(rid);
     if (!c) return;
     setTimeout(() => {
       c.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
-      c.classList.remove('flash'); void c.offsetWidth; c.classList.add('flash');
+      flash(c);
       c.querySelector('button')?.focus({ preventScroll: true });
     }, 60);
   };
@@ -1360,26 +1372,39 @@ function makeChat(root, id, ext = {}, opts = {}) {
   }
   function unwait(rid) { if (!waits.delete(rid)) return; settled(id, rid); paintWait(); }
   function unwaitAll() { if (!waits.size) return; waits.clear(); clearChat(id); paintWait(); }
+  // Details of a request: the description (when it says more than the summary), the file, then the change or command.
+  const diffHtml = (d) => d.split('\n').map((l) => `<span class="${l.startsWith('+ ') || (l.startsWith('+') && !l.startsWith('+++')) ? 'dl-add' : l.startsWith('- ') || (l.startsWith('-') && !l.startsWith('---')) ? 'dl-del' : 'dl-ctx'}">${esc(l)}</span>`).join('\n');
+  const detailHtml = (ev) => [
+    ev.description && ev.description !== ev.summary ? `<p class="wb-desc">${esc(ev.description)}</p>` : '',
+    ev.file ? `<p class="wb-file">${esc(ev.file)}</p>` : '',
+    ev.diff?.trim() ? `<pre class="wb-pre wb-diff">${diffHtml(ev.diff)}</pre>` : ev.detail?.trim() ? `<pre class="wb-pre">${esc(ev.detail)}</pre>` : '',
+  ].join('');
   function paintWait() {
     const list = [...waits.values()];
     waitBar.hidden = !list.length;
     root.classList?.toggle('is-waiting', list.length > 0);
-    if (!list.length) { waitBar.replaceChildren(); return; }
-    const ev = list[0], who = window.STUDIO_AGENT || 'Claude';
+    if (!list.length) { waitBar.replaceChildren(); waitOpen = false; waitShown = ''; return; }
+    const ev = list[0];
+    if (waitShown !== ev.id) { waitOpen = false; waitShown = ev.id; }
     const offer = canOfferNotifications();
+    const isAsk = ev.t === 'permission', more = isAsk ? detailHtml(ev) : '';
     waitBar.innerHTML = `<span class="wb-dot" aria-hidden="true"></span>
-      <div class="wb-t"><b>${esc(ev.t === 'question' ? `${who} has a question for you` : `${who} is waiting for you`)}</b><small>${esc(askLine(ev))}</small>${list.length > 1 ? `<small>and ${list.length - 1} more after this</small>` : ''}</div>
-      <div class="wb-acts">${ev.t === 'permission' ? `<button type="button" class="btn primary small" data-w="1">Allow</button>${ev.always ? `<button type="button" class="btn small" data-w="always" title="${esc(`Don't ask again for ${ev.always} until this session ends`)}">Always for ${esc(ev.always)}</button>` : ''}<button type="button" class="btn small" data-w="0">Deny</button>` : ''}<button type="button" class="btn ghost small" data-w="show">${ev.t === 'question' ? 'Answer' : 'Details'}</button></div>
+      <div class="wb-t"><b>${esc(ev.t === 'question' ? `${who()} has a question for you` : `${who()} is waiting for you`)}</b><small class="wb-what">${esc(askLine(ev))}</small>${ev.reason ? `<span class="ask-why">${esc(ev.reason)}</span>` : ''}${list.length > 1 ? `<small>and ${list.length - 1} more after this</small>` : ''}</div>
+      <div class="wb-acts">${isAsk ? `<button type="button" class="btn primary small" data-w="1">Allow</button>${ev.always ? `<button type="button" class="btn small" data-w="always" title="${esc(`Don't ask again for ${ev.always} until this session ends`)}">Always for ${esc(ev.always)}</button>` : ''}<button type="button" class="btn small" data-w="0">Deny</button>${more ? `<button type="button" class="btn ghost small wb-det" data-w="details" aria-expanded="${waitOpen}">Details</button>` : ''}` : `<button type="button" class="btn ghost small" data-w="show">Answer</button>`}</div>
+      ${more ? `<div class="wb-detail"${waitOpen ? '' : ' hidden'}>${more}</div>` : ''}
       <div class="wb-more">${offer ? '<button type="button" class="wb-link" data-w="notify">Notify me on the desktop next time</button>' : notificationsOn() ? '<span>Desktop notifications on</span>' : ''}<button type="button" class="wb-link" data-w="sound" aria-pressed="${soundOn()}">Sound: ${soundOn() ? 'on' : 'off'}</button></div>`;
     waitBar.querySelectorAll('[data-w]').forEach((b) => (b.onclick = async () => {
       const w = b.dataset.w;
       if (w === 'show') return focusCard(ev.id);
-      if (w === 'notify') { const ok = await offerNotifications(); toast(ok ? 'You’ll get a desktop notification when an agent waits for you.' : 'No desktop notifications: the title and this waitBar still show it.'); return paintWait(); }
+      if (w === 'details') { waitOpen = !waitOpen; b.setAttribute('aria-expanded', String(waitOpen)); waitBar.querySelector('.wb-detail').hidden = !waitOpen; return; }
+      if (w === 'notify') { const ok = await offerNotifications(); toast(ok ? 'You’ll get a desktop notification when an agent waits for you.' : 'No desktop notifications: the title and this banner still show it.'); return paintWait(); }
       if (w === 'sound') { setSound(!soundOn()); return paintWait(); }
-      waitBar.querySelectorAll('[data-w]').forEach((x) => (x.disabled = true));
+      waitBar.querySelectorAll('[data-w="1"], [data-w="0"], [data-w="always"]').forEach((x) => (x.disabled = true));
       answer(ev.id, { allow: w !== '0', always: w === 'always' }, cards.get(ev.id));
     }));
   }
+  // Send again on a turn that stopped (server: ChatSession.retry): only the latest one offers it; a new message takes it away.
+  const dropRetry = () => msgs.querySelectorAll('.err-retry').forEach((b) => b.remove());
   // Following new messages: while the list is at its bottom it stays there, also when its height changes under it (the
   // working line, the quick replies, the composer's step line, the chat unfolding) or a message grows (a card answered,
   // a tool's output). Scrolled up, nothing moves: a "↓ New message" pill says something came and takes you down.
@@ -1392,7 +1417,7 @@ function makeChat(root, id, ext = {}, opts = {}) {
   const paintPill = () => {
     pill.hidden = !unseen;
     pill.classList.toggle('ask', unseenAsk);
-    pill.textContent = unseenAsk ? '↓ Claude is asking you' : unseen > 1 ? `↓ ${unseen} new messages` : '↓ New message';
+    pill.textContent = unseenAsk ? `↓ ${who()} is asking you` : unseen > 1 ? `↓ ${unseen} new messages` : '↓ New message';
   };
   const caughtUp = () => { if (unseen || unseenAsk) { unseen = 0; unseenAsk = false; paintPill(); } };
   msgs.addEventListener('scroll', () => { pinned = nearBottom(); if (pinned) caughtUp(); }, { passive: true });
@@ -1408,7 +1433,7 @@ function makeChat(root, id, ext = {}, opts = {}) {
     msgs.append(node);
     if (ev && ['user', 'text'].includes(ev.t) && ev.eventId && !ev.brief) { const b = h('<button type="button" class="btn ghost small remember-message">Remember this</button>'); b.onclick = () => rememberMessage(id, ev); node.append(b); }
     if (ev?.t === 'user' && !ev.replay) { pinned = true; caughtUp(); } // you just sent it (or ran a step): go to it
-    if (!pinned && ev && !ev.replay && COUNTS.has(ev.t)) { unseen++; if (ev.t === 'permission' || ev.t === 'question') unseenAsk = true; paintPill(); }
+    if (!pinned && ev && !ev.replay && COUNTS.has(ev.t) && ev.t !== 'permission') { unseen++; if (ev.t === 'question') unseenAsk = true; paintPill(); }
     return node;
   };
   // Claude's reply sent at ts, in view (the dock's "Read" on a step that didn't finish): its top near the list's top.
@@ -1576,10 +1601,12 @@ function makeChat(root, id, ext = {}, opts = {}) {
   function answer(cardId, payload, card) {
     api(`${base}/answer`, { id: cardId, ...payload })
       .then(() => unwait(cardId))
-      .catch((e) => { toast(e.message); closeCard(card, 'No longer waiting'); unwait(cardId); });
+      .catch((e) => { toast(e.message); closeCard(card, card?.classList.contains('perm-line') ? 'No longer waiting:' : 'No longer waiting'); unwait(cardId); });
   }
   function closeCard(card, label) {
     if (!card) return;
+    // A permission request's history line: "Allowed: Bash · Render the video".
+    if (card.classList.contains('perm-line')) { card.hidden = false; card.querySelector('.pl-o').textContent = label; card.classList.toggle('denied', /^(Denied|Not answered)/.test(label)); return; }
     card.classList.add('closed');
     card.querySelectorAll('.row').forEach((r) => r.remove());
     // Replay may mark a card expired before its recorded answer arrives.
@@ -1618,11 +1645,11 @@ function makeChat(root, id, ext = {}, opts = {}) {
         break;
       }
       case 'user': {
-        clearChips(); undoOffer = null; turnOver = false;
+        clearChips(); undoOffer = null; turnOver = false; dropRetry();
         // Video Octopus's own message (a step's brief, the change package…): one line, "▶ Clean up · started 14:32", with what
         // Video Octopus asked folded under it (an older log's are folded the same way by the server, server/claude.mjs forReplay).
         if (ev.brief?.name) {
-          add(briefLine(ev.brief.name, ev.ts, ev.text), ev);
+          add(briefLine(ev.brief.name, ev.ts, ev.text, who()), ev);
           if ($('.sp-t', sess).textContent === 'This session') setTitle(ev.brief.name);
           break;
         }
@@ -1652,7 +1679,7 @@ function makeChat(root, id, ext = {}, opts = {}) {
         // A step that finished, in one line with Show me (the rail draws it): "✓ Split into sections · 1 section added".
         if (ev.done) { add(opts.doneMarker?.(ev) || h(`<div class="marker done"><span class="mk-t"><b>✓ ${esc(ev.text || '')}</b>${ev.line ? ` · ${esc(ev.line)}` : ''}</span></div>`), ev); break; }
         // Where a step's work started, in an older log whose brief didn't follow it ("Edit intro · started 14:32").
-        add(briefLine(ev.text, ev.ts, ''), ev);
+        add(briefLine(ev.text, ev.ts, '', who()), ev);
         break;
       }
       case 'tool': {
@@ -1671,12 +1698,11 @@ function makeChat(root, id, ext = {}, opts = {}) {
         break;
       }
       case 'permission': {
-        const card = add(h(`<div class="ask"><div class="q">${esc(window.STUDIO_AGENT || 'Claude')} wants to use ${esc(ev.tool)}</div>
-          ${ev.reason ? `<div class="ask-why">${esc(ev.reason)}</div>` : ''}<div>${esc(ev.description || ev.summary)}</div>${ev.detail ? `<pre>${esc(ev.detail)}</pre>` : ''}
-          <div class="row"><button class="btn primary small" data-a="1">Allow</button>${ev.always ? `<button class="btn small" data-a="always" title="Don't ask again for ${esc(ev.always)} until this session ends">Always for ${esc(ev.always)}</button>` : ''}<button class="btn small" data-a="0">Deny</button></div></div>`), ev);
-        cards.set(ev.id, card);
-        if (ev.expired) closeCard(card, 'Not answered');
-        else { card.querySelectorAll('[data-a]').forEach((b) => (b.onclick = () => answer(ev.id, { allow: b.dataset.a !== '0', always: b.dataset.a === 'always' }, card))); wait(ev); }
+        // Asked in the banner only; the chat gets the line once it's answered (closeCard), or "Not answered" for an old one.
+        const line = add(h(`<div class="perm-line" hidden><span class="pl-o"></span> <span class="pl-w">${esc(ev.tool)}${ev.summary ? ` · ${esc(ev.summary)}` : ''}</span></div>`), ev);
+        cards.set(ev.id, line);
+        if (ev.expired) closeCard(line, 'Not answered:');
+        else wait(ev);
         break;
       }
       case 'question': {
@@ -1704,9 +1730,26 @@ function makeChat(root, id, ext = {}, opts = {}) {
         else wait(ev);
         break;
       }
-      case 'permission_done': unwait(ev.id); closeCard(cards.get(ev.id), ev.outcome === 'always' ? `Allowed · and ${ev.always || 'this'} from now on, this session` : { allowed: 'Allowed', denied: 'Denied', answered: 'Answered', withdrawn: 'No longer needed' }[ev.outcome] || ev.outcome); break;
-      case 'result': add(h(`<div class="divider">${ev.ok ? 'done' : 'stopped'}${ev.seconds ? ` · ${ev.seconds} s` : ''}</div>`), ev); turnOver = true; if (!ev.replay && ev.ok) showChips(); break;
-      case 'error': add(h(`<div class="error">${esc(ev.text)}</div>`), ev); break;
+      case 'permission_done': {
+        const c = cards.get(ev.id), line = c?.classList.contains('perm-line');
+        unwait(ev.id);
+        closeCard(c, ev.outcome === 'always' ? (line ? `Allowed, and ${ev.always || 'this'} from now on:` : `Allowed · and ${ev.always || 'this'} from now on, this session`)
+          : (line ? { allowed: 'Allowed:', denied: 'Denied:', withdrawn: 'No longer needed:' } : { allowed: 'Allowed', denied: 'Denied', answered: 'Answered', withdrawn: 'No longer needed' })[ev.outcome] || ev.outcome);
+        break;
+      }
+      case 'result': add(h(`<div class="divider">${ev.why === 'limit' ? 'stopped: limit reached' : ev.ok ? 'done' : 'stopped'}${ev.seconds ? ` · ${ev.seconds} s` : ''}</div>`), ev); turnOver = true; if (!ev.replay && ev.ok && ev.why !== 'limit') showChips(); break;
+      case 'error': {
+        const n = add(h(`<div class="error"><span class="err-t">${esc(ev.text)}</span></div>`), ev);
+        if (ev.retry) {
+          const b = h('<button type="button" class="btn small err-retry">Send again</button>');
+          b.onclick = async () => {
+            b.disabled = true;
+            try { await api(`${base}/chat`, { retry: true }); b.remove(); } catch (e) { b.disabled = false; toast(e.message); }
+          };
+          n.append(b);
+        }
+        break;
+      }
       case 'note': add(h(`<div class="note">${esc(ev.text)}</div>`), ev); break;
       // Packaging: the images Codex made, as they landed on the board (server/packaging.mjs keepImage).
       case 'images': {
@@ -1728,10 +1771,10 @@ function makeChat(root, id, ext = {}, opts = {}) {
 
 // A message Video Octopus wrote for Claude, as one line: "▶ Clean up · started 14:32", and "What Video Octopus asked Claude" to
 // unfold the whole brief (none for an older log's start marker that no brief followed).
-function briefLine(name, ts, text) {
+function briefLine(name, ts, text, agent = 'Claude') {
   const at = new Date(ts || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const n = h(`<div class="msg-step"><div class="ms-top"><span class="ms-ic" aria-hidden="true">▶</span><b>${esc(name || 'A step')}</b><span class="ms-at"> · started ${esc(at)}</span></div></div>`);
-  if (text) n.append(h(`<details class="ms-brief"><summary>What Video Octopus asked Claude</summary><div class="ms-text">${esc(text)}</div></details>`));
+  if (text) n.append(h(`<details class="ms-brief"><summary>What Video Octopus asked ${esc(agent)}</summary><div class="ms-text">${esc(text)}</div></details>`));
   return n;
 }
 

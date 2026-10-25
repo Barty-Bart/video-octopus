@@ -432,7 +432,11 @@ export async function packagingRoute(req, res, url, { send, body }) {
     if (action === 'chat') {
       if (!status.available) fail(status.reason, 409);
       use((s) => { s.writeResources(project, dir); s.writePackaging(project, dir); });
-      await c.send(String(b.text || '').slice(0, 40000));
+      // Send again (a turn that stopped): the last message. A Generate or Refine is pressed again on the board (it opens
+      // its sheet or card again).
+      if (b.retry === true && c.lastBrief) fail('Press Generate 6 or Refine on the board again.', 409);
+      if (b.retry === true) await c.retry();
+      else await c.send(String(b.text || '').slice(0, 40000));
       return reply({ ok: true });
     }
     if (action === 'generate') {

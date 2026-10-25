@@ -2,9 +2,9 @@
 // One long-running `claude --print` per project, talking stream-json both ways; permission questions
 // come back over stdio so the app can show Allow / Deny. The app never reads or stores the login.
 import { spawn, execFile } from 'node:child_process';
-import { existsSync, appendFileSync, readFileSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, appendFileSync, readFileSync, mkdirSync, renameSync, writeFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, dirname, basename, delimiter, relative, resolve, sep } from 'node:path';
+import { join, dirname, basename, delimiter, relative, resolve, sep, isAbsolute } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { settings, state, setProjectState, shellPath, childPathEnv, inside, expandHome, npmProgram, startError, IS_WIN, LOCAL_DIR, APP_DIR } from './util.mjs';
 import { OUTSIDE_REASON } from './outside-hook.mjs';
@@ -224,6 +224,8 @@ export class ChatSession {
     if (isolation) withSettings(args, isolation);
     this.lean = lean;
     this.stderr = '';
+    this.heard = false;
+    this.junk = '';
     const prompt = writePromptFile('claude', promptText);
     args[args.indexOf('--append-system-prompt-file') + 1] = prompt.path;
     try {
@@ -233,6 +235,7 @@ export class ChatSession {
     // Removed however the process ends, including kill() (which detaches this.proc before 'exit' arrives).
     proc.once('exit', () => prompt.remove());
     proc.once('error', () => prompt.remove());
+    this.guardStdin(proc);
     proc.stdout.on('data', (d) => this.onData(d));
     proc.stderr.on('data', (d) => { this.stderr = (this.stderr + d).slice(-4000); });
     // It couldn't start at all (no program at that path): say so in the chat instead of crashing the server.
@@ -243,7 +246,7 @@ export class ChatSession {
       this.pending.clear();
       this.emit({ t: 'error', text: startError('Claude Code', info.bin, e) });
     });
-    proc.on('exit', (code) => {
+    proc.on('exit', (code, signal) => {
       if (this.proc !== proc) return;
       this.proc = null;
       const wasBusy = this.busy;
@@ -254,10 +257,12 @@ export class ChatSession {
         this.triedFresh = true;
         setProjectState(this.id, { sessionId: null });
         this.emit({ t: 'note', text: 'The old chat could not be reopened, so this is a fresh one.' });
-        if (this.lastSend) this.send(this.lastSend, { echo: false });
+        if (this.lastSend) this.send(this.lastSend, { echo: false, brief: this.lastBrief }).catch((e) => this.emit({ t: 'error', text: e.message, retry: true }));
         return;
       }
-      if (code && wasBusy) this.emit({ t: 'error', text: `Claude stopped (exit ${code}). ${this.stderr.trim().split('\n').slice(-2).join(' ')}` });
+      // It stopped during a turn: what happened, in words, with Send again (the panel's button, ChatSession.retry).
+      // A Claude Code that quits before saying anything and isn't signed in (claude auth status) needs a sign-in.
+      if ((code || signal) && wasBusy) this.emit(stoppedEvent('Claude Code', code ?? signal, `${this.stderr}\n${this.junk || ''}`, { early: !this.heard, signedOut: info.signedIn === false, signIn: 'claude' }));
     });
   }
 
@@ -269,7 +274,9 @@ export class ChatSession {
       this.buf = this.buf.slice(i + 1);
       if (!line.trim()) continue;
       let j;
-      try { j = JSON.parse(line); } catch { continue; }
+      // Not JSON: a CLI's own words on stdout (a sign-in prompt, a crash): kept for the stopped message.
+      try { j = JSON.parse(line); } catch { this.junk = `${this.junk || ''}${line}\n`.slice(-2000); continue; }
+      this.heard = true;
       this.handle(j);
     }
   }
@@ -327,7 +334,7 @@ export class ChatSession {
           // reason: why it asks, when Video Octopus's own check raised it (a change outside the project in Auto, outside-hook.mjs).
           const reason = String(r.decision_reason || '').startsWith(OUTSIDE_REASON) ? String(r.decision_reason) : '';
           this.emit({ t: 'permission', id: j.request_id, tool: r.display_name || r.tool_name, always: ak?.label || null,
-            summary: toolSummary(r.tool_name, r.input), detail: permissionDetail(r.tool_name, r.input), description: r.description || '', ...(reason ? { reason } : {}) });
+            summary: toolSummary(r.tool_name, r.input), ...permissionView(r.tool_name, r.input, this.shownRoot()), description: r.description || '', ...(reason ? { reason } : {}) });
         }
       }
     } else if (j.type === 'control_cancel_request') {
@@ -346,6 +353,8 @@ export class ChatSession {
       if (this.ctx?.tokens) this.setContext(this.ctx.tokens);
       this.setBusy(false);
       logUse('agent.turn', { ...this.usageScope(), engine: 'claude' });
+      // A turn Claude Code refused for want of a sign-in ("Invalid API key · Please run /login"): say how to fix it.
+      if (j.is_error && SIGN_IN_WORDS.test(String(j.result || ''))) this.emit(stoppedEvent('Claude Code', 1, String(j.result), { signIn: 'claude' }));
       this.emit({ t: 'result', ok: j.subtype === 'success' && !j.is_error, seconds: Math.round((j.duration_ms || 0) / 1000) });
     }
   }
@@ -434,8 +443,21 @@ export class ChatSession {
     this.emit({ t: 'busy', busy: b });
   }
 
+  // A write to a process that has just quit (not signed in, crashed) must never take the server down: its stdin's
+  // EPIPE is caught here and by guardStdin, and the process's 'exit' says what happened in the chat.
   write(obj) {
-    if (this.proc?.stdin.writable) this.proc.stdin.write(JSON.stringify(obj) + '\n');
+    const s = this.proc?.stdin;
+    if (!s || !s.writable || s.destroyed) return false;
+    try { s.write(JSON.stringify(obj) + '\n'); return true; } catch { return false; }
+  }
+  guardStdin(proc) { proc.stdin?.on('error', () => {}); }
+
+  // Send again (the button on a stopped turn): the last message or step brief, as it was, without a second copy in the chat.
+  async retry() {
+    if (this.busy) throw new Error(`${ENGINES[this.engine] || 'The agent'} is working: wait for it to finish.`);
+    if (!this.lastSend) throw new Error('Nothing to send again: Video Octopus restarted since. Type the message again.');
+    this.emit({ t: 'note', text: 'Sent again.' });
+    return this.send(this.lastSend, { echo: false, brief: this.lastBrief, ...(this.lastImages?.length ? { images: this.lastImages } : {}) });
   }
 
   // brief: { name, step? } when Video Octopus wrote the message (a step's brief, the change package…): the chat shows it as
@@ -444,6 +466,7 @@ export class ChatSession {
     assertNotUpdating();
     this.skillRoot();
     this.lastSend = text;
+    this.lastBrief = brief;
     this.setBusy(true); // startup/auth discovery also counts as work; updates must not interrupt it
     try { if (!this.proc) await this.start(); } catch (e) { this.setBusy(false); throw e; }
     if (echo) this.emit(userEvent(text, brief));
@@ -546,6 +569,8 @@ export class ChatSession {
   openRequests() {
     return [...this.pending.keys()];
   }
+  // The folder a permission request's paths are shown from: the project's (a project chat), else where the chat runs.
+  shownRoot() { return this.guard?.() || this.cwd?.() || settings().studio || ''; }
 }
 
 // A pinned project's skills (its core snapshot and its format skill copy) live in <project>/.octopus/context/.claude/skills.
@@ -629,6 +654,17 @@ export function sessionTitle(hist) {
   return u ? one(u.text) : 'Empty chat';
 }
 
+// An agent's process ended during a turn: the chat's error line (retry: the panel offers Send again). A CLI that quits
+// before it says anything and reports no sign-in, or whose own words are about signing in, needs a sign-in: say how.
+const SIGN_IN_WORDS = /not (?:logged|signed) in|\blog ?in\b|\bsign ?in\b|authenticat|unauthori[sz]ed|\b401\b|invalid api key|oauth token|\/login\b/i;
+export function stoppedEvent(name, code, said = '', { early = false, signedOut = false, signIn = '' } = {}) {
+  const words = String(said || '').trim();
+  const tail = words.split('\n').map((l) => l.trim()).filter(Boolean).slice(-2).join(' ').slice(0, 300);
+  if (signIn && (SIGN_IN_WORDS.test(words) || (early && signedOut))) return { t: 'error', kind: 'signed-out', retry: true, text: `${name} isn't signed in. Open Terminal and run ${signIn}, then Send again.` };
+  if (early) return { t: 'error', kind: 'start', retry: true, text: `${name} stopped as soon as it started (exit ${code})${tail ? `: ${tail}${/[.!?]$/.test(tail) ? '' : '.'}` : '.'} Check that it runs in Terminal, then Send again.` };
+  return { t: 'error', kind: 'stopped', retry: true, text: `${name} stopped (exit ${code}).${tail ? ` ${tail}` : ''}` };
+}
+
 function toolSummary(name, input = {}) {
   const short = (s, n = 90) => { s = String(s ?? '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
   const file = (p) => String(p || '').split('/').slice(-2).join('/');
@@ -644,9 +680,42 @@ function toolSummary(name, input = {}) {
   }
 }
 
-function permissionDetail(name, input = {}) {
-  if (name === 'Bash') return String(input.command || '').slice(0, 2000);
-  if (name === 'Write') return `${input.file_path}\n\n${String(input.content || '').slice(0, 1200)}`;
-  if (name === 'Edit') return `${input.file_path}\n\n- ${String(input.old_string || '').slice(0, 600)}\n+ ${String(input.new_string || '').slice(0, 600)}`;
-  return JSON.stringify(input, null, 1).slice(0, 1500);
+// A path as the creator reads it on a permission request: from the project's folder ("work/blocks.json"), else from the
+// home folder ("~/Movies/x.mov"), else whole. Links and macOS's /tmp → /private/tmp count as the same place.
+function real(p) {
+  try { return realpathSync(p); } catch {}
+  const up = dirname(p);
+  return up === p ? p : join(real(up), basename(p));
+}
+const within = (root, p) => { const rel = relative(root, p); return rel && !rel.startsWith('..') && !isAbsolute(rel) ? rel.split(sep).join('/') : null; };
+export function shownPath(p, root = '') {
+  p = String(p || '');
+  if (!p) return '';
+  const abs = isAbsolute(p) ? p : resolve(root || '.', p);
+  if (root) { const rel = within(resolve(root), abs) || within(real(resolve(root)), real(abs)); if (rel) return rel; }
+  const home = homedir(), inHome = within(home, abs) || within(real(home), real(abs));
+  return inHome ? `~/${inHome}` : abs;
+}
+// Lines as a small diff ("- old", "+ new"), at most n of each.
+const lines = (t, n) => { const l = String(t ?? '').replace(/\r/g, '').split('\n'); return l.length > n ? [...l.slice(0, n), `… ${l.length - n} more line${l.length - n > 1 ? 's' : ''}`] : l; };
+const diffOf = (oldText, newText, n = 24) => [...(String(oldText ?? '') ? lines(oldText, n).map((l) => `- ${l}`) : []), ...(String(newText ?? '') ? lines(newText, n).map((l) => `+ ${l}`) : [])].join('\n');
+// What a permission request shows under Details: file (the path as shown), diff (a change, "- " / "+ " lines) or detail
+// (a command, a new file's first lines, a tool's inputs as "name: value" lines). Empty ones are left out, so the panel never
+// draws an empty box.
+export function permissionView(name, input = {}, root = '') {
+  const out = {};
+  const file = input.file_path || input.notebook_path;
+  if (file) out.file = shownPath(file, root);
+  if (name === 'Bash') out.detail = String(input.command || '').slice(0, 2000);
+  else if (name === 'Write') out.detail = lines(String(input.content || ''), 30).join('\n').slice(0, 2400);
+  else if (name === 'Edit') out.diff = diffOf(input.old_string, input.new_string);
+  else if (name === 'MultiEdit') out.diff = (input.edits || []).slice(0, 6).map((e) => diffOf(e.old_string, e.new_string, 12)).filter(Boolean).join('\n…\n');
+  else if (name === 'NotebookEdit') out.diff = diffOf('', input.new_source);
+  else {
+    // Any other tool: its inputs as plain lines, not JSON.
+    out.detail = Object.entries(input).filter(([k, v]) => v != null && v !== '' && !['description', 'file_path', 'notebook_path'].includes(k))
+      .map(([k, v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`).join('\n').slice(0, 1500);
+  }
+  for (const k of ['detail', 'diff']) if (!String(out[k] || '').trim()) delete out[k];
+  return out;
 }

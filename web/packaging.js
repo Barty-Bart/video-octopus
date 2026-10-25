@@ -51,7 +51,7 @@ export function makePackaging({ pane, id, makeChat, onChange }) {
   function start() {
     if (started) return;
     started = true;
-    chat = makeChat($('.pg-chat', pane), `${id}.packaging`, {}, { base: P });
+    chat = makeChat($('.pg-chat', pane), `${id}.packaging`, {}, { base: P, agent: 'Codex' });
     events = new EventSource(`${P}/events`);
     events.onmessage = (e) => {
       const ev = JSON.parse(e.data);

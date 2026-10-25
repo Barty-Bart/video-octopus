@@ -1045,7 +1045,23 @@ body.rs-ns, body.rs-ns * { cursor: ns-resize !important; user-select: none; }
   background: var(--accent-soft); color: var(--accent-text); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
 .wait-badge[hidden] { display: none; }
 .wait-badge i { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: wb-pulse 1.4s ease-in-out infinite; }
-.ask.flash { animation: msg-flash 1.6s ease-out; }
+.ask.flash, .wait-banner.flash { animation: msg-flash 1.6s ease-out; }
+.wb-t .ask-why { margin: 4px 0 0; align-self: flex-start; }
+.wb-detail { grid-column: 2; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.wb-detail[hidden] { display: none; }
+.wb-desc, .wb-file { margin: 0; font-size: 12px; color: var(--text-2); overflow-wrap: anywhere; }
+.wb-file { font-family: var(--mono); font-size: 11px; white-space: pre-wrap; }
+.wb-pre { margin: 0; font-family: var(--mono); font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--panel); color: var(--text-2);
+  border: 1px solid var(--line); padding: 8px 10px; border-radius: 8px; max-height: 220px; overflow: auto; }
+.wb-diff .dl-add { color: var(--ok-ink); background: var(--ok-soft); display: inline-block; min-width: 100%; }
+.wb-diff .dl-del { color: var(--bad-ink); background: var(--bad-soft); display: inline-block; min-width: 100%; }
+/* a permission request once answered, as one line in the chat (the request itself is the banner) */
+.perm-line { display: flex; gap: 6px; align-items: baseline; font-size: 12px; color: var(--muted); min-width: 0; }
+.perm-line[hidden] { display: none; }
+.perm-line .pl-o { flex: none; font-weight: 600; color: var(--ok-ink); }
+.perm-line.denied .pl-o { color: var(--muted); }
+.perm-line .pl-w { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.error .err-retry { margin-left: 8px; vertical-align: middle; }
 .project.is-waiting.folded .chat-open { box-shadow: 0 0 0 2px var(--accent); }
 @media (prefers-reduced-motion: reduce) { .wb-dot, .wait-badge i { animation: none; } }
 @media (max-width: 980px) {

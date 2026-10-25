@@ -99,6 +99,7 @@ export async function assistantRoute(req, res, url, { send, body }) {
     }
     if (m[1] === 'chat-compact') { await c.compact(); return send(res, 200, { ok: true }), true; }
     if (m[1] === 'chat') {
+      if (b.retry === true) { await c.retry(); return send(res, 200, { ok: true }), true; }
       if (!b.text?.trim()) return send(res, 400, { error: 'Empty message' }), true;
       await c.send(b.text.trim(), { brief: b.memoryReview === true ? { name: 'Review lessons' } : null });
       return send(res, 200, { ok: true }), true;

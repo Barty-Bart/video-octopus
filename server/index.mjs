@@ -734,6 +734,15 @@ async function route(req, res) {
   const b = await body(req, action === '/export' ? 60e6 : 1e6);
 
   if (action === '/chat') {
+    // Send again (a turn that stopped): the last message or step brief. A step's brief runs as that step again.
+    if (b.retry === true) {
+      try {
+        const c = chatFor(id);
+        if (c.lastBrief?.step && !c.busy) { stepRuns.set(id, { step: c.lastBrief.step, at: Date.now() }); clearUnfinished(id); }
+        await c.retry();
+        return send(res, 200, { ok: true });
+      } catch (e) { return send(res, 409, { error: e.message }); }
+    }
     if (!b.text?.trim()) return send(res, 400, { error: 'Empty message' });
     try { await chatFor(id).send(b.text.trim(), { brief: b.memoryReview === true ? { name: 'Review lessons' } : null }); return send(res, 200, { ok: true }); }
     catch (e) { return send(res, 500, { error: e.message }); }

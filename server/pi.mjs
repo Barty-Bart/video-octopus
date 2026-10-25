@@ -9,7 +9,7 @@
 import { spawn, execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join, delimiter } from 'node:path';
-import { ChatSession, userEvent } from './claude.mjs';
+import { ChatSession, userEvent, stoppedEvent, shownPath } from './claude.mjs';
 import { settings, state, setProjectState, shellPath, childPathEnv, expandHome, npmProgram, startError, IS_WIN, APP_DIR } from './util.mjs';
 import { writePromptFile } from './agent-prompt.mjs';
 import { childEnv, settingsBrief, section } from './settings.mjs';
@@ -126,6 +126,9 @@ export class PiSession extends ChatSession {
     // Removed however the process ends, including kill() (which detaches this.proc before 'exit' arrives).
     proc.once('exit', () => prompt.remove());
     proc.once('error', () => prompt.remove());
+    this.heard = false;
+    this.junk = '';
+    this.guardStdin(proc);
     proc.stdout.on('data', (d) => this.onData(d));
     proc.stderr.on('data', (d) => { this.stderr = (this.stderr + d).slice(-4000); });
     // It couldn't start at all (no program at that path): the calls waiting on it fail with that, so the chat says so.
@@ -137,15 +140,16 @@ export class PiSession extends ChatSession {
       for (const k of this.calls.values()) k.fail(new Error(startError('pi', info.bin, e)));
       this.calls.clear();
     });
-    proc.on('exit', (code) => {
+    proc.on('exit', (code, signal) => {
       if (this.proc !== proc) return;
       this.proc = null;
       const wasBusy = this.busy;
       this.setBusy(false);
       this.pending.clear();
-      for (const k of this.calls.values()) k.fail(new Error('pi stopped.'));
+      const ev = stoppedEvent('pi', code ?? signal, `${this.stderr}\n${this.junk || ''}`, { early: !this.heard });
+      for (const k of this.calls.values()) k.fail(Object.assign(new Error(ev.text), { told: Boolean((code || signal) && (wasBusy || !this.started)) }));
       this.calls.clear();
-      if (code && (wasBusy || !this.started)) this.emit({ t: 'error', text: `pi stopped (exit ${code}). ${this.stderr.trim().split('\n').slice(-2).join(' ')}` });
+      if ((code || signal) && (wasBusy || !this.started)) this.emit(ev);
     });
     const state0 = await this.call('get_state');
     this.started = true;
@@ -231,7 +235,8 @@ export class PiSession extends ChatSession {
     const kind = ask.tool === 'Bash' ? 'command' : ['Write', 'Edit'].includes(ask.tool) ? 'edit' : 'other';
     this.emit({ t: 'permission', id: m.id, tool: kind === 'command' ? 'a command' : kind === 'edit' ? 'file changes' : String(ask.tool), always: ak?.label || null,
       summary: kind === 'command' ? short(ask.input.command) : kind === 'edit' ? file2(ask.input.file_path) : short(JSON.stringify(ask.input)),
-      detail: kind === 'command' ? String(ask.input.command || '').slice(0, 2000) : kind === 'edit' ? String(ask.input.file_path || '') : JSON.stringify(ask.input, null, 1).slice(0, 1500),
+      ...(kind === 'command' ? { detail: String(ask.input.command || '').slice(0, 2000) } : kind === 'edit' ? (ask.input.file_path ? { file: shownPath(ask.input.file_path, this.shownRoot()) } : {})
+        : { detail: Object.entries(ask.input).map(([k, v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`).join('\n').slice(0, 1500) }),
       description: ask.input.shell === 'powershell' ? 'A PowerShell command' : '' });
   }
 
@@ -250,6 +255,7 @@ export class PiSession extends ChatSession {
     assertNotUpdating();
     this.skillRoot();
     this.lastSend = text;
+    this.lastBrief = brief;
     this.setBusy(true);
     if (!this.proc) {
       // A start failure goes back to the caller (the route answers with the error, as for Claude Code).
@@ -259,7 +265,7 @@ export class PiSession extends ChatSession {
     this.setBusy(true);
     this.turnStart = Date.now();
     try { await this.call('prompt', { message: this.withContextUpdate(text) }); }
-    catch (e) { this.setBusy(false); this.emit({ t: 'error', text: `pi: ${e.message}` }); }
+    catch (e) { this.setBusy(false); if (!e.told) this.emit({ t: 'error', text: `pi: ${e.message}`, retry: true }); }
   }
 
   stop() {

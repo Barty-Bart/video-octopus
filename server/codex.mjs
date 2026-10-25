@@ -7,7 +7,7 @@
 import { spawn, execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join, delimiter } from 'node:path';
-import { ChatSession, userEvent } from './claude.mjs';
+import { ChatSession, userEvent, stoppedEvent, shownPath } from './claude.mjs';
 import { settings, state, setProjectState, shellPath, childPathEnv, expandHome, npmProgram, startError, IS_WIN } from './util.mjs';
 import { childEnv, settingsBrief, section } from './settings.mjs';
 import { logUse, setPlanUsage } from './usage.mjs';
@@ -81,6 +81,7 @@ export class CodexSession extends ChatSession {
     this.seq = 0;
     this.calls = new Map();   // our request id -> { done, fail }
     this.items = new Map();   // item id -> the files a change touches (for approval cards)
+    this.changes = new Map(); // item id -> its changes ({ path, kind, diff }), for the request's Details
     this.threadId = null;
     this.turnId = null;
   }
@@ -115,6 +116,9 @@ export class CodexSession extends ChatSession {
     this.stderr = '';
     this.buf = '';
     const proc = this.proc = spawn(info.exec, [...info.pre, 'app-server'], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+    this.heard = false;
+    this.junk = '';
+    this.guardStdin(proc);
     proc.stdout.on('data', (d) => this.onData(d));
     proc.stderr.on('data', (d) => { this.stderr = (this.stderr + d).slice(-4000); });
     // It couldn't start at all (no program at that path): the calls waiting on it fail with that, so the chat says so.
@@ -126,15 +130,16 @@ export class CodexSession extends ChatSession {
       for (const k of this.calls.values()) k.fail(new Error(startError('Codex', info.bin, e)));
       this.calls.clear();
     });
-    proc.on('exit', (code) => {
+    proc.on('exit', (code, signal) => {
       if (this.proc !== proc) return;
       this.proc = null;
       const wasBusy = this.busy;
       this.setBusy(false);
       this.pending.clear();
-      for (const k of this.calls.values()) k.fail(new Error('Codex stopped.'));
+      const ev = stoppedEvent('Codex', code ?? signal, `${this.stderr}\n${this.junk || ''}`, { early: !this.heard, signIn: 'codex login' });
+      for (const k of this.calls.values()) k.fail(Object.assign(new Error(ev.text), { told: Boolean((code || signal) && wasBusy) }));
       this.calls.clear();
-      if (code && wasBusy) this.emit({ t: 'error', text: `Codex stopped (exit ${code}). ${this.stderr.trim().split('\n').slice(-2).join(' ')}` });
+      if ((code || signal) && wasBusy) this.emit(ev);
     });
     await this.call('initialize', { clientInfo: { name: 'studio', title: 'Video Octopus', version: '1' }, capabilities: null });
     this.notify('initialized');
@@ -211,6 +216,7 @@ export class CodexSession extends ChatSession {
         else if (it.type === 'fileChange') {
           const paths = (it.changes || []).map((x) => x.path);
           this.items.set(it.id, paths);
+          this.changes.set(it.id, it.changes || []);
           this.emit({ t: 'tool', id: it.id, name: 'Edit', summary: short(paths.map(file2).join(', ')) });
         } else if (it.type === 'mcpToolCall') this.emit({ t: 'tool', id: it.id, name: `${it.server} ${it.tool}`, summary: short(JSON.stringify(it.arguments ?? '')) });
         else if (it.type === 'webSearch') this.emit({ t: 'tool', id: it.id, name: 'WebSearch', summary: short(it.query || it.action?.query || '') });
@@ -221,7 +227,7 @@ export class CodexSession extends ChatSession {
         if (!it) break;
         if (it.type === 'agentMessage' && String(it.text || '').trim()) this.emit({ t: 'text', text: it.text });
         else if (it.type === 'commandExecution') this.emit({ t: 'tool_result', id: it.id, text: String(it.aggregatedOutput || '').slice(0, 1500), error: it.exitCode != null && it.exitCode !== 0 });
-        else if (it.type === 'fileChange') this.emit({ t: 'tool_result', id: it.id, text: (it.changes || []).map((x) => `${x.kind?.type || x.kind || 'change'} ${x.path}`).join('\n'), error: it.status === 'failed' });
+        else if (it.type === 'fileChange') { this.changes.delete(it.id); this.emit({ t: 'tool_result', id: it.id, text: (it.changes || []).map((x) => `${x.kind?.type || x.kind || 'change'} ${shownPath(x.path, this.shownRoot())}`).join('\n'), error: it.status === 'failed' }); }
         else if (it.type === 'mcpToolCall') this.emit({ t: 'tool_result', id: it.id, text: JSON.stringify(it.error || it.result || '').slice(0, 1500), error: Boolean(it.error) });
         else if (it.type === 'imageGeneration') this.imageDone(it);
         break;
@@ -251,12 +257,15 @@ export class CodexSession extends ChatSession {
         this.setBusy(false);
         logUse('agent.turn', { ...this.usageScope(), engine: 'codex' });
         if (t.status === 'failed') this.emit({ t: 'error', text: isUsageLimitError(t.error) ? usageLimitText(null) : `Codex: ${t.error?.message || 'the turn failed.'}` });
-        this.emit({ t: 'result', ok: t.status === 'completed', seconds: Math.round((t.durationMs || 0) / 1000) });
+        // A turn that ran into the plan's limit (its image, or the turn itself) ends "stopped: limit reached", not "done".
+        const limit = this.turnLimit || (t.status === 'failed' && isUsageLimitError(t.error));
+        this.turnLimit = false;
+        this.emit({ t: 'result', ok: t.status === 'completed', seconds: Math.round((t.durationMs || 0) / 1000), ...(limit ? { why: 'limit' } : {}) });
         this.onTurnEnd?.(t);
         break;
       }
       case 'error':
-        if (isUsageLimitError(p.error)) this.onUsageLimit?.(p.error);
+        if (isUsageLimitError(p.error)) { this.turnLimit = true; this.onUsageLimit?.(p.error); }
         this.emit({ t: 'error', text: isUsageLimitError(p.error) ? usageLimitText(null) : `Codex: ${p.error?.message || p.message || 'error'}` });
         break;
       default: break;
@@ -267,7 +276,7 @@ export class CodexSession extends ChatSession {
   // chat, server/packaging.mjs) sets onImage to store it; any other chat only says one was made.
   imageDone(it) {
     const image = codexImage(it);
-    if (image.failure?.kind === 'usage-limit') this.onUsageLimit?.(image.failure);
+    if (image.failure?.kind === 'usage-limit') { this.turnLimit = true; this.onUsageLimit?.(image.failure); }
     this.emit({ t: 'tool_result', id: it.id, text: image.failure ? image.failure.message : 'Image ready.', error: Boolean(image.failure) });
     if (this.onImage) {
       // Called now (not later), so work it queues runs before anything the turn's end queues.
@@ -305,13 +314,29 @@ export class CodexSession extends ChatSession {
     if (ak && this.always.has(ak.key)) return reply(this.decision(m.method, true, false)); // allowed for this session already
     if (this.autoAllow?.(request)) return reply(this.decision(m.method, true, false)); // a command that only looks (the Video Octopus assistant)
     this.pending.set(id, { request, rpc: m });
-    const files = [request.input.file_paths?.length ? request.input.file_paths.join('\n') : request.input.file_path,
-      p.grantRoot && `and writing anywhere in ${p.grantRoot} for the rest of this chat`].filter(Boolean).join('\n');
     this.emit({ t: 'permission', id, tool: request.tool_name === 'Edit' ? 'file changes' : request.tool_name === 'Bash' ? 'a command' : 'more permissions',
       always: ak?.label || null,
       summary: request.tool_name === 'Bash' ? short(request.input.command) : request.tool_name === 'Edit' ? short((request.input.file_paths || []).map(file2).join(', ')) : short(p.reason),
-      detail: request.tool_name === 'Bash' ? String(request.input.command).slice(0, 2000) : request.tool_name === 'Edit' ? files : JSON.stringify(p.permissions || {}, null, 1).slice(0, 1500),
-      description: p.reason || '' });
+      ...this.requestView(request, p), description: p.reason || '' });
+  }
+
+  // A request's Details: the command, or the files a change touches from the project's folder ("work/blocks.json") with
+  // its diff, or what more Codex asks for, as plain lines. Nothing empty (permissionView in claude.mjs does the same).
+  requestView(request, p = {}) {
+    const root = this.shownRoot();
+    if (request.tool_name === 'Bash') return { detail: String(request.input.command || '').slice(0, 2000) };
+    if (request.tool_name === 'Edit') {
+      const changes = this.changes.get(p.itemId) || [];
+      const paths = request.input.file_paths?.length ? request.input.file_paths : [request.input.file_path].filter(Boolean);
+      const kind = (x) => ({ add: 'new', delete: 'delete', update: '' })[x?.kind?.type || x?.kind] ?? '';
+      const file = [...paths.map((f) => { const k = kind(changes.find((x) => x.path === f)); return `${shownPath(f, root)}${k ? ` (${k})` : ''}`; }),
+        p.grantRoot && `and writing anywhere in ${shownPath(p.grantRoot, root)} for the rest of this chat`].filter(Boolean).join('\n');
+      const diff = changes.map((x) => String(x.diff || '').split('\n').filter((l) => !/^(---|\+\+\+|diff |index )/.test(l)).slice(0, 60).join('\n').trim())
+        .filter(Boolean).join('\n…\n').slice(0, 4000);
+      return { ...(file ? { file } : {}), ...(diff ? { diff } : {}) };
+    }
+    const lines = Object.entries(p.permissions || {}).map(([k, v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`).join('\n');
+    return lines ? { detail: lines.slice(0, 1500) } : {};
   }
 
   decision(method, allow, always) {
@@ -347,6 +372,8 @@ export class CodexSession extends ChatSession {
     assertNotUpdating();
     this.skillRoot();
     this.lastSend = text;
+    this.lastBrief = brief;
+    this.lastImages = images;
     this.setBusy(true);
     if (!this.proc) {
       // A start failure goes back to the caller (the route answers with the error, as for Claude Code).
@@ -359,7 +386,7 @@ export class CodexSession extends ChatSession {
       // The model and reasoning effort picked for this chat go with every turn (turn/start's model and effort: "for this
       // turn and subsequent turns"), so a change applies from the next message without a restart.
       await this.call('turn/start', { threadId: this.threadId, input, ...this.turnChoice() });
-    } catch (e) { this.setBusy(false); this.emit({ t: 'error', text: `Codex: ${e.message}` }); }
+    } catch (e) { this.setBusy(false); if (!e.told) this.emit({ t: 'error', text: `Codex: ${e.message}`, retry: true }); }
   }
 
   stop() {
