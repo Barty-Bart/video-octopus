@@ -24,7 +24,7 @@
 //   help (once, saved in settings as help.stepsIntro; the ? next to the stages opens it again).
 import { $, h, esc, api, toast } from './ui.js';
 import { stagesOf, stageSlug, STAGE_PANE, PANE_WORDS } from './stages.js';
-import { pending, onAttention } from './attention.js';
+import { pending, onAttention, stateOf, describe, openItems } from './attention.js';
 
 const ICON = {
   tick: '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 6.2l2.4 2.4 4.6-5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>',
@@ -446,6 +446,9 @@ export function makeRail({ root, id, getP, hooks }) {
     const waiting = mode === 'all' ? P.scenes?.open || 0 : 0;
     const uf = mode === 'next' || mode === 'all' ? P.unfinished || null : null;
     paintUnfinished(uf, cur);
+    // A step that didn't finish is one of Claude's open items (B10): the badge and the rail count it too.
+    openItems(id, 'unfinished', uf ? { count: 1, text: `${uf.name} didn’t finish`, read: () => hooks.readReply?.(uf.ts || null) } : null);
+    paintState(rs);
     const sig = JSON.stringify([mode, cur?.id, rs && runText(rs), nd, green, notes, waiting, sheetOpen, p.steps.map((s) => [s.id, s.done, s.skipped]), Boolean(P.runningAt)]);
     clearInterval(ticker); ticker = 0;
     if (mode === 'run' && !rs.subs?.length && P.runningAt) ticker = setInterval(() => { const t = dockHost?.querySelector('.dk-time'); if (t) t.textContent = elapsed(); }, 1000);
@@ -505,6 +508,37 @@ export function makeRail({ root, id, getP, hooks }) {
     say(`${u.name} didn’t finish: ${u.reason}`);
   }
 
+  // Claude's state on the dock (B10, web/attention.js), one line over the strip, in the top bar's words: "Waiting for
+  // you · <what> · Review", "Claude stopped · Send again", "Finished · Claude asked you something · Read", or "Claude is
+  // working" for a plain chat message (a step's run is the strip's own Running). The dock's "Didn't finish" line stays
+  // as it is (it is an open item too).
+  let stSig = '';
+  function paintState(rs = running()) {
+    if (!dockHost?.isConnected) return;
+    const st = stateOf([id, `${id}.packaging`]), old = dockHost.querySelector('.dk-st');
+    const items = st.state === 'open' ? st.items.filter((x) => x.key !== 'unfinished') : [];
+    const show = st.state === 'waiting' || (st.state === 'stopped' && st.chat === id) || (st.state === 'working' && st.chat === id && !rs) || items.length > 0;
+    const d = describe(st);
+    const sig = show ? JSON.stringify([st.state, st.chat, st.count, st.text, items.map((x) => x.text)]) : '';
+    if (sig === stSig && Boolean(old) === show) return;
+    stSig = sig;
+    if (!show) { old?.remove(); return; }
+    const what = st.state === 'open' ? items.map((x) => x.text).join(' · ') : st.state === 'working' ? st.text || 'on your message' : st.text;
+    const btn = { waiting: '<button type="button" class="dku-read" data-a="st-go">Review</button>', stopped: '<button type="button" class="dku-read" data-a="st-retry">Send again</button>',
+      open: `<button type="button" class="dku-read" data-a="st-go">Read</button><button type="button" class="dku-x" data-a="st-ok" aria-label="Put this away" title="Put this away">${ICON.x}</button>` }[st.state] || '';
+    const node = h(`<div class="dk-st ${st.state}" role="status"><i class="st-mark" data-state="${st.state}" aria-hidden="true">${st.state === 'working' ? '<span class="spin"></span>' : ''}</i>
+      <span class="dku-t" title="${esc(d.label)}"><b>${esc(d.line)}</b>${what ? ` · ${esc(what)}` : ''}</span>${btn}</div>`);
+    const at = dockHost.querySelector('.dk-unf') || dockHost.querySelector('.dk-strip');
+    if (old) old.replaceWith(node); else if (at) at.before(node); else dockHost.prepend(node);
+  }
+  function stateAct(a) {
+    const st = stateOf([id, `${id}.packaging`]);
+    if (a === 'st-retry') return st.retry?.();
+    if (a === 'st-ok') return openItems(id, 'questions', null);
+    if (st.chat !== id && st.chat) hooks.setTab('packaging');
+    return st.focus?.();
+  }
+
   // ⓘ's sheet: the words of the step the strip is about, and its stage's steps.
   function sheet(s) {
     const p = pl(), stage = p.stages.find((x) => x.name === s.stage), ss = (stage?.steps || []).map(stepOf).filter(Boolean);
@@ -549,6 +583,7 @@ export function makeRail({ root, id, getP, hooks }) {
       case 'help': return openHelp(true);
       case 'read': return hooks.readReply?.(getP().unfinished?.ts || null);
       case 'unf-ok': getP().unfinished = null; renderDock(); return railOp({ op: 'unfinished-ok' });
+      case 'st-go': case 'st-retry': case 'st-ok': return stateAct(a);
     }
   }
   function openSheet() {
@@ -790,7 +825,7 @@ export function makeRail({ root, id, getP, hooks }) {
     $('[data-a=em-answer]', acts)?.addEventListener('click', () => waitingHere()[0]?.focus?.());
     $('[data-a=em-help]', acts).onclick = () => openHelp(true);
   }
-  const unlistenWait = onAttention(() => paintEmpties());
+  const unlistenWait = onAttention(() => { paintEmpties(); paintState(); });
 
   // ---------- first-time help ----------
   function maybeHelp() {

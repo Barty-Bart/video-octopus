@@ -23,6 +23,7 @@
 .md-ct b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .md-ct small { font-size: 11px; color: var(--muted); }
 .md-ct .md-work { color: var(--text-2); }
+.md-live .md-ct b { display: flex; align-items: center; gap: 7px; } /* recording now (B7) */
 .md-kicker { font-size: 10px; font-weight: 600; letter-spacing: var(--label-track); text-transform: var(--label-case); color: var(--muted); }
 .md-btns { display: flex; flex-wrap: wrap; gap: 6px; }
 .md-btns .btn { gap: 6px; }

@@ -254,6 +254,29 @@ test('Packaging end to end with a fake Codex: Generate → 6 cards, refine → 1
   assert.match(packagingMd, /Main thumbnail: thumbnails\/main\.png/);
   assert.ok(existsSync(join(studioRoot, 'projects', vid, 'packaging/thumbnails/main.png')));
 
+  // Use this idea (B8): the card's idea goes into Record's script (script.md); a script with text is never overwritten.
+  view = await s.ok(P);
+  const mainCard = view.board.items.find((x) => x.id === refined.id);
+  assert.equal(mainCard.brief, 'editing faster', 'a card keeps the brief typed next to Generate (a refined card, its parent’s)');
+  assert.deepEqual(mainCard.idea, { words: 'BIG WIN', text: 'the result' });
+  const script = join(studioRoot, 'projects', vid, 'script.md');
+  const used = await s.ok(`${P}/items/${refined.id}/use`, {});
+  assert.equal(used.written, 'new');
+  assert.match(used.ask, /Outline this video from the idea in script\.md/);
+  const stub = readFileSync(script, 'utf8');
+  assert.match(stub, /^\[From Packaging: Idea 1\]\n/);
+  assert.match(stub, /\[What it's about: editing faster\]/);
+  assert.match(stub, /\[The idea: “BIG WIN” — the result\]/);
+  assert.match(readFileSync(join(studioRoot, 'projects', vid, 'WORKLOG.md'), 'utf8'), /put Idea 1 · BIG WIN[^\n]* into the script as an outline/);
+  writeFileSync(script, 'My own words.\n');
+  const asked = await s.ok(`${P}/items/${cards[1].id}/use`, {});
+  assert.equal(asked.exists, true);
+  assert.equal(asked.written, null);
+  assert.equal(readFileSync(script, 'utf8'), 'My own words.\n', 'asked first: nothing changed');
+  assert.equal((await s.ok(`${P}/items/${cards[1].id}/use`, { append: true })).written, 'appended');
+  assert.match(readFileSync(script, 'utf8'), /^My own words\.\n\n\[From Packaging: Idea \d\]\n/);
+  assert.equal((await s.ok(`${P}/items/${cards[1].id}/use`, { append: true })).written, 'already', 'the same outline is not added twice');
+
   // An old thumbnail.
   const old = await s.ok(`${P}/upload?name=last-year.png`, null, { raw: png(320, 180, () => [10, 20, 30]) });
   assert.equal(old.origin, 'uploaded');

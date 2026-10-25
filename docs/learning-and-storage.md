@@ -261,6 +261,13 @@ folder, read-only sandbox, with the project chat's pinned context and memories) 
 - **Working title** fills the Post tab's YouTube title only when it is empty, never overwriting; without a post
   kit yet it waits in `packaging/PACKAGING.md`.
 - A Codex usage limit (`usageLimitExceeded`) marks the sheet failed with the reset time.
+- **Use this idea** (a card's ⋯ menu, the main card and the main winner slot; `POST /api/packaging/<id>/items/<card>/use`)
+  writes an outline stub into the project's `script.md` (the record panel's script): the working title, the brief
+  typed next to Generate (`item.brief`), Codex's line for the card (`item.idea = { words, text, hook?, beats? }`,
+  older cards fall back to their name) and the hook and three beats when the card has them, labels as `[cues]`
+  (server/idea-script.mjs). A script with text is never overwritten: the answer is `{ exists: true }` and the page
+  asks, then sends `append: true` (the outline goes under it) or skips. The project chat then offers **Ask Claude to
+  outline it**, which only sends a message. An empty board's big action is **Generate 6 ideas** with the brief.
 - Needs Codex signed in with a ChatGPT plan; no API key or other provider is used.
 
 SQLite tables: `packaging_projects` (title, main), `packaging_sheets`, `packaging_items`. The project folder gets

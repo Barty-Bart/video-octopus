@@ -256,8 +256,10 @@ export async function addLayerMenu(anchor, actions, { layerCount = 0, canLayer =
 }
 
 // The current recording: one card with its name, what it is, and Record again / Delete recording.
-export function currentCard(data, actions) {
+// live: while the first take records or saves (web/rec-live.js liveCard), what the card says instead of "No recording yet".
+export function currentCard(data, actions, { live = null } = {}) {
   const item = data?.items.find((x) => x.canvas);
+  if (!item && live) return h(`<div class="md-current md-none md-live"><div class="md-ct"><b><span class="rec-dot" aria-hidden="true"></span>${esc(live.title)}</b><small>${esc(live.sub)}</small></div></div>`);
   if (!item) {
     return h(`<div class="md-current md-none"><div class="md-ct"><b>No recording yet</b><small>Record a take or drop a file to start.</small></div>
       <div class="md-btns"><button type="button" class="btn small rec" data-a="rec"><span class="rec-dot"></span>Record</button></div></div>`);
