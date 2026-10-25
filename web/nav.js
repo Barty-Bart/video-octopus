@@ -2,7 +2,9 @@
 // or null. A newer navigation aborts the one still loading (nav.signal, nav.alive() turns false, so the page can skip
 // work and stop polling early), waits for it to finish, then tears it down before the next page loads. So every page
 // that loaded is torn down, even one left during its first load, and a slow page can't draw over the next one.
-export function makeRouter(open, { onError = (e) => console.error(e) } = {}) {
+// `reset()` runs before every page opens, after the last one's teardown: a page that failed while loading never
+// returned its teardown, so whatever it set up on <body> (its page classes) is undone here instead.
+export function makeRouter(open, { onError = (e) => console.error(e), reset = () => {} } = {}) {
   let current = null, chain = Promise.resolve(), ctl = null;
   return function navigate() {
     ctl?.abort();
@@ -10,12 +12,19 @@ export function makeRouter(open, { onError = (e) => console.error(e) } = {}) {
     chain = chain.then(async () => {
       current?.teardown?.();
       current = null;
+      reset();
       if (mine.signal.aborted) return; // an even newer navigation is queued: this page needn't load at all
       current = (await open({ signal: mine.signal, alive: () => !mine.signal.aborted })) || null;
     }).catch(onError);
     return chain;
   };
 }
+
+// The classes a page puts on <body>: the shell pages (Projects, Recordings, styles…) `in-home`, Settings and Setup
+// also `in-app-page`, the editor `in-project`. `in-home` hides the editor's top bar, so one left over from a page that
+// failed to load (Settings while the server restarts, say) used to take the editor's bar and its way back with it.
+// The router clears them all before each page (makeRouter reset).
+export const PAGE_CLASSES = ['in-home', 'in-app-page', 'in-project'];
 
 // Direction A routes (23 Oct 2026), the V2 Settings groups and the Flat 3 "My styles" pages. Old addresses keep
 // working: the router asks `legacyRoute` first and, when it returns a new address, replaces the old one in place (no
