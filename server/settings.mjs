@@ -88,7 +88,10 @@ const SECTIONS = {
   help: { stepsIntro: '' },
   // Settings › Storage: what Delete recording does. ask = the two-choice question each time; video = Remove from this
   // video (the take stays in Recordings); bin = Delete recording (this video and Recordings, to the computer's Bin).
-  storage: { deleteRecording: 'ask' },
+  // playback (server/playback.mjs): originals = the editor plays the files in source/ (indexed in place when needed);
+  // optimise = 720p editing copies for smooth scrubbing (the default off a Mac: playback.mjs DEFAULT_PLAYBACK says why).
+  // askDeleteCopies: offer to delete the copies after an export.
+  storage: { deleteRecording: 'ask', playback: process.platform === 'darwin' ? 'originals' : 'optimise', askDeleteCopies: true },
 };
 export const section = (name, s = settings()) => {
   if (name === 'recorder') return recorderSection(s);
@@ -162,7 +165,7 @@ const RULES = {
   setup: { done: 'bool', agent: ['', 'claude', 'codex', 'pi', 'lmstudio', 'ollama'] },
   updates: { auto: 'bool' },
   help: { stepsIntro: ['', 'dismissed'] },
-  storage: { deleteRecording: ['ask', 'video', 'bin'] },
+  storage: { deleteRecording: ['ask', 'video', 'bin'], playback: ['originals', 'optimise'], askDeleteCopies: 'bool' },
 };
 
 function clean(rule, v) {

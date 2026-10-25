@@ -8,7 +8,7 @@ import { settings, saveSettings, inside, readJSON, writeJSON, readJSONBody, rena
 import { claudeInfo, ChatSession, forReplay } from './claude.mjs';
 import { makeChat, staleChat, foreignSession, enginesView, modelSourceView, engineName, agentStatus, ENGINES } from './engines.mjs';
 import { listProjects, createProject, projectDir, projectMeta, saveProjectMeta, listTakes, importTake, importTakeFrom, makeProxies,
-  pipelineStatus, stepPrompt, formats, listSkills, roles, proxyName, sources, projectsRoot, probe, probeFile, formatId, formatInfo, isAudio, isTakeFile,
+  pipelineStatus, stepPrompt, formats, listSkills, roles, sources, projectsRoot, probe, probeFile, formatId, formatInfo, isAudio, isTakeFile,
   importUpload, lockedCut, appendWorklog, setSkipped, takeDuration, setProjectIdCheck, markAlreadyEdited, cleanUpAnyway } from './studio.mjs';
 import { openCutEditor, cutPlan, cutEditorRoute, closeAll } from './cuteditor.mjs';
 import { onProjectFiles, syncCutItem, retimeOnSave, syncDocItems, markPackageBase, cutTake, saveCut } from './cutsync.mjs';
@@ -43,6 +43,7 @@ import { makePackageOwner, UI_ROUTES } from './package-owner.mjs';
 import { shotsRoute, readShotsAndZooms, shotsContext, onShotNotes } from './shots.mjs';
 import { recRoute, unfinishedTakes, recorderChoices, recorderBusy } from './browser-recorder.mjs';
 import { mediaRoute, importedRecordings } from './media.mjs';
+import { playSource, playbackView, playbackMode, PLAYBACK_MODES, copiesSummary, deleteCopies, allCopies, deleteAllCopies } from './playback.mjs';
 import { trashRoute, binEntry } from './trash.mjs';
 import { agentChoice, setAgentChoice, choiceView, codexModels } from './agent-choices.mjs';
 import { ccSource } from './claude-source.mjs';
@@ -289,6 +290,13 @@ async function choiceContext(engine) {
   return { endpoint, models: endpoint ? [] : piList.list };
 }
 
+// A video whose editing copies were deleted after an export is being edited again: with Optimise for editing on,
+// its copies are made again in the background (playback.mjs makeProxies, demand). The originals play meanwhile.
+function editedAgain(id, dir) {
+  try { if (projectMeta(dir)?.copiesDeleted && playbackMode(dir) === 'optimise') makeProxies(dir, (ev) => broadcast(id, ev), { demand: true }); }
+  catch (e) { console.error(`Editing copies for ${id}: ${e.message}`); }
+}
+
 // Why the project's media can't be moved or switched right now (the Media section, server/media.mjs), or null.
 function mediaBusy(id, dir) {
   if (chats.get(id)?.busy) return 'Claude is working in this project: wait for it or stop it first.';
@@ -444,8 +452,9 @@ function projectView(id, dir) {
   const meta = projectMeta(dir) || {};
   const pinned = withProjectChannels([{ id }])[0];
   const r = roles(dir);
-  // A sound file (mic-only take) plays as it is, so it is its own playback copy.
-  const proxies = Object.fromEntries(r.files.map((f) => [f, isAudio(f) ? `source/${f}` : existsSync(join(dir, proxyName(f))) ? proxyName(f) : null]));
+  // What the editor plays for each file (server/playback.mjs): its 720p copy, else the original when the browser plays
+  // it, else null (a copy is being made). A sound file (mic-only take) plays as it is. Never waits for a copy.
+  const proxies = Object.fromEntries(r.files.map((f) => [f, playSource(dir, f).src]));
   const busy = Boolean(chats.get(id)?.busy); // read only: a GET never makes or switches the chat
   const pipeline = meta.type ? pipelineStatus(dir, meta.type, { lines: true, seen: railSeen(id) }) : null;
   return {
@@ -455,7 +464,7 @@ function projectView(id, dir) {
     learning: projectLearning(id,meta), type: formatId(meta.type), shortStyle: meta.shortStyle || null, app: Boolean(projectMeta(dir)),
     path: dir, layout: normalize(meta.layout, meta.type),
     // The steps with their words, each done step's line, and the newest step finished since the page last looked.
-    roles: r, canvas: canvasSources(dir), proxies, pipeline,
+    roles: r, canvas: canvasSources(dir), proxies, playback: playbackView(dir), pipeline,
     running: busy ? stepRuns.get(id)?.step || null : null, // the step Claude is working on (the dock on the message box)
     runningAt: busy ? stepRuns.get(id)?.at || null : null, // when it started (the dock shows how long it has run)
     // A Build step's progress per scene while it runs (server/build-progress.mjs; null until Claude marks a scene).
@@ -535,6 +544,9 @@ async function route(req, res) {
   // Settings, Setup and the Video Octopus assistant (server/setup.mjs, server/assistant.mjs).
   // The Dashboard: totals from the folders, features and activity from the local usage log (server/usage.mjs).
   if (p === '/api/app/dashboard/catch-up' && req.method === 'POST') return send(res, 200, catchUpUsage());
+  // Settings › Storage › Playback: the space the 720p editing copies use in every video, and Delete all copies.
+  if (p === '/api/app/playback-copies' && req.method === 'GET') return send(res, 200, allCopies());
+  if (p === '/api/app/playback-copies/delete' && req.method === 'POST') return send(res, 200, { ...deleteAllCopies(), ...allCopies() });
   if (p === '/api/app/dashboard') return send(res, 200, dashboard(['week', 'month'].includes(url.searchParams.get('range')) ? url.searchParams.get('range') : 'all'));
   // The numbers in Home's sidebar: scheduled runs that are on, pieces waiting in the Library inbox, and (update) new
   // commits for the app, the badge on Settings.
@@ -751,6 +763,7 @@ async function route(req, res) {
   // Edits made in the window (layout, blocks) go into the change package; the same files changed by Claude during its
   // turn don't (watchProject tells them apart by this time). Read-only routes (the rail's "seen") aren't edits.
   if (req.method === 'POST' && UI_ROUTES.includes(action)) owner.touch(id);
+  if (req.method === 'POST' && UI_ROUTES.includes(action)) editedAgain(id, dir); // copies deleted after an export come back (Optimise)
   // Blocks (M3b): the band, the strip, @mentions and dropped files (uploads stream, so this comes before the JSON body).
   if (await blocksRoute(req, res, { dir, action, url, send, body, chat: () => chatFor(id), broadcast: (ev) => broadcast(id, ev) })) return;
   // Shots and zooms (server/shots.mjs): GET /shots, /zooms; POST { op, … } like /blocks.
@@ -802,6 +815,7 @@ async function route(req, res) {
   }
   const b = await body(req, action === '/export' ? 60e6 : 1e6);
 
+  if (action === '/chat' || action === '/step') editedAgain(id, dir);
   if (action === '/chat') {
     // Send again (a turn that stopped): the last message or step brief. A step's brief runs as that step again.
     if (b.retry === true) {
@@ -916,7 +930,25 @@ async function route(req, res) {
       return send(res, 200, { files });
     } catch (e) { return send(res, 400, { error: e.message }); }
   }
-  if (action === '/proxies') { makeProxies(dir, (ev) => broadcast(id, ev)); return send(res, 200, { ok: true }); }
+  // Make what playback needs now (Make it now, or the page asking after its copies were deleted): demand brings back
+  // copies deleted after an export when Optimise for editing is on.
+  if (action === '/proxies') { makeProxies(dir, (ev) => broadcast(id, ev), { demand: true }); return send(res, 200, { ok: true }); }
+  // This video's playback (the Media section): { mode: 'originals' | 'optimise' | null (follow Settings) }.
+  if (action === '/playback') {
+    if (b.mode != null && !PLAYBACK_MODES.includes(b.mode)) return send(res, 400, { error: 'Unknown playback mode.' });
+    saveProjectMeta(dir, { playback: b.mode || null });
+    appendWorklog(dir, `Playback: ${b.mode === 'optimise' ? 'Optimise for editing (720p copies)' : b.mode === 'originals' ? 'Keep originals' : 'as Settings › Storage says'} (${playbackMode(dir)})`);
+    makeProxies(dir, (ev) => broadcast(id, ev), { demand: true });
+    broadcast(id, { t: 'files' });
+    return send(res, 200, playbackView(dir));
+  }
+  // Delete this video's 720p editing copies (after an export, or the Media section): for good, they are caches.
+  if (action === '/playback-copies-delete') {
+    const r = deleteCopies(dir, { all: b.all === true });
+    if (r.files) appendWorklog(dir, `Deleted ${r.files} playback cop${r.files === 1 ? 'y' : 'ies'} (${(r.bytes / 1e9).toFixed(1)} GB); the originals in source/ stay`);
+    broadcast(id, { t: 'files' });
+    return send(res, 200, { ...r, copies: copiesSummary(dir) });
+  }
   if (action === '/layout') {
     const layout = normalize(b.layout, projectMeta(dir)?.type);
     saveProjectMeta(dir, { layout });

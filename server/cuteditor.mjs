@@ -13,6 +13,7 @@ import { existsSync, statSync, realpathSync, writeFileSync } from 'node:fs';
 import { join, dirname, basename, extname } from 'node:path';
 import { readJSON, writeJSON, studioTool, childPathEnv } from './util.mjs';
 import { roles, proxyName, isAudio } from './studio.mjs';
+import { playSource } from './playback.mjs';
 import { cutReadOnly, LOCKED_ERROR } from './cutreview.mjs'; // (read at call time: cutreview.mjs imports this module too)
 
 const first = (dir, list) => list.find((f) => existsSync(join(dir, f))) || null;
@@ -21,9 +22,10 @@ const first = (dir, list) => list.find((f) => existsSync(join(dir, f))) || null;
 export function cutPlan(dir) {
   const r = roles(dir);
   if (!r.main) return { ready: false, why: 'Import a recording first.' };
-  const video = existsSync(join(dir, proxyName(r.main))) ? proxyName(r.main) : `source/${r.main}`;
-  // A mic-only take opens as it is (the editor plays its sound and draws its waveform; there's no picture).
-  if (video.startsWith('source/') && !/\.mp4$/i.test(video) && !isAudio(r.main)) return { ready: false, why: 'The playback copy is still being prepared.' };
+  // What plays (server/playback.mjs): the 720p copy, else the original when the browser plays it; a mic-only take
+  // opens as it is. Only a file the browser can't play at all waits for its copy.
+  const play = playSource(dir, r.main), video = play.src;
+  if (!video) return { ready: false, why: `The browser can't play ${r.main} (${play.why}): a 720p playback copy is being made.` };
   const words = first(dir, ['work/words_refined.json', 'work/editor_words.json', 'work/tr/words.json', 'work/words.json']);
   if (!words) return { ready: false, why: 'Transcribe first: the Cut Editor needs the word times.' };
   let edl = first(dir, ['work/edl_fixed.json', 'work/edl_editor_in.json', 'work/edl.json']);
@@ -161,7 +163,7 @@ export async function cutData(dir) {
   const w = await wave(video);
   const edl = readJSON(existsSync(out) ? out : join(dir, plan.edl), {});
   const joins = plan.joins ? readJSON(join(dir, plan.joins), {})?.joins || [] : [];
-  const rest = JSON.stringify({ words: readJSON(join(dir, plan.words), []), segments: edl?.segments_sec || [], source: basename(video), out,
+  const rest = JSON.stringify({ words: readJSON(join(dir, plan.words), []), segments: edl?.segments_sec || [], source: basename(video), video: plan.video, out,
     saved: existsSync(out), joins, version: version(dir, plan), locked: cutReadOnly(dir) });
   return `{"duration":${w.duration},"fps":${w.fps},"pps":${PPS},${w.json},${rest.slice(1)}`;
 }
@@ -187,7 +189,13 @@ export async function cutEditorRoute(req, res, { dir, what, send, body, serveFil
       } catch (e) { return send(res, 500, { error: e.message }), true; }
     }
     if (what === 'version') return send(res, 200, { version: version(dir, plan) }), true;
-    if (what === 'video') return serveFile(req, res, join(dir, plan.video)), true;
+    // ?f= the file the page opened with (data.json "video"), so a copy that lands mid-session doesn't swap the bytes
+    // under the playing video; only the take's own copy or original is served.
+    if (what === 'video') {
+      const f = new URL(req.url, 'http://127.0.0.1').searchParams.get('f'), main = roles(dir).main;
+      const ok = f && main && [proxyName(main), `source/${main}`].includes(f) && existsSync(join(dir, f));
+      return serveFile(req, res, join(dir, ok ? f : plan.video)), true;
+    }
     if (what === 'notes') return send(res, 200, loadNotes(dir)), true;
     return false;
   }
