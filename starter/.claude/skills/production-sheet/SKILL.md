@@ -121,6 +121,6 @@ Get approval before anything is built. Their notes go into the sheet, and lastin
 
 ## 6. Build from it
 
-The sheet is the brief for the rest of the edit: scenes, zooms, B-roll, sound, the render. As scenes get built, set each scene's `status` (`planned` → `built` → `approved`); `sheet.py status` shows progress. Render into `renders/` with the next version number (`<project>_intro_v2.mp4`) on the sheet's timeline, so Video Octopus's Scenes tab plays each scene from the newest render. Review happens there: notes per scene in `work/notes.json`, on the sheet's scene ids.
+The creator approves the plan in Video Octopus (Approve plan): it writes a top-level `"approved"` into the sheet, and the build waits for it. Never add or change that key yourself; when they ask for changes, change the plan, say what changed and stop. The sheet is the brief for the rest of the edit: scenes, zooms, B-roll, sound, the render. As scenes get built, set each scene's `status` (`planned` → `built` → `approved`); `sheet.py status` shows progress. Render into `renders/` with the next version number (`<project>_intro_v2.mp4`) on the sheet's timeline, so Video Octopus's Scenes tab plays each scene from the newest render. Review happens there: notes per scene in `work/notes.json`, on the sheet's scene ids.
 
 When the creator asks for a change that alters the plan, update the sheet first, then the edit.

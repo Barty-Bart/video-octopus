@@ -1008,6 +1008,7 @@ async function openProject(id) {
     if (s.kind === 'app' && s.action === 'import') { setTab('canvas', s.stage); canvas.showImport(); return; }
     if (s.kind === 'app' && s.action === 'open-cut') { setTab('cut', s.stage); return; }
     if (s.kind === 'app' && s.action === 'open-scenes') { setTab('scenes', s.stage); return; }
+    if (s.kind === 'app' && s.action === 'open-plan') { setTab('scenes', 'Plan'); scenes.showPlan(); return; } // B4: Approve the plan
     if (s.kind === 'app' && s.action === 'open-packaging') { setTab('packaging', s.stage); return; }
     if (s.id === 'post-kit') { setTab('post', 'Publish'); return; } // Publish's Post section writes the kit (work/post.json and post.md)
     try { await api(`/api/projects/${encodeURIComponent(id)}/step`, { step: s.id }); }

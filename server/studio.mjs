@@ -443,17 +443,24 @@ export function pipelineStatus(dir, type, opts = {}) {
   const skippedIds = new Set((projectMeta(dir)?.skipped || []).filter((x) => typeof x === 'string'));
   let prevStage = null;
   const stepOf = (s) => {
-    const step = typeof s === 'string' ? { id: s, ...p.shared[s] } : s;
+    let step = typeof s === 'string' ? { id: s, ...p.shared[s] } : s;
     const d = step.done || {};
     let done = (d.files || []).some((f) => globExists(dir, f)) || (d.worklog ? worklog.includes(d.worklog) : false)
       || (Array.isArray(d.json) ? Boolean(readJSON(join(dir, d.json[0]), null)?.[d.json[1]]) : false)
-      || (typeof d.kept === 'string' ? keptItems(dir, d.kept).kept > 0 : false);
+      || (typeof d.kept === 'string' ? keptItems(dir, d.kept).kept > 0 : false)
+      // built: a Build step of this format has its render (a plan made before plans needed approval, B4).
+      || (d.built ? buildRendered(dir, fmt) : false);
     // The cut changed after it was locked (a word deleted since): the lock no longer holds, and the step waits to run
     // again (Claude checks the new joins). changed says why, for the Cut tab, the canvas and Export's words.
     // unlocked: the creator pressed Unlock to edit (B3): the same, by choice.
     const ls = done && step.id === 'lock' ? lockState(dir) : null;
     const changed = Boolean(ls?.changed), unlocked = Boolean(ls?.unlocked) && !changed;
     if (changed || unlocked) done = false;
+    // The plan is written but not approved yet (B4): the creator's turn, so it shows as an app step, "Approve the plan",
+    // that opens the Plan stage; Build waits behind it.
+    const awaiting = !done && Array.isArray(d.json) && d.json[1] === 'approved' && planWritten(dir, d.json[0]);
+    if (awaiting) step = { ...step, name: 'Approve the plan', kind: 'app', action: 'open-plan', skill: null,
+      what: 'Read each scene’s line and what’s on screen, then approve the plan, or ask Claude for changes.', where: 'the plan, in the Plan stage' };
     const optional = Boolean(step.optional), kind = step.kind || 'claude';
     // The words the creator reads. A step without them (a studio's own) shows its label and a plain line.
     const stage = STAGE_NAMES.includes(step.stage) ? step.stage : prevStage || (step.action === 'import' ? 'Record' : 'Build');
@@ -463,7 +470,7 @@ export function pipelineStatus(dir, type, opts = {}) {
     return { id: step.id, label: step.label, name: step.name || step.label || step.id, stage, makes: makesOf(d),
              what: String(what).replaceAll('{blocks}', blockList(fmt)), where: step.where || (kind === 'app' ? '' : 'what changed, in Claude’s reply'), show,
              kind, action: step.action || null,
-             skill: step.skill || null, ask: step.ask || '', brief: step.brief || null, motion: step.motion || null, optional, done, ...(changed ? { changed: true } : {}), ...(unlocked ? { unlocked: true } : {}),
+             skill: step.skill || null, ask: step.ask || '', brief: step.brief || null, motion: step.motion || null, optional, done, ...(changed ? { changed: true } : {}), ...(unlocked ? { unlocked: true } : {}), ...(awaiting ? { awaiting: 'approve' } : {}),
              skipped: optional && !done && skippedIds.has(step.id),
              subs: step.subs ? step.subs.map((x) => ({ id: x.id, label: x.label, done: x.files.some((f) => globExists(dir, f)) })) : null,
              ...(opts.lines && done ? { line: doneLine(dir, step, worklog) } : {}) };
@@ -493,6 +500,14 @@ export function pipelineStatus(dir, type, opts = {}) {
   }
   return out;
 }
+
+// A Build step of the format has its render (renders/*intro*.mp4 …): the plan it was built from counts as approved.
+function buildRendered(dir, fmt) {
+  return (fmt.steps || []).map((x) => (typeof x === 'string' ? { id: x, ...PIPELINES().shared[x] } : x))
+    .some((x) => x.stage === 'Build' && (x.done?.files || []).some((f) => globExists(dir, f)));
+}
+// A sheet with scenes in it (the plan Claude wrote), waiting for the creator's Approve plan.
+function planWritten(dir, rel) { const p = readJSON(join(dir, rel), null); return Array.isArray(p?.scenes) && p.scenes.length > 0; }
 
 // ---- what a finished step made, in one line, from its files (the dock, the chat's done marker, the stage list) ----
 // The newest file a pattern matches ("renders/*intro*.mp4"), relative to the project.

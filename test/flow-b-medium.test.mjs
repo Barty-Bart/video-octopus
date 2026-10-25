@@ -235,3 +235,97 @@ test('B3: while locked the Cut Editor’s save and Scenes’ cut save are refuse
   assert.match(panel, /\$\{isLocked\(\) \? '' : `<li><i class="sw tri"/);
   assert.match(panel, /op: 'unlock'/);
 });
+
+// ---------- B4: Plan has Approve ----------
+function planFixture(id) {
+  const dir = cutFixture(id);
+  write(join(dir, 'WORKLOG.md'), '- Cut locked (join-check: 1 joins, 0 clipped)\n');
+  write(join(dir, 'work', 'production.json'), { scenes: [{ id: '1', start: 0, end: 1, line: 'Hello there.', visual: 'Me, full frame' }, { id: '2', start: 1, end: 2, line: 'Bye.', layout: 'split' }] });
+  return dir;
+}
+
+test('B4: a written plan waits for Approve plan; Build is next only after it; a video built before still counts as approved', async () => {
+  const { pipelineStatus, listProjects } = await import('../server/studio.mjs');
+  const { approvePlan, unapprovePlan, planState, scenesView, notesOp } = await import('../server/scenes.mjs');
+  const dir = planFixture('b4-plan');
+  let st = pipelineStatus(dir, 'tutorial');
+  let plan = st.steps.find((s) => s.id === 'plan');
+  assert.equal(plan.done, false);
+  assert.equal(plan.awaiting, 'approve');
+  assert.equal(st.current, 'plan');
+  assert.deepEqual([plan.name, plan.kind, plan.action], ['Approve the plan', 'app', 'open-plan']);
+  assert.equal(listProjects().find((p) => p.id === 'b4-plan').next, 'Approve the plan');
+  assert.equal(planState(dir).approved, null);
+
+  const a = approvePlan(dir);
+  assert.equal(a.by, 'creator');
+  st = pipelineStatus(dir, 'tutorial');
+  plan = st.steps.find((s) => s.id === 'plan');
+  assert.equal(plan.done, true); assert.equal(plan.name, 'Plan the scenes'); assert.equal(plan.awaiting, undefined);
+  assert.equal(st.current, 'intro', 'Build the intro is next only after the approval');
+  assert.match(readFileSync(join(dir, 'WORKLOG.md'), 'utf8'), /Plan approved in Video Octopus \(2 scenes\)/);
+  assert.doesNotMatch(readFileSync(join(dir, 'WORKLOG.md'), 'utf8'), /Scenes approved/, 'not the Polish review line');
+  assert.ok(scenesView(dir).plan.approved.at);
+
+  assert.equal(unapprovePlan(dir), true);
+  assert.equal(pipelineStatus(dir, 'tutorial').current, 'plan');
+  // A video built before plans needed approval (a render of a Build step): the plan counts as approved, nothing reopens.
+  write(join(dir, 'renders', 'b4-plan_intro_v1.mp4'), 'synthetic');
+  assert.equal(pipelineStatus(dir, 'tutorial').steps.find((s) => s.id === 'plan').done, true);
+  // No sheet at all: Plan the scenes is a Claude step as before.
+  const empty = cutFixture('b4-empty');
+  write(join(empty, 'WORKLOG.md'), '- Cut locked\n');
+  const e = pipelineStatus(empty, 'tutorial').steps.find((s) => s.id === 'plan');
+  assert.deepEqual([e.done, e.name, e.kind, e.awaiting], [false, 'Plan the scenes', 'claude', undefined]);
+  // Per-scene Approve in Polish is separate and still refused for an unbuilt scene.
+  const fresh = planFixture('b4-polish');
+  assert.throws(() => notesOp(fresh, { op: 'approve', scene: '1' }), /isn't built yet/);
+  assert.equal(pipelineStatus(fresh, 'tutorial').steps.find((s) => s.id === 'plan').done, false);
+});
+
+test('B4: only the creator approves: an approval Claude writes comes out, one pressed while Claude works stays', async () => {
+  const { trackTurns, keepInTurn, unfinishedOf } = await import('../server/turns.mjs');
+  const { approvePlan } = await import('../server/scenes.mjs');
+  const { pipelineStatus } = await import('../server/studio.mjs');
+  const mk = (id) => {
+    const dir = planFixture(id), events = [], notes = [];
+    const chat = { listeners: new Set(), busy: false, emit(ev) { events.push(ev); for (const l of this.listeners) l(ev); }, setBusy(b) { this.busy = b; this.emit({ t: 'busy', busy: b }); }, addStudioNote(n) { notes.push(n); } };
+    trackTurns(id, chat, { broadcast: () => {} });
+    return { dir, chat, events, notes };
+  };
+  const turn = async (f, brief, during) => { f.chat.emit({ t: 'user', text: 'Plan…', ...(brief ? { brief } : {}) }); f.chat.setBusy(true); during(); f.chat.emit({ t: 'result', ok: true }); f.chat.setBusy(false); await immediate(); await immediate(); };
+  const sheet = (dir) => readJ(join(dir, 'work/production.json'));
+
+  const a = mk('b4-claude');
+  await turn(a, { name: 'Plan the scenes', step: 'plan' }, () => write(join(a.dir, 'work/production.json'), { ...sheet(a.dir), approved: { at: '2026-10-25T00:00:00Z', by: 'creator' } }));
+  assert.equal(sheet(a.dir).approved, undefined);
+  assert.ok(a.events.some((e) => e.t === 'note' && /waits for your approval/.test(e.text)));
+  assert.match(a.notes.join(' '), /only the creator approves the plan/);
+  // The plan step's turn ended with its sheet: waiting for the creator, not "Didn't finish".
+  assert.equal(unfinishedOf('b4-claude', pipelineStatus(a.dir, 'tutorial')), null);
+
+  const b = mk('b4-creator');
+  await turn(b, null, () => { const approved = approvePlan(b.dir); keepInTurn('b4-creator', 'work/production.json', { approved }); });
+  assert.equal(sheet(b.dir).approved.by, 'creator', 'pressed in the window during the turn: kept');
+  // Claude keeping the creator's approval while it edits the sheet: kept.
+  await turn(b, null, () => write(join(b.dir, 'work/production.json'), { ...sheet(b.dir), theme: 'warm' }));
+  assert.equal(sheet(b.dir).approved.by, 'creator');
+});
+
+test('B4: the Plan panel, the dock’s Approve the plan and the asks that say "and stop"', async () => {
+  const PIPE = JSON.parse(src('core/pipelines.json'));
+  for (const [f, v] of Object.entries(PIPE.formats)) {
+    const plan = v.steps.find((s) => s.id === 'plan');
+    assert.deepEqual(plan.done, { json: ['work/production.json', 'approved'], built: true }, f);
+    assert.match(plan.ask, /tell me about it and stop/, f);
+    assert.match(plan.ask, /never set "approved" in the sheet yourself/, f);
+  }
+  const scenes = src('web/scenes.js');
+  for (const re of [/data-a="approve-plan"/, />Approve plan<\/button>/, /data-a="ask-plan">Ask for changes<\/button>/, /<i>On screen<\/i>/, /op: 'changes', text/]) assert.match(scenes, re);
+  assert.match(src('web/app.js'), /s\.action === 'open-plan'\) \{ setTab\('scenes', 'Plan'\); scenes\.showPlan\(\); return; \}/);
+  const idx = src('server/index.mjs');
+  assert.match(idx, /if \(action === '\/plan'\)/);
+  assert.match(idx, /Changes to the scene plan: \$\{text\}/);
+  assert.match(idx, /never write or change that key yourself/);
+  assert.match(src('starter/.claude/skills/production-sheet/SKILL.md'), /Never add or change that key yourself/);
+});

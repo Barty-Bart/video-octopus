@@ -288,6 +288,9 @@ export function makeScenes({ pane, inspector, id, getP, onCount, onScenes, histo
       if (!scene(sel)) sel = D.scenes[0].id;
       preview.key = '';
     }
+    // The plan waits for the creator's OK (B4): the panel opens on Plan by itself, once.
+    if (D.ready && planWaiting() && !planShown) { planShown = true; if (tab === 'notes' || tab === 'look') tab = 'plan'; }
+    if (!planWaiting()) planShown = false;
     onCount?.(D.ready ? { count: D.scenes.length, open: packageCount(), done: D.notes.filter((n) => n.status === 'done' || n.status === 'question').length } : null);
     onScenes?.(D.ready ? D : null);
     return true;
@@ -1165,6 +1168,7 @@ export function makeScenes({ pane, inspector, id, getP, onCount, onScenes, histo
   function tabsHtml() {
     const n = packageCount(), k = realNotes(sel).filter((x) => x.status !== 'resolved').length;
     return `<div class="s2-tabs seg wide" role="tablist" aria-label="Panel">
+      ${planStep() ? `<button role="tab" data-t="plan" aria-selected="${tab === 'plan'}"${tab === 'plan' ? ' class="on"' : ''}>Plan${planWaiting() ? ' <span class="s2-badge n" aria-label="waiting for your approval">!</span>' : ''}</button>` : ''}
       <button role="tab" data-t="notes" aria-selected="${tab === 'notes'}"${tab === 'notes' ? ' class="on"' : ''}>Notes${k ? ` <span class="s2-badge n">${k}</span>` : ''}</button>
       <button role="tab" data-t="look" aria-selected="${tab === 'look' || tab === 'element'}"${tab === 'look' || tab === 'element' ? ' class="on"' : ''}>Look</button>
       <button role="tab" data-t="package" aria-selected="${tab === 'package'}"${tab === 'package' ? ' class="on"' : ''}>Package${n ? ` <span class="s2-badge">${n}</span>` : ''}</button></div>`;
@@ -1177,8 +1181,54 @@ export function makeScenes({ pane, inspector, id, getP, onCount, onScenes, histo
     if (tab === 'element' && elSel) return renderElement();
     if (tab === 'look') return renderLook();
     if (tab === 'package') return renderPackage();
+    if (tab === 'plan' && planStep()) return renderPlan();
     return renderNotes();
   }
+
+  // ---------- the plan (B4): each scene's line and what's on screen; Approve plan · Ask for changes ----------
+  // Plan the scenes is done when the creator approves (the server writes "approved" into the sheet); Build is next
+  // only then. Ask for changes sends their words to Claude in the chat and takes the approval out. Approve scene in
+  // Polish is a different thing (one built scene's render).
+  const planStep = () => getP()?.pipeline?.steps.find((x) => x.id === 'plan') || null;
+  const planWaiting = () => Boolean(planStep()?.awaiting);
+  let planShown = false; // the panel opened on Plan by itself once while the plan waits
+  const onScreen = (s) => s.visual || (s.layout ? `${LAYOUT_NAME[s.layout] || s.layout}${CAMERA_OF[s.layout] ? ` · ${CAMERA_OF[s.layout].toLowerCase()}` : ''}` : '');
+  function renderPlan() {
+    const ok = D.plan?.approved || null, waiting = planWaiting(), busy = Boolean(getP()?.busy);
+    const old = $('#plAsk', inspector), draft = old?.value || '', typing = old && document.activeElement === old;
+    const box = h(`<div class="ins-body sc-ins pl-ins">
+      ${tabsHtml()}
+      <div class="ins-head sub-h"><b>Scene plan</b><span class="sub">${D.scenes.length} scene${D.scenes.length === 1 ? '' : 's'} · ${ok ? `approved${ok.at ? ` ${esc(ago(Date.parse(ok.at)))}` : ''}` : waiting ? 'waiting for your OK' : 'not approved'}</span></div>
+      <ol class="pl-list">${D.scenes.map((s) => `<li><button type="button" class="pl-row${s.id === sel ? ' on' : ''}" data-id="${esc(s.id)}">
+        <span class="pl-n">${s.n}</span><span class="pl-t"><span class="pl-h"><b>${esc(s.title)}</b><span class="mono sub">${clock(s.start)}</span></span>
+        ${s.line ? `<span class="pl-line">“${esc(s.line)}”</span>` : ''}
+        <span class="pl-vis"><i>On screen</i> ${esc(onScreen(s) || 'not said yet')}</span></span></button></li>`).join('')}</ol>
+      <div class="pl-acts">
+        ${ok ? `<p class="pl-ok">✓ Plan approved. Build is next.</p>` : `<button class="btn accent wide" data-a="approve-plan"${busy ? ' disabled title="Claude is working: wait for it to finish first"' : ''}>Approve plan</button>`}
+        <label class="pl-lbl" for="plAsk">Ask for changes</label>
+        <textarea id="plAsk" rows="3" placeholder="What should change? e.g. In scene 3 show the screen, not me."></textarea>
+        <button class="btn wide" data-a="ask-plan">Ask for changes</button>
+        <p class="sub">${ok ? 'Asking for changes takes the approval back until you approve the new plan.' : 'Claude changes the plan in the chat; then you approve it.'}</p>
+      </div></div>`);
+    inspector.replaceChildren(box);
+    wireTabs(box);
+    const ta = $('#plAsk', box);
+    ta.value = draft; if (typing) ta.focus();
+    box.querySelectorAll('.pl-row').forEach((b) => (b.onclick = () => select(b.dataset.id)));
+    box.querySelector('[data-a=approve-plan]')?.addEventListener('click', async (e) => {
+      e.currentTarget.disabled = true;
+      try { await api(`/api/projects/${enc}/plan`, { op: 'approve' }); toast('Plan approved. Build is next.'); await update(); }
+      catch (err) { toast(err.message); renderInspector(); }
+    });
+    box.querySelector('[data-a=ask-plan]').addEventListener('click', async (e) => {
+      const text = ta.value.trim();
+      if (!text) { toast('Say what should change first.'); ta.focus(); return; }
+      e.currentTarget.disabled = true;
+      try { await api(`/api/projects/${enc}/plan`, { op: 'changes', text }); ta.value = ''; toast('Sent to Claude in the chat.'); await update(); }
+      catch (err) { toast(err.message); e.currentTarget.disabled = false; }
+    });
+  }
+  function showPlan() { if (!planStep()) return; tab = 'plan'; planShown = true; renderInspector(); }
 
   // One line above Send: what's waiting ("1 change waiting: transition Cut → Morph").
   const optLabel = (field, v) => (D.options?.[field === 'layout' ? 'layouts' : field === 'transition' ? 'transitions' : 'backgrounds'] || []).find((x) => x.id === v)?.label || v;
@@ -2023,6 +2073,7 @@ export function makeScenes({ pane, inspector, id, getP, onCount, onScenes, histo
     show: async () => { active = true; built = ''; if ((await load()) && active && D) build(); },
     hide: () => { active = false; player?.v.pause(); player?.take.pause(); trim.closeLens(); if (editing) stopEditing(); },
     selectScene: (sid) => select(sid),
+    showPlan,
     apply: applyNotes,
     destroy: () => { active = false; teardownMedia(); probe?.destroy(); probe?.host?.remove(); trim.destroy(); document.removeEventListener('keydown', onKey); document.removeEventListener('keyup', onKeyUp); },
   };

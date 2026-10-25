@@ -22,7 +22,7 @@ import { normalize, defaultLayout, newLayers } from '../web/layout.js';
 import { thumbFor } from './thumbs.mjs';
 import { timelineData, filePeaks, joinFlags } from './timeline.mjs';
 import { layoutsRoute } from './saved-layouts.mjs';
-import { scenesView, scenesSummary, notesOp, setOverride, applyBrief, kitBrief, updateKit, KIT } from './scenes.mjs';
+import { scenesView, scenesSummary, notesOp, setOverride, applyBrief, kitBrief, updateKit, KIT, approvePlan, unapprovePlan } from './scenes.mjs';
 import { buildSteps, renderKind } from './built.mjs';
 import { appRoute } from './setup.mjs';
 import { onboardingRoute, ffmpegReady, setupBusy } from './onboarding.mjs';
@@ -171,6 +171,7 @@ function projectContext(id) {
     `The app's Export button renders the canvas with ffmpeg into renders/<project>_<layout>_vN.mp4 on the locked cut, and puts a built block's render in for that block (your newest renders/*intro*.mp4 for the intro, on the production sheet's timeline; the creator can pick the canvas instead): its picture only, the export's own voice and sfx.json cues under it (so keep the cues for your render's transitions in work/sfx.json); each export leaves work/export/<time>/ with job.json and run.sh, which re-renders it. project.json finalRender is the render the creator marked Final on the Renders tab. The creator records with the Record button; the take lands in source/ by itself.`,
     `Export → Layers writes renders/<project>_layers_vN/: every layer as its own file from 0:00 (background, screen and camera cards, the scene's graphics layers or elements, the presenter cut-out, voice.wav, sound-cues.wav), README.txt with the stacking order, layers.json, motion.json (every Octopus.el element's times, boxes and painted bounds over time, and its element.keys from overrides.json) and FCPXML / FCP 7 XML timeline files. Export → Timeline file writes the same XML straight from the sources into renders/<project>_timeline_vN/.`,
     `Export → Audio, Transcript and Subtitles work on the final timeline (locked cut, blocks in order, sponsor-read files included): Audio writes renders/<project>_mix_vN.wav|m4a|mp3 (voice + sound cues, mixed like the video; _voice_vN = voice only; optional −14/−16 LUFS), Transcript renders/<project>_transcript_vN.txt|md (block headings, optional timecodes), Subtitles renders/<project>_subtitles_vN.srt|vtt, from work/words_refined.json, else work/tr/words.json (a file block's own words: work/tr/<file name>/words.json); the Video export can burn the captions in.`,
+    `The scene plan waits for the creator: after Plan the scenes, they read it in the Plan stage and press Approve plan (Video Octopus then writes "approved" into work/production.json; never write or change that key yourself), or Ask for changes, which reaches you as "Changes to the scene plan: …": change the plan only, tell them what changed and stop. Build steps come after the approval.`,
     `Scenes: work/production.json is the production sheet. Video Octopus shows its scenes as blocks on the timeline and in its Scenes tab, where each scene plays from the newest render in renders/ (the canvas exports above don't count). Keep the scene times on the locked cut's timeline, the same timeline the renders are on, and give each new render the next version number (…_v4.mp4).`,
     `Review notes: the creator leaves notes per scene and pins them on the picture in the Scenes tab. They are in work/notes.json {notes: [{id, scene, block, text, t (seconds on the render timeline), pos {x, y} (fractions of the frame, when pinned), el {id, label} (the scene element under the pin), version, status, reply}], approved: {scene id: time}}. "Apply my notes" sends you the open ones. When you've handled a note, set its status to "done" and its reply to one line on what you changed (or status "question" with your question in reply). Never delete notes.`,
     `The change package: besides notes, the creator's quick edits in the Scenes tab are notes of kind "change" in the same file: {kind: "change", scene, field: "layout"|"background"|"transition"|"sfx"|"timing"|"style"|"text"|"cut", target {id, label} (a scene element, when it's about one), from, to, text}. Timing changes move a scene edge ({start, end}) or when an element is on screen ({in, out}); they never cut audio (the cut belongs to the Cut tab). A "cut" change (no scene) comes from the Cut tab: from and to are the kept parts of the take before and after ({segments: [[start, end], …]} in take seconds); the brief lists every edit with where it sits on the old cut and writes the old cut to work/cut_before_<id>.json, and before re-rendering you re-align everything that sits on the old timeline (production sheet times, scene files, keyframes and element times in work/overrides.json, note times, B-roll) so nothing drifts off its words. The creator sends the package with "Save changes → Claude". Every note and change with status "open", plus moves in work/overrides.json newer than the newest render, is the creator's change package. Video Octopus sends it to you as one message; if the creator asks you in this chat to send, apply or do "the package" or "my changes", read work/notes.json, tell them what's in it (how many items, which scenes), set those items to "sent", do them in one pass and re-render once, then mark each "done" with a one-line reply. If they ask what's waiting, read the open items and list them.`,
@@ -945,6 +946,28 @@ async function route(req, res) {
   }
   if (action === '/overrides') {
     try { return send(res, 200, setOverride(dir, b)); } catch (e) { return send(res, 400, { error: e.message }); }
+  }
+  // The Plan panel (B4): Approve plan (Plan the scenes is done, Build is next) or Ask for changes (the creator's words go
+  // to Claude in the chat, as their own message, and the approval comes out until they approve the new plan).
+  if (action === '/plan') {
+    try {
+      if (b.op === 'approve') {
+        const approved = approvePlan(dir);
+        keepInTurn(id, 'work/production.json', { approved }); // the creator's, even while Claude works
+        broadcast(id, { t: 'files' });
+        return send(res, 200, { ok: true, approved });
+      }
+      if (b.op === 'changes') {
+        const text = String(b.text || '').trim().slice(0, 4000);
+        if (!text) throw new Error('Say what should change in the plan first.');
+        if (unapprovePlan(dir)) keepInTurn(id, 'work/production.json', { approved: undefined });
+        await chatFor(id).send(`Changes to the scene plan: ${text}`);
+        broadcast(id, { t: 'files' });
+        return send(res, 200, { ok: true });
+      }
+      if (b.op === 'unapprove') { unapprovePlan(dir); broadcast(id, { t: 'files' }); return send(res, 200, { ok: true }); }
+      throw new Error('Unknown plan action.');
+    } catch (e) { return send(res, 400, { error: e.message }); }
   }
   // "Apply my notes": the open notes (and new moves) go to the project's Claude as one message.
   // The Cut Editor just saved: bring the package's cut item up to date now (the file watcher would, a moment later).

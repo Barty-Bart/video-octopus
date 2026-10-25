@@ -38,7 +38,7 @@ export function readProduction(dir) {
     .sort((a, b) => a.start - b.start)
     .map(({ s, i, start, end }, k) => ({
       id: String(s.id ?? i + 1), n: k + 1, start, end, title: titleOf(s, i),
-      line: String(s.line || ''), layout: String(s.layout || s.shot || ''), transition: String(s.transition_in || s.transition || ''),
+      line: String(s.line || s.text || ''), layout: String(s.layout || s.shot || ''), transition: String(s.transition_in || s.transition || ''),
       visual: String(s.visual || s.shown || ''), sfx: list(s.sfx), skills: list(s.skills), section: String(s.section || ''),
       // The look the creator can change in Video Octopus (Scenes › Look): background, and when each effect plays.
       background: String(s.background || ''), sfxAt: Array.isArray(s.sfx_at) ? s.sfx_at.map(num).filter((x) => x != null) : [],
@@ -424,7 +424,33 @@ export function scenesView(dir) {
     cutWaiting: cutWaitingOf(notes.notes), // cut changes not sent yet: where they sit on that timeline
     cutStamp: Math.max(mtime(join(dir, 'work/edl_manual.json')), mtime(join(dir, 'work/edl_fixed.json'))), // the cut files changed: Scenes re-reads the take
     sections: sectionsOf(dir, prod), options: lookOptions(dir, prod),
+    plan: planState(dir), // B4: the plan's approval (Approve plan / Ask for changes in the Plan panel)
   };
+}
+
+// ---- the plan's approval (B4) ----
+// work/production.json "approved": {at, by: "creator", scenes} once the creator presses Approve plan; only Video Octopus
+// writes it (server/turns.mjs takes out one an agent wrote). Plan the scenes is done then and Build is next. Ask for
+// changes takes it out again (the plan is about to change). Approve scene in Polish is separate (notes.json approved).
+export function planState(dir) {
+  const p = readJSON(join(dir, PRODUCTION), null);
+  const a = p?.approved && typeof p.approved === 'object' ? p.approved : p?.approved ? { at: null } : null;
+  return { approved: a ? { at: typeof a.at === 'string' ? a.at : null } : null };
+}
+export function approvePlan(dir) {
+  const p = readJSON(join(dir, PRODUCTION), null);
+  if (!Array.isArray(p?.scenes) || !p.scenes.length) throw new Error('There is no scene plan to approve yet: Plan the scenes writes it.');
+  p.approved = { at: new Date().toISOString(), by: 'creator', scenes: p.scenes.length };
+  writeJSON(join(dir, PRODUCTION), p);
+  appendWorklog(dir, `Plan approved in Video Octopus (${p.scenes.length} scene${p.scenes.length === 1 ? '' : 's'})`);
+  return p.approved;
+}
+export function unapprovePlan(dir) {
+  const p = readJSON(join(dir, PRODUCTION), null);
+  if (!p || p.approved == null) return false;
+  delete p.approved;
+  writeJSON(join(dir, PRODUCTION), p);
+  return true;
 }
 
 // The open cut change's edits, placed on the scenes' timeline (t) and on the new cut (tNew, where the Cut tab finds it).

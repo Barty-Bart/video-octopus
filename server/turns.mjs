@@ -73,6 +73,9 @@ export function trackTurns(id, chat, { broadcast }) {
       if (!t) return;
       const dir = projectDir(id);
       if (!dir) return;
+      // Only the creator approves the plan (B4): an approval this turn wrote into the sheet comes out again, before Undo
+      // looks at the files.
+      if (t.before) { try { guardPlanApproval(dir, t.before['work/production.json'], chat); } catch (e) { console.error('plan approval guard:', e.message); } }
       // Undo first, before the turn's result reaches the page (its quick replies are drawn then).
       const stepDef = t.step && !t.human ? stepOfProject(dir, t.step) : null;
       if ((t.human || (stepDef && stepUndoable(stepDef.def))) && t.before) {
@@ -102,7 +105,8 @@ export function trackTurns(id, chat, { broadcast }) {
         // What's missing, in Video Octopus's words ("Build the intro didn't produce its video."), not Claude's last
         // sentence, which may say it was done (A18). An error says itself; Read still opens Claude's reply.
         const reason = oneLine(t.error) || (t.ok ? `${step.name} didn’t produce ${step.makes || 'its result'}.` : '') || 'Stopped before it finished.';
-        setProjectState(id, { unfinished: step.done ? null : { step: step.id, name: step.name, reason, ts: t.error ? null : t.textTs || null, at: Date.now() } });
+        // A plan waiting for the creator's approval is finished on Claude's side (B4).
+        setProjectState(id, { unfinished: step.done || step.awaiting ? null : { step: step.id, name: step.name, reason, ts: t.error ? null : t.textTs || null, at: Date.now() } });
         broadcast({ t: 'files' });
       });
     }
@@ -132,7 +136,7 @@ export function unfinishedOf(id, pipeline) {
   const u = state().projects?.[id]?.unfinished;
   if (!u?.step || !pipeline) return null;
   const s = [...pipeline.steps, ...(pipeline.more || [])].find((x) => x.id === u.step);
-  return s && !s.done ? u : null;
+  return s && !s.done && !s.awaiting ? u : null;
 }
 export const clearUnfinished = (id) => { if (state().projects?.[id]?.unfinished) setProjectState(id, { unfinished: null }); };
 
@@ -154,6 +158,22 @@ export function undoTurn(id, offerId, chat) {
   const list = back.join(', '), what = o.step ? `your last step (${o.step.name})` : 'your last reply';
   chat?.addStudioNote?.(`The creator pressed Undo on ${what}: Video Octopus put ${list} back exactly as ${back.length > 1 ? 'they were' : 'it was'} before it. Take that into account.`);
   return { back, kept, step: o.step?.id || null, note: `Undone${o.step ? ` ${o.step.name}` : ''}: ${list} ${back.length > 1 ? 'are' : 'is'} back as before Claude's last ${o.step ? 'step' : 'reply'}.${kept.length ? ` ${kept.join(', ')} changed again since, so ${kept.length > 1 ? 'they stay' : 'it stays'}.` : ''}` };
+}
+
+// ---- the plan's approval is the creator's (B4) ----
+// work/production.json "approved" is written by Video Octopus when the creator presses Approve plan (server/scenes.mjs
+// approvePlan; keepInTurn puts it in a running turn's "before"). One that appeared or changed during an agent's turn
+// is the agent's: it comes out, with a line in the chat and a note for the agent.
+export function guardPlanApproval(dir, beforeText, chat) {
+  const now = parse(read(join(dir, 'work/production.json')));
+  if (!now || now.approved == null) return false;
+  const was = parse(beforeText);
+  if (was && JSON.stringify(was.approved ?? null) === JSON.stringify(now.approved)) return false;
+  delete now.approved;
+  writeFileSync(join(dir, 'work/production.json'), JSON.stringify(now, null, 2) + '\n');
+  chat?.emit?.({ t: 'note', text: 'The plan waits for your approval: Video Octopus took out the "approved" Claude wrote into it. Approve it in the Plan stage.' });
+  chat?.addStudioNote?.('Video Octopus removed "approved" from work/production.json: only the creator approves the plan, with Approve plan in Video Octopus. Never set it yourself.');
+  return true;
 }
 
 // ---- proposals and the Add zooms guard ----
