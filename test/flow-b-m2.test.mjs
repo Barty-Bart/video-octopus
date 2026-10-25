@@ -8,7 +8,8 @@ import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from '
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-const web = (f) => readFileSync(new URL(`../web/${f}`, import.meta.url), 'utf8');
+// Source text with LF endings: a Windows checkout has CRLF.
+const web = (f) => readFileSync(new URL(`../web/${f}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 
 test('B7: while a take records, the canvas shows it live; after Stop "Saving the take…" until the take lands', async () => {
   const { liveMode, liveCard, LAND_WAIT_MS, mmss, meterLevel } = await import('../web/rec-live.js');
@@ -107,7 +108,7 @@ test('B8: the board offers Use this idea and, when empty, a big Generate 6 ideas
   const app = web('app.js');
   assert.match(app, /const outline = \(ask\) => \{ setFold\(false\); chat\.send\(ask\); \};/, 'Ask Claude to outline it only sends a message');
   assert.match(app, /chat\.offer\(`\$\{name\} is in Record’s script as an outline\.`/);
-  const srv = readFileSync(new URL('../server/packaging.mjs', import.meta.url), 'utf8');
+  const srv = readFileSync(new URL('../server/packaging.mjs', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
   assert.match(srv, /op === 'use'[\s\S]{0,900}writeIdeaScript\(dir, stub, \{ append: b\.append === true \}\)/);
   // The route comes before anything that talks to Codex: Use this idea makes no model call.
   assert.ok(srv.indexOf("op === 'use'") < srv.indexOf('const c = chatFor(project);\n    if (action === \'answer\')'));

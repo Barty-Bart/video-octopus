@@ -15,7 +15,8 @@ write(join(local, 'settings.json'), { studio, projectsDir: 'projects' });
 process.env.STUDIO_LOCAL_DIR = local;
 test.after(() => rmSync(root, { recursive: true, force: true }));
 const P = (id) => join(studio, 'projects', id);
-const src = (rel) => readFileSync(new URL(`../${rel}`, import.meta.url), 'utf8');
+// Source text with LF endings: a Windows checkout has CRLF.
+const src = (rel) => readFileSync(new URL(`../${rel}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const immediate = () => new Promise((r) => setImmediate(r));
 
 // ---------- B1: Claude's own work is not a change package ----------
