@@ -125,7 +125,8 @@ test('the assistant\'s search brief is read-only and leaves selection to the cre
 });
 
 test('octopus python suggestions is read-only for a chat; suggest is a change', () => {
-  const cli = join(APP_DIR, 'bin', 'octopus.mjs');
+  // Forward slashes, as the agent's bash shell writes them on Windows too (a backslash there is an escape).
+  const cli = join(APP_DIR, 'bin', 'octopus.mjs').replaceAll('\\', '/');
   assert.equal(lookOnly(`node "${cli}" python suggestions`, APP_DIR), true);
   assert.equal(lookOnly(`node "${cli}" python suggest /tmp/x`, APP_DIR), false);
 });
