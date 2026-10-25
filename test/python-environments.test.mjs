@@ -13,10 +13,11 @@ function fixture(t) {
 }
 test('discovers managed and chosen environments without crawling unrelated projects', t => {
   const { home, py, options } = fixture(t);
-  const global = py('.local/bin/python3'), managed = py('.venvs/edit/bin/python'), project = py('Movies/work/.venv/bin/python');
+  // Project folders are read at most two levels deep (python-scan.test.mjs): this one is three, so only a chosen location finds it.
+  const global = py('.local/bin/python3'), managed = py('.venvs/edit/bin/python'), project = py('Movies/clients/2026/work/.venv/bin/python');
   const normal = discoverPython(options).candidates.map(x => x.path);
   assert(normal.includes(global)); assert(normal.includes(managed)); assert(!normal.includes(project));
-  assert(discoverPython({ ...options, extra: join(home, 'Movies/work') }).candidates.some(x => x.path === project));
+  assert(discoverPython({ ...options, extra: join(home, 'Movies/clients/2026/work') }).candidates.some(x => x.path === project));
   assert.throws(() => discoverPython({ ...options, extra: 'relative-folder' }), /absolute/);
 });
 test('preserves separate venvs sharing one interpreter and deduplicates bin aliases', { skip: process.platform === 'win32' }, t => {
