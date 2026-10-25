@@ -455,7 +455,12 @@ function exportSequence(id, dir, body, emit, seq) {
       job.progress = Math.min(0.99, (done + cur) / (total * 1.03));
       emit({ t: 'job', id: 'export', label: last ? `${label}: joining the parts` : `${label}: ${parts[k].name}`, progress: job.progress, cancel: true });
     });
+    let ended = false;
+    // ffmpeg missing or not startable: the export fails with that, never the server (an unhandled spawn error).
+    proc.on('error', (e) => { if (ended) return; ended = true; err = e.code === 'ENOENT' ? `ffmpeg isn't on this computer: Setup → Tools installs it.` : e.message; finish(false, 1); });
     proc.on('exit', (code) => {
+      if (ended) return;
+      ended = true;
       if (code !== 0 || job.cancelled) return finish(false, code);
       done += span;
       if (last) return finish(true);

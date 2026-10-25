@@ -1,5 +1,5 @@
 // Walkthrough fixes (handoff ux-2026-10-24, A items) that are checked on the server side: what a step that didn't finish
-// says (A18), Setup's Fix for an old Python (A13).
+// says (A18), Setup's Fix for an old Python and a computer without ffmpeg (A13).
 //   node --test test/walkthrough-fixes.test.mjs
 // Synthetic temporary studio only: no server, browser, agent, media processing, keys or network.
 import test from 'node:test';
@@ -11,7 +11,8 @@ import { tmpdir } from 'node:os';
 const root = mkdtempSync(join(realpathSync(tmpdir()), 'octopus-walkthrough-fixes-'));
 const studio = join(root, 'studio'), local = join(root, 'local');
 const write = (p, v) => { mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, typeof v === 'string' ? v : JSON.stringify(v, null, 2)); };
-write(join(local, 'settings.json'), { studio, projectsDir: 'projects' });
+// ffmpeg and ffprobe point nowhere: a computer without them (A13's case).
+write(join(local, 'settings.json'), { studio, projectsDir: 'projects', ffmpeg: join(root, 'no-ffmpeg'), ffprobe: join(root, 'no-ffprobe') });
 process.env.STUDIO_LOCAL_DIR = local;
 test.after(() => rmSync(root, { recursive: true, force: true }));
 const immediate = () => new Promise((done) => setImmediate(done));
@@ -56,4 +57,16 @@ test('A13: Setup’s Python row offers Fix when the Python is too old (the page 
   const at = src.indexOf("Number(j.py.split('.')[1]) < 10"), old = src.slice(at, src.indexOf('const missing =', at));
   assert.match(old, /state: 'warn', install: true/);
   assert.match(old, /fix: `Setup check "Python": \$\{py\} is Python \$\{j\.py\}/);
+});
+
+test('A13: without ffmpeg, a new take’s playback copy fails with that in words, and the server stays up', async () => {
+  const { makeProxies } = await import('../server/studio.mjs');
+  const dir = join(studio, 'projects', 'no-ffmpeg');
+  write(join(dir, 'source', '2026-10-25_10-00-00_webcam.mp4'), 'synthetic');
+  const events = [];
+  makeProxies(dir, (e) => events.push(e));
+  for (let i = 0; i < 50 && !events.some((e) => e.done); i++) await new Promise((r) => setTimeout(r, 20));
+  const done = events.find((e) => e.done);
+  assert.equal(done.ok, false);
+  assert.match(done.label, /ffmpeg isn't on this computer \(Setup → Tools installs it\)/);
 });

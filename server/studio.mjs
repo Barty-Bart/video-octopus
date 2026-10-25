@@ -370,7 +370,15 @@ export function makeProxies(dir, onEvent) {
       const m = /out_time_ms=(\d+)/.exec(String(d));
       if (m && total) onEvent({ t: 'job', id: f, label: `Preparing ${f} for playback`, progress: Math.min(1, m[1] / 1e6 / total) });
     });
+    // ffmpeg missing (or not where Settings says): the job says so; the server stays up (it crashed on the unhandled
+    // spawn error before). Setup → Tools installs ffmpeg, and Projects and the editor say that too.
+    ff.on('error', (e) => {
+      if (running.get(key) !== ff) return;
+      running.delete(key);
+      onEvent({ t: 'job', id: f, label: e.code === 'ENOENT' ? `Couldn't prepare ${f}: ffmpeg isn't on this computer (Setup → Tools installs it)` : `Couldn't prepare ${f}: ${e.message}`, progress: 1, done: true, ok: false });
+    });
     ff.on('exit', (code) => {
+      if (running.get(key) !== ff) return;
       running.delete(key);
       if (code === 0) {
         try { renameSync(out + '.part.mp4', out); } catch {}
