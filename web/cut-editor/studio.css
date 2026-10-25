@@ -87,3 +87,11 @@ html.studio{--bg:#f4f4f2;--panel:#ffffff;--line:#e6e5e1;--ink:#1a1a1c;--dim:#555
 .studio[data-look] .slash.on{background:var(--sel);color:var(--selb);box-shadow:0 0 0 1.5px var(--selb)}
 .studio[data-look] .sl-lab{background:var(--lk-accent-soft);color:var(--acc)}
 .studio[data-look] .w.sl-drop{background:var(--lk-accent-soft)}
+/* A phone-width window: the picture card above, the transcript card under it at full width, one scroll (A9). */
+@media (max-width: 640px) {
+  .studio main { flex-direction: column; overflow: auto; padding: 0 10px; }
+  .studio #left { width: auto; max-width: none; min-width: 0; align-self: stretch; max-height: none; flex: none; }
+  .studio #tx { flex: none; overflow: visible; padding: 16px; }
+  .studio #tx p { padding-left: 44px; }
+  .studio .hbtns { flex-wrap: wrap; justify-content: flex-start; margin-left: 0; row-gap: 6px; }
+}

@@ -278,3 +278,5 @@
 .st-examples-empty { padding: 24px; border-radius: 14px; border: 1.5px dashed color-mix(in srgb, var(--text-3) 45%, transparent); }
 .st-examples-empty p { margin: 4px 0 0; }
 .vf-side-body .vf-files > .vf-card-head > h2 { display: none; } /* the panel head already says Files */
+/* A dialog taller than the window (New style at 900 px): it scrolls, and its Cancel / Save row stays in view at the bottom. */
+.learn-dialog > .learn-actions { position: sticky; bottom: -24px; z-index: 1; justify-content: flex-end; margin: 0 -26px -24px; padding: 12px 26px 20px; background: var(--pop-bg, var(--panel)); border-top: 1px solid var(--line); }

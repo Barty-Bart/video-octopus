@@ -1170,6 +1170,7 @@ body.rs-ns, body.rs-ns * { cursor: ns-resize !important; user-select: none; }
 .rp-meter i.g { background: var(--ok); }
 .rp-meter i.a { background: var(--warn); }
 .rp-meter i.r { background: var(--bad); }
+.rp-meter i.pk { opacity: 0.85; }
 .rp-side { flex: 1 1 340px; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
 .rp-card { padding: 18px; border-radius: 16px; background: var(--panel); border: 1px solid var(--line); display: flex; flex-direction: column; gap: 14px; }
 .rp-card h3 { margin: 0; font-size: 11px; font-weight: 600; color: var(--muted); letter-spacing: var(--label-track); text-transform: var(--label-case); }

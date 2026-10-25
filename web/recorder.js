@@ -722,9 +722,13 @@ export async function recordPanel({ id, P, choices, opts = {}, settingsLink }) {
       let pk = 0; for (const v of buf) pk = Math.max(pk, Math.abs(v));
       const db = 20 * Math.log10(pk || 1e-6), l = Math.max(0, Math.min(1, (db + 60) / 60));
       const n = Math.round(l * segsEl.length);
-      segsEl.forEach((s, i) => (s.className = i < n ? (i < 28 ? 'g' : i < 35 ? 'a' : 'r') : ''));
       recent.push(db); if (recent.length > 120) recent.shift();
       const top = Math.max(...recent);
+      // The hint goes by the loudest moment of the last two seconds: that peak stays lit on the meter (peak hold), so
+      // "Too loud" never shows over an empty meter (A6).
+      const hold = Math.round(Math.max(0, Math.min(1, (top + 60) / 60)) * segsEl.length) - 1;
+      const tone = (i) => (i < 28 ? 'g' : i < 35 ? 'a' : 'r');
+      segsEl.forEach((s, i) => (s.className = i < n ? tone(i) : i === hold && top > -60 ? `${tone(i)} pk` : ''));
       if (sel.mic !== 'none') $('#micHint', page).textContent = top > -3 ? 'Too loud: turn the input down or sit a little further back.' : top > -30 ? 'Good level.' : 'Say a sentence at your normal voice.';
       m.raf = requestAnimationFrame(loop);
     };
