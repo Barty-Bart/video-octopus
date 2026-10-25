@@ -59,5 +59,5 @@ The assistant uses preferences while doing the edit; saving the file alone doesn
 
 ## Running the scripts
 - Commands in the skills run from the project folder (`projects/<name>/`), so the studio is `../..`.
-- Python: the studio's `.venv` when it has one (`.venv/bin/python` on Mac and Linux, `.venv\Scripts\python.exe` on Windows), else `python3` (Windows: `py -3` or `python`). `requirements.txt` lists what the skills need; ask before installing anything.
+- Python: `$STUDIO_PYTHON` (the Python selected in Video Octopus) when it is set, else the studio's `.venv` when it has one (`.venv/bin/python` on Mac and Linux, `.venv\Scripts\python.exe` on Windows), else `python3` (Windows: `py -3` or `python`). `requirements.txt` lists what the skills need; ask before installing anything. With neither, don't offer a new environment first: Video Octopus's Setup → Check my computer → Python environments finds ones this computer already has (a project's `.venv`, another app's) and offers Use this.
 - ffmpeg and ffprobe come from the PATH, or from `FFMPEG` / `FFPROBE` when set. For H.264 use `h264_videotoolbox` on a Mac and `libx264` elsewhere.

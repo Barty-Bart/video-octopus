@@ -5,20 +5,20 @@
     {
       "id": "octopus.transcribe",
       "name": "transcribe",
-      "version": "1.1.0",
+      "version": "1.2.0",
       "path": "starter/.claude/skills/transcribe",
       "legacyNames": [
         "transcribe"
       ],
       "dependencies": [
         "Python, FFmpeg",
-        "faster-whisper or MLX Whisper and separately downloaded model weights"
+        "faster-whisper, MLX Whisper or parakeet-mlx and separately downloaded model weights"
       ]
     },
     {
       "id": "octopus.rough-cut",
       "name": "rough-cut",
-      "version": "1.1.0",
+      "version": "1.1.1",
       "path": "starter/.claude/skills/rough-cut",
       "legacyNames": [
         "rough-cut"
@@ -31,7 +31,7 @@
     {
       "id": "octopus.join-check",
       "name": "join-check",
-      "version": "1.1.0",
+      "version": "1.1.1",
       "path": "starter/.claude/skills/join-check",
       "legacyNames": [
         "join-check"
@@ -68,7 +68,7 @@
     {
       "id": "octopus.object-separation",
       "name": "object-separation",
-      "version": "1.1.0",
+      "version": "1.1.1",
       "path": "starter/.claude/skills/object-separation",
       "legacyNames": [
         "object-separation"

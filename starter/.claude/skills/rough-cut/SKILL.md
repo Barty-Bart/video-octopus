@@ -15,7 +15,7 @@ Nothing is cut on a guess. Every proposed cut is either **cut** (on by default, 
 - `presentation.pacing` describes the intended feel and `presentation.tone` your report. They do not silently change the explicit gap numbers, remove additional words, or waive join checks. If the creator requests a lasting supported change, update `preferences/skills.json`; broader rhythm notes stay in memory, not this skill.
 - Work in the project folder (`projects/<name>/`; the studio is `../..`): source in `source/` (never modified), everything made here in `work/`. The scripts are in this skill's `scripts/` folder.
 - Variable-frame-rate phone footage: convert to constant frame rate first (`ffmpeg -i source/raw.mov -fps_mode cfr -r 30 -c:a copy work/raw_cfr.mp4`), or cuts drift.
-- Needs Python 3.9+, numpy, ffmpeg; `opencv-python` only for `--crossfade-frames` / `--punch`. Use the studio's `.venv` Python if there is one (`../../.venv/bin/python`, Windows `..\..\.venv\Scripts\python.exe`). ffmpeg and ffprobe come from the PATH, or from `FFMPEG` / `FFPROBE` when set.
+- Needs Python 3.9+, numpy, ffmpeg; `opencv-python` only for `--crossfade-frames` / `--punch`. Use `$STUDIO_PYTHON` (the Python selected in Video Octopus) when it is set, else the studio's `.venv` Python if there is one (`../../.venv/bin/python`, Windows `..\..\.venv\Scripts\python.exe`). ffmpeg and ffprobe come from the PATH, or from `FFMPEG` / `FFPROBE` when set.
 
 ## Workflow
 

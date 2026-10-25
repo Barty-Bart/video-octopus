@@ -11,7 +11,7 @@ Separate one subject from the background of a video. Everything runs on this com
 
 Read the supplied creator-preference context. `skills["octopus.object-separation"].previewOutlineColor` is `brand` (default: the explicit project/app accent, then brand/style notes, otherwise white) or a six-digit hex colour. Pass the resolved colour as one safely quoted `--color` argument to the existing `sheet`/`overlay` commands; it changes only their check-image appearance, not the masks or model. `presentation.tone` guides your report; `visualDensity` and brand/style prose guide a requested composite, never whether to skip the check sheet/video. Follow studio precedence and resolve invalid preferences before dependent editing. No preference can change model/download permissions, subject selection, frame/time alignment, output paths or required checks. Lasting creative choices belong in preferences/memory, not this skill.
 
-The script is in this skill's folder. Commands below run from the project folder (`projects/<name>/`), where the studio is `../..`. Run it with the studio's Python (`../../.venv/bin/python` on Mac and Linux, `..\..\.venv\Scripts\python.exe` on Windows), else `python3`:
+The script is in this skill's folder. Commands below run from the project folder (`projects/<name>/`), where the studio is `../..`. Run it with `$STUDIO_PYTHON` (the Python selected in Video Octopus) when it is set, else the studio's Python (`../../.venv/bin/python` on Mac and Linux, `..\..\.venv\Scripts\python.exe` on Windows), else `python3`:
 
 ```bash
 python3 ../../.claude/skills/object-separation/scripts/objsep.py check

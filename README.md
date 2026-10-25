@@ -29,7 +29,7 @@ First launch publishes these as managed defaults in your studio's `.claude/skill
 
 | Skill | Purpose | Additional requirements |
 | --- | --- | --- |
-| `transcribe` | Local word timestamps, transcript and subtitles using faster-whisper or MLX Whisper. | Python packages, FFmpeg and a Whisper model. MLX requires Apple Silicon and native ARM64 Python. |
+| `transcribe` | Local word timestamps, transcript and subtitles using faster-whisper, MLX Whisper or Parakeet. | Python packages, FFmpeg and a Whisper or Parakeet model. MLX and Parakeet require Apple Silicon and native ARM64 Python. |
 | `rough-cut` | Transcript-based cleanup and edit decisions for fillers, pauses and retakes. | Agent, Python/NumPy and FFmpeg; a transcript. |
 | `join-check` | Find potentially clipped words at edit joins and propose repaired cut boundaries. | Python/NumPy and FFmpeg; optional Whisper rechecking. |
 | `production-sheet` | Plan the video scene by scene and write the files shown in the Scenes tab. | Agent; source transcript and locked cut. |

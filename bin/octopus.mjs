@@ -37,8 +37,11 @@ const HELP = `octopus: act on the running Video Octopus (${BASE})
   octopus library add <file> --kind <section> [--note "..."]   copy a file from the studio into the library
   studio dashboard [--range week|month|all]
   studio skills                           the studio's skills
+  octopus python suggestions               places the assistant reported for Setup's Python environments
+  octopus python suggest <path>            report a Python, environment or project folder you found (read-only search):
+                                           Setup's next scan shows it; the creator selects it with Use this
   octopus models [whisper|mlx|sam2]        the models Setup knows: where each comes from, which are downloaded
-  octopus models download <whisper|mlx|sam2> <size>   Setup's own Download (the same one, with its progress there
+  octopus models download <whisper|mlx|parakeet|sam2> <size>   Setup's own Download (the same one, with its progress there
                                            too), followed to the end. Only after the creator said yes.
 
   Add --json to any command for the raw answer.`;
@@ -193,10 +196,10 @@ const cmds = {
   // The models' rows in Setup (Whisper, MLX Whisper, SAM 2.1): their sources and what's downloaded, and Setup's own
   // Download, followed until it's done (so a skill and Setup never fetch the same model twice).
   async models() {
-    const FAM = { whisper: 'whisper', 'faster-whisper': 'whisper', mlx: 'mlx', sam2: 'sam2', sam: 'sam2', objsep: 'sam2' };
+    const FAM = { whisper: 'whisper', 'faster-whisper': 'whisper', mlx: 'mlx', parakeet: 'parakeet', sam2: 'sam2', sam: 'sam2', objsep: 'sam2' };
     if (verb === 'download') {
       const fam = FAM[rest[0]], size = rest[1];
-      if (!fam || !size) throw new Error('octopus models download <whisper|mlx|sam2> <size>');
+      if (!fam || !size) throw new Error('octopus models download <whisper|mlx|parakeet|sam2> <size>');
       let d = await api(`/api/app/setup/${fam}/download`, { size });
       let last = '';
       while (d.state === 'downloading') {
@@ -214,6 +217,15 @@ const cmds = {
     const have = { [wf]: s.downloaded || [], sam2: s.sam2?.have || [] };
     const pick = verb ? rows.filter(([k]) => k === FAM[verb]) : rows;
     return out(Object.fromEntries(pick), () => pick.map(([k, src]) => `${k}:\n${Object.entries(src).map(([id, x]) => `  ${id}${have[k].includes(id) ? ' (downloaded)' : ''}  ${x.line}`).join('\n')}`).join('\n\n'));
+  },
+  async python() {
+    if (verb === 'suggest') {
+      if (!rest[0]) throw new Error('octopus python suggest <absolute path>');
+      const r = await api('/api/app/setup/environments/suggest', { path: rest[0] });
+      return out(r, () => `Reported ${rest[0]}. ${r.next}`);
+    }
+    const r = await api('/api/app/setup/environments/suggestions');
+    return out(r, () => r.suggestions.join('\n') || '(none)');
   },
   async help() { console.log(HELP); },
 };

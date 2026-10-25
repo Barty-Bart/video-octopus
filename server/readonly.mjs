@@ -27,6 +27,7 @@ const READ = {
   schedules: (v) => [undefined, 'list', 'runs'].includes(v),
   library: (v) => !['accept', 'add', 'aside'].includes(v),
   models: (v) => v !== 'download',
+  python: (v) => v !== 'suggest',
   dashboard: () => true, skills: () => true, help: () => true,
 };
 export function studioRead(part, cwd) {

@@ -514,7 +514,7 @@ const DRAW = {
   transcribe(V, save, redraw) {
     const t = V.values.transcribe, m = V.machine;
     const engine = seg([['local', 'On this computer'], ['cloud', 'Cloud']], t.engine, (e) => save('transcribe', { engine: e }).then(redraw));
-    const parts = [group('', row('Engine', t.engine === 'local' ? 'faster-whisper runs on this computer. Nothing is uploaded.' : 'Your audio is uploaded to the provider when you transcribe.', engine))];
+    const parts = [group('', row('Engine', t.engine === 'local' ? 'Whisper (or Parakeet) runs on this computer. Nothing is uploaded.' : 'Your audio is uploaded to the provider when you transcribe.', engine))];
     if (t.engine === 'local') {
       const have = new Set(V.downloaded), S = V.whisperSources;
       const opts = [['auto', `Auto: the best one downloaded (${V.autoWhisper}); recommended here: ${m.whisper.model}`],
@@ -522,11 +522,17 @@ const DRAW = {
       const src = h(`<div class="sub"></div>`);
       const showSrc = (k) => src.replaceChildren(h(`<span>${srcLink(S[k === 'auto' ? V.autoWhisper : k])}</span>`));
       showSrc(t.model);
-      const eng = (e) => (e === 'mlx' ? 'MLX Whisper' : 'faster-whisper');
+      const eng = (e) => (e === 'mlx' ? 'MLX Whisper' : e === 'parakeet' ? 'Parakeet' : 'faster-whisper');
+      const P = V.parakeet || { ready: false, have: [] }, pkOn = P.ready || t.whisperEngine === 'parakeet';
+      const pkWhy = !m.arm64 ? 'Parakeet needs an Apple Silicon Mac.' : P.ready ? `Parakeet (NVIDIA's model through parakeet-mlx) also runs on the GPU with the selected Python: fast, with word times; it takes no spelling hints and can leave out some ums.` : 'Parakeet becomes a choice when the Python selected in Setup → Python environments has parakeet-mlx.';
+      const seat = [['auto', `Auto (${eng(m.whisper.engine)})`], ['mlx', 'MLX Whisper'], ['faster-whisper', 'faster-whisper'], ...(m.arm64 ? [['parakeet', 'Parakeet (on this Mac\'s GPU)']] : [])];
+      const weak = V.whisperEngine !== 'parakeet' && /^(tiny|base|small)/.test(t.model) && V.autoWhisper && !/^(tiny|base|small)/.test(V.autoWhisper) && V.downloaded.includes(V.autoWhisper);
       parts.push(group('On this computer',
-        row('Runs on', `${m.arm64 ? 'MLX Whisper uses this Mac\'s GPU (mlx-community\'s models); faster-whisper runs on the CPU.' : 'faster-whisper (MLX Whisper needs an Apple Silicon Mac).'} Now: ${eng(V.whisperEngine)}.`,
-          seg([['auto', `Auto (${eng(m.whisper.engine)})`], ['mlx', 'MLX Whisper'], ['faster-whisper', 'faster-whisper']], t.whisperEngine, (x) => save('transcribe', { whisperEngine: x }).then(redraw), { disabled: { mlx: !m.arm64 } })),
-        row('Model', `${esc(m.chip)}${m.ramGB ? `, ${m.ramGB} GB` : ''}. Recommended for this computer: ${esc(m.whisper.model)} (${esc(m.whisper.speed)}); .en models are English-only and more accurate for English. Setup → Transcription model downloads the one you pick.`, select(opts, t.model, (x) => { showSrc(x); return save('transcribe', { model: x }); })),
+        row('Runs on', `${m.arm64 ? 'MLX Whisper uses this Mac\'s GPU (mlx-community\'s models); faster-whisper runs on the CPU.' : 'faster-whisper (MLX Whisper needs an Apple Silicon Mac).'} ${pkWhy} Now: ${eng(V.whisperEngine)}.`,
+          seg(seat, t.whisperEngine, (x) => save('transcribe', { whisperEngine: x }).then(redraw), { disabled: { mlx: !m.arm64, parakeet: !pkOn } })),
+        m.arm64 ? row('Parakeet models', P.have.length ? `Downloaded: v2 is English only, v3 also knows 24 other European languages. ${P.ready ? `With this language it uses ${P.pick || 'none of them (Whisper instead)'}.` : ''}` : 'None downloaded. The transcribe skill never downloads one without asking.', h(`<div class="sub mono">${P.have.length ? esc(P.have.join(' · ')) : '—'}</div>`)) : null,
+        weak ? h(`<div class="notice small">${esc(t.model)} is the smallest kind of Whisper model. ${esc(V.autoWhisper)} is already downloaded here: pick it, or Auto, for a more accurate transcript.</div>`) : null,
+        row('Model', `${V.whisperEngine === 'parakeet' ? 'Whisper\'s model, for a language Parakeet has no model for. ' : ''}${esc(m.chip)}${m.ramGB ? `, ${m.ramGB} GB` : ''}. Recommended for this computer: ${esc(m.whisper.model)} (${esc(m.whisper.speed)}); .en models are English-only and more accurate for English. Setup → Transcription model downloads the one you pick.`, select(opts, t.model, (x) => { showSrc(x); return save('transcribe', { model: x }); })),
         row('Source', '', src),
         row('Downloaded models', '', h(`<div class="sub mono">${V.downloaded.length ? esc(V.downloaded.join(' · ')) : 'None yet: Setup → Transcription model downloads the one you pick.'}</div>`))));
     } else {

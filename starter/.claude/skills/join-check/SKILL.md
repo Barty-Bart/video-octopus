@@ -31,7 +31,7 @@ python3 ../../tools/join-check/join_check.py source/raw.mp4 \
         --edl work/edl_manual.json --words work/tr/words.json --out work/joins --fix-out work/edl_fixed.json
 ```
 
-Use the studio's `.venv` Python if there is one (`../../.venv/bin/python`, Windows `..\..\.venv\Scripts\python.exe`); it needs numpy and ffmpeg (from the PATH, or `FFMPEG` when set). Words: the source-time transcript the cut was made from (`work/tr/words.json`, or `work/words_refined.json` / `work/editor_words.json` when the project has them).
+Use `$STUDIO_PYTHON` (the Python selected in Video Octopus) when it is set, else the studio's `.venv` Python if there is one (`../../.venv/bin/python`, Windows `..\..\.venv\Scripts\python.exe`); it needs numpy and ffmpeg (from the PATH, or `FFMPEG` when set). Words: the source-time transcript the cut was made from (`work/tr/words.json`, or `work/words_refined.json` / `work/editor_words.json` when the project has them).
 
 If the voice was recorded separately (a recorder synced to the camera), add `--audio work/voice.wav --offset S` where video time = audio time + S, so the check listens to the clean voice. Add `--recheck` to also re-transcribe 1 s either side of each join with faster-whisper and compare with the words that should be there. Slower; use it on final cuts and on anything the first pass marks "check".
 

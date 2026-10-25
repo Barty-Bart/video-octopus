@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""transcribe.py: on-device transcription with word timestamps (faster-whisper, or MLX Whisper on Apple Silicon).
+"""transcribe.py: on-device transcription with word timestamps (faster-whisper, or MLX Whisper / Parakeet on Apple Silicon).
 
-  python3 transcribe.py VIDEO_OR_AUDIO [--engine auto|mlx|faster-whisper] [--model small.en|auto] [--lang en] [--out DIR] [--device auto|cpu|cuda]
+  python3 transcribe.py VIDEO_OR_AUDIO [--engine auto|mlx|faster-whisper|parakeet] [--model small.en|auto] [--lang en] [--out DIR] [--device auto|cpu|cuda]
                         [--srt-max-chars 42] [--prompt "names, jargon"] [--start S --end E]
                         [--fill-out DIR] [--threads N]
 
@@ -19,7 +19,12 @@ CPU threads: the performance cores on Apple Silicon (int8 Whisper on the efficie
 --engine: mlx runs MLX Whisper (mlx-community's models) on an Apple Silicon Mac's GPU; faster-whisper runs Systran's
 models on the CPU (int8) or an NVIDIA card. auto (or $STUDIO_TRANSCRIBE_ENGINE, which Video Octopus sets): MLX where
 mlx_whisper imports on a native arm64 Python, else faster-whisper. Both write the same files. With --model auto and
-no model of the chosen build downloaded, a downloaded model of the other build is used rather than fetching one.
+no model of the chosen build downloaded, or only a small one (tiny, base, small) while the other build has a medium or
+large one, the other build's model is used rather than fetching one.
+--engine parakeet: NVIDIA's Parakeet TDT through parakeet-mlx on an Apple Silicon Mac's GPU (mlx-community's
+conversions). --model auto picks parakeet-tdt-0.6b-v2 for English (--lang en), v3 for the other European languages and
+for auto-detect, from the models already downloaded; it never downloads one. Parakeet takes no prompt: --prompt is not
+applied and --fill-out writes the same words a second time. A language Parakeet doesn't know uses Whisper instead.
 The model downloads once (to the Hugging Face cache) and then works offline.
 """
 import argparse, json, os, platform, shutil, subprocess, sys, tempfile, time
@@ -54,7 +59,9 @@ def fw_cached(model):
 def mlx_repo(model):
     """mlx-community's conversion of a Whisper size (the repos Video Octopus's Setup downloads)"""
     m = ALIASES.get(model, model)
-    return "mlx-community/distil-whisper-large-v3" if m == "distil-large-v3" else f"mlx-community/whisper-{m}-mlx"
+    return ("mlx-community/distil-whisper-large-v3" if m == "distil-large-v3"
+            else "mlx-community/whisper-large-v3-turbo" if m == "large-v3-turbo"
+            else f"mlx-community/whisper-{m}-mlx")
 
 
 def mlx_cached(model):
@@ -73,8 +80,70 @@ def mlx_ok():
         return False
 
 
-ORDER = {"en": ["medium.en", "large-v3", "medium", "small.en", "small", "base.en", "tiny.en"],
-         "other": ["large-v3", "medium", "small", "base", "tiny"]}
+ORDER = {"en": ["medium.en", "large-v3", "large-v3-turbo", "medium", "small.en", "small", "base.en", "tiny.en"],
+         "other": ["large-v3", "large-v3-turbo", "medium", "small", "base", "tiny"]}
+# medium and up: a build whose best downloaded model is below these gives way to the other build's (pick_engine).
+STRONG = {"large-v3", "large-v3-turbo", "distil-large-v3", "medium", "medium.en"}
+
+# Parakeet TDT (mlx-community's conversions for parakeet-mlx). v2: English only. v3: these 25 European languages.
+PARAKEET = {"v2": "mlx-community/parakeet-tdt-0.6b-v2", "v3": "mlx-community/parakeet-tdt-0.6b-v3"}
+PARAKEET_V3_LANGS = {"bg", "hr", "cs", "da", "nl", "en", "et", "fi", "fr", "de", "el", "hu", "it", "lv", "lt", "mt",
+                     "pl", "pt", "ro", "sk", "sl", "es", "sv", "ru", "uk"}
+
+
+def parakeet_cached(repo):
+    d = hub_dir() / ("models--" + repo.replace("/", "--")) / "snapshots"
+    return any((s / "config.json").exists() and (s / "model.safetensors").exists() for s in d.glob("*"))
+
+
+def parakeet_ok():
+    """Parakeet runs here: an Apple Silicon Mac, a native arm64 Python, parakeet_mlx installed"""
+    if sys.platform != "darwin" or platform.machine() != "arm64":
+        return False
+    try:
+        import parakeet_mlx  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+def pick_parakeet(want, lang, cached=parakeet_cached):
+    """(repo, None) for Parakeet's model, or (None, why) when none fits: v2 for English, v3 for the other European
+    languages and for auto-detect (v3 detects the language itself); only models already downloaded for auto."""
+    names = {"parakeet-tdt-0.6b-v2": "v2", "parakeet-tdt-0.6b-v3": "v3", "v2": "v2", "v3": "v3"}
+    if want in names or "/" in want:
+        repo = PARAKEET[names[want]] if want in names else want
+        if lang and lang != "en" and repo == PARAKEET["v2"]:
+            return None, "parakeet-tdt-0.6b-v2 is English only"
+        return (repo, None) if cached(repo) else (None, f"{repo} isn't downloaded")
+    order = ["v2", "v3"] if lang == "en" else ["v3", "v2"] if lang is None else ["v3"] if lang in PARAKEET_V3_LANGS else []
+    if not order:
+        return None, f"Parakeet has no model for language {lang}"
+    for v in order:
+        if cached(PARAKEET[v]):
+            return PARAKEET[v], None
+    return None, f"{PARAKEET[order[0]]} isn't downloaded"
+
+
+def parakeet_words(sentences):
+    """parakeet-mlx's AlignedSentence list -> [(start, end, text, [(w0, w1, word), ...]), ...]. Its tokens are
+    SentencePiece pieces: one that begins with a space starts a word, the others (word pieces, punctuation) continue
+    the word before, so "world." stays one word, as Whisper writes it."""
+    out = []
+    for s in sentences:
+        words = []
+        for tok in s.tokens:
+            piece = tok.text
+            if not piece.strip():
+                continue
+            if words and not piece.startswith(" "):
+                w0, _, w = words[-1]
+                words[-1] = (w0, tok.end, w + piece)
+            else:
+                words.append((tok.start, tok.end, piece.strip()))
+        if words:
+            out.append((words[0][0], words[-1][1], s.text, words))
+    return out
 
 
 def pick_model(want, lang, cached=fw_cached):
@@ -90,6 +159,15 @@ def pick_model(want, lang, cached=fw_cached):
 
 def pick_engine(want, model, lang):
     """the Whisper build and model: MLX where it runs, else faster-whisper; --model auto stays with what's downloaded"""
+    if want == "parakeet":
+        if not parakeet_ok():
+            print("Parakeet can't run here (it needs an Apple Silicon Mac, a native arm64 Python and parakeet-mlx): Whisper instead")
+        else:
+            repo, why = pick_parakeet("auto" if model in ORDER["en"] + ORDER["other"] + ["auto", "distil-large-v3", "large", "turbo"] else model, lang)
+            if repo:
+                return "parakeet", repo
+            print(f"{why}: Whisper instead")
+        want, model = "auto", "auto" if model.startswith("parakeet") or "/" in model else model
     engine = want if want in ("mlx", "faster-whisper") else ("mlx" if mlx_ok() else "faster-whisper")
     if engine == "mlx" and not mlx_ok():
         print("MLX Whisper can't run here (it needs an Apple Silicon Mac, a native arm64 Python and mlx-whisper): faster-whisper instead")
@@ -99,7 +177,8 @@ def pick_engine(want, model, lang):
         mine, theirs = (mlx_cached, fw_cached) if engine == "mlx" else (fw_cached, mlx_cached)
         switch = "faster-whisper" if engine == "mlx" else "mlx" if mlx_ok() else None
         other = [m for m in order if theirs(m)]
-        if switch and other and not any(mine(m) for m in order):
+        own = [m for m in order if mine(m)]
+        if switch and other and (not own or (own[0] not in STRONG and other[0] in STRONG)):
             print(f"no {engine} model downloaded, but a {switch} one is: {switch} with {other[0]}")
             return switch, other[0]
     return engine, pick_model(model, lang, mlx_cached if engine == "mlx" else fw_cached)
@@ -199,6 +278,23 @@ def mlx_pass(repo, audio, lang, prompt):
     return out, r.get("language") or lang or "?", 1.0
 
 
+def parakeet_pass(model, wav, lang):
+    # parakeet-mlx's own transcribe(): it reads the file with ffmpeg (from the PATH) at the model's sample rate, and
+    # long audio goes in 120 s chunks with 15 s of overlap (its CLI's defaults), the tokens merged across the joins.
+    # Every token carries start and duration in seconds; parakeet_words makes words of them.
+    from parakeet_mlx.alignment import SentenceConfig
+    from parakeet_mlx.parakeet import DecodingConfig
+    cfg = DecodingConfig(sentence=SentenceConfig(silence_gap=0.6, max_duration=6.0))
+    def progress(cur, full):
+        print(f"\r  {cur / 16000:7.1f}s transcribed", end="", flush=True)
+    r = model.transcribe(str(wav), chunk_duration=120.0, overlap_duration=15.0, decoding_config=cfg, chunk_callback=progress)
+    out = parakeet_words(r.sentences)
+    if out:
+        print(f"\r  {out[-1][1]:7.1f}s transcribed", end="", flush=True)
+    print()
+    return out, lang or "auto", 1.0
+
+
 def collect(segs, off):
     words, text = [], []
     for start, end, t, ws in segs:
@@ -222,7 +318,7 @@ def write_out(out, stem, words, text, max_chars):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
-    ap.add_argument("--engine", default=os.environ.get("STUDIO_TRANSCRIBE_ENGINE") or "auto", help="auto, mlx (Apple Silicon) or faster-whisper")
+    ap.add_argument("--engine", default=os.environ.get("STUDIO_TRANSCRIBE_ENGINE") or "auto", help="auto, mlx (Apple Silicon), faster-whisper or parakeet (Apple Silicon)")
     ap.add_argument("--model", default="small.en", help="tiny, base, small, medium, large-v3, distil-large-v3 "
                     "(.en = English only), or auto: the best verbatim model already downloaded")
     ap.add_argument("--lang", default=None, help="language code, e.g. en, pl, pt (auto-detect if omitted; .en models are English)")
@@ -243,7 +339,19 @@ def main():
     engine, model_name = pick_engine(a.engine, a.model, a.lang)
     lang = a.lang or ("en" if model_name.endswith(".en") else None)
     t0 = time.time()
-    if engine == "mlx":
+    if engine == "parakeet":
+        repo = model_name
+        os.environ.setdefault("HF_HUB_OFFLINE", "1")   # the model is in the cache (pick_parakeet): never fetch
+        if FFMPEG != "ffmpeg" and os.path.dirname(FFMPEG):   # parakeet-mlx runs "ffmpeg" from the PATH
+            os.environ["PATH"] = os.path.dirname(FFMPEG) + os.pathsep + os.environ.get("PATH", "")
+        from parakeet_mlx import from_pretrained
+        print(f"model {repo} on Parakeet (parakeet-mlx, the Mac's GPU)")
+        if a.prompt:
+            print("Parakeet takes no prompt: --prompt isn't applied (check those names in the text)")
+        pk = from_pretrained(repo)
+        model_name = repo.split("/")[-1]
+        run = lambda audio, prompt: parakeet_pass(pk, wav, a.lang)  # noqa: E731
+    elif engine == "mlx":
         repo = mlx_repo(model_name)
         print(f"model {model_name} on MLX Whisper ({repo}, the Mac's GPU){'' if mlx_cached(model_name) else '; first run downloads the model'}")
         run = lambda audio, prompt: mlx_pass(repo, audio, lang, prompt)  # noqa: E731
@@ -266,9 +374,14 @@ def main():
     passes = [(out, a.prompt)]
     if a.fill_out:
         passes.append((Path(a.fill_out), f"{a.prompt}. {a.fill_prompt}" if a.prompt else a.fill_prompt))
+    first = None
     for i, (dest, prompt) in enumerate(passes):
         t1 = time.time()
-        segs, language, prob = run(audio, prompt)
+        if engine == "parakeet" and first:   # no prompt to change: the filler pass is the same words
+            print("filler pass: Parakeet takes no prompt, so it is the same transcript")
+            segs, language, prob = first
+        else:
+            segs, language, prob = first = run(audio, prompt)
         words, text = collect(segs, off)
         write_out(dest, src.stem, words, text, a.srt_max_chars)
         dur = (words[-1][1] - words[0][0]) if words else 0

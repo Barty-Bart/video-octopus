@@ -66,7 +66,8 @@ const SECTIONS = {
     // The studio-wide defaults the chat panel's pickers start from (server/agent-choices.mjs): '' = the agent's own.
     // Claude's model is the top-level `model` (older settings files have it there).
     claudeEffort: '', codexEffort: '', piThinking: '' },
-  // whisperEngine: the Whisper build on this computer: mlx (Apple Silicon's GPU) or faster-whisper; auto = the recommended one.
+  // whisperEngine: the engine on this computer: mlx (MLX Whisper, Apple Silicon's GPU), faster-whisper, or parakeet
+  // (Parakeet through parakeet-mlx, Apple Silicon's GPU, offered when the selected Python has it); auto = the recommended Whisper build.
   transcribe: { engine: 'local', model: 'auto', whisperEngine: 'auto', provider: 'deepgram', language: 'auto', vocab: [] },
   render: { engine: 'local', jobs: 0, size: '1080p', codec: 'h264' },
   // Settings → Recording: what the record panel starts with. screen 'screen' (the browser's picker) or 'none' (camera
@@ -151,7 +152,7 @@ const RULES = {
     piSource: ['pi', 'endpoint'], piModel: 'str', piBaseUrl: 'str', piVision: 'bool', piContext: [4096, 4000000],
     ccSource: ['plan', 'ollama', 'lmstudio', 'provider'], ccUrl: 'url', ccModel: 'str', ccContext: [0, 4000000], lean: 'bool',
     claudeEffort: ['', ...EFFORTS.claude], codexEffort: ['', ...EFFORTS.codex], piThinking: ['', ...EFFORTS.pi] },
-  transcribe: { engine: ['local', 'cloud'], model: ['auto', ...MODELS], whisperEngine: ['auto', 'mlx', 'faster-whisper'], provider: Object.keys(PROVIDERS), language: Object.keys(LANGS), vocab: 'words' },
+  transcribe: { engine: ['local', 'cloud'], model: ['auto', ...MODELS], whisperEngine: ['auto', 'mlx', 'faster-whisper', 'parakeet'], provider: Object.keys(PROVIDERS), language: Object.keys(LANGS), vocab: 'words' },
   render: { engine: ['local'], jobs: [0, 64], size: ['1080p', '4k'], codec: ['h264', 'hevc', 'prores'] },
   recorder: { screen: ['screen', 'none'], camera: 'str', mic: 'str', target: ['replace', 'layer'], countdown: [0, 10] },
   sound: { claude: 'bool', epidemic: 'bool', library: 'str', fxDb: [-40, 0] },
@@ -271,8 +272,10 @@ export async function childEnv() {
   // A cloud service without its key saved transcribes on this computer (the brief and the system prompt say so).
   const cloud = t.engine === 'cloud' && PROVIDERS[t.provider] && env[PROVIDERS[t.provider].key];
   env.STUDIO_TRANSCRIBE = cloud ? t.provider : 'local';
-  if (t.engine !== 'cloud' && t.model !== 'auto') env.STUDIO_TRANSCRIBE_MODEL = t.model;
-  if (!cloud) env.STUDIO_TRANSCRIBE_ENGINE = await whisperEngine(); // mlx | faster-whisper, for the transcribe skill
+  const local = cloud ? null : await whisperEngine(); // mlx | faster-whisper | parakeet, for the transcribe skill
+  // A Whisper size means nothing to Parakeet: it picks its own model by language (--model auto).
+  if (t.engine !== 'cloud' && t.model !== 'auto' && local !== 'parakeet') env.STUDIO_TRANSCRIBE_MODEL = t.model;
+  if (!cloud) env.STUDIO_TRANSCRIBE_ENGINE = local;
   if (t.language !== 'auto') env.STUDIO_TRANSCRIBE_LANGUAGE = t.language;
   const o = section('objsep', s);
   if (o.model !== 'auto') env.STUDIO_OBJSEP_MODEL = o.model; // the object-separation skill's model (else its own pick)
@@ -297,11 +300,13 @@ export function settingsBrief(env = {}, { profileScoped = false } = {}) {
     ? `- Transcription: cloud, ${p.label} (STUDIO_TRANSCRIBE=${t.provider}, key in $${p.key}). Transcribe through ${p.label}'s API and write the same files the transcribe skill writes (words.json [[start, end, word], …] and the SRT).`
     : t.engine === 'cloud'
       ? `- Transcription: Settings pick ${p.label}, but no ${p.label} key is saved, so transcribe on this computer with the transcribe skill (--model auto); unless a note from Video Octopus in the chat already says so, tell the creator once that the key goes in Settings → Transcription.`
-      : `- Transcription: on this computer with the transcribe skill (STUDIO_TRANSCRIBE=local, ${t.model !== 'auto' ? `model ${t.model}` : '--model auto: the best verbatim model already downloaded'}). Never run two transcriptions side by side; the rough cut's filler pass goes in the same run (--fill-out).`);
+      : t.whisperEngine === 'parakeet' && env.STUDIO_TRANSCRIBE_ENGINE === 'parakeet'
+        ? `- Transcription: on this computer with the transcribe skill and Parakeet on the Mac's GPU (STUDIO_TRANSCRIBE=local, STUDIO_TRANSCRIBE_ENGINE=parakeet, --engine parakeet --model auto: parakeet-tdt-0.6b-v2 for English, v3 for other European languages, only ones already downloaded). Never run two transcriptions side by side; --fill-out writes the same words again (Parakeet takes no prompt).`
+        : `- Transcription: on this computer with the transcribe skill (STUDIO_TRANSCRIBE=local, ${t.model !== 'auto' ? `model ${t.model}` : '--model auto: the best verbatim model already downloaded'}). Never run two transcriptions side by side; the rough cut's filler pass goes in the same run (--fill-out).`);
   if (t.language !== 'auto' || t.vocab.length) lines.push(`- Transcription language: ${LANGS[t.language]}${t.vocab.length ? `. Always spell these right (pass them as the prompt): ${t.vocab.join(', ')}` : ''}.`);
   lines.push(`- Rendering: on this computer${r.jobs ? `, up to ${r.jobs} jobs in parallel` : ''}; default output ${r.size === '4k' ? '4K' : '1080p'} ${{ h264: 'H.264', hevc: 'HEVC', prores: 'ProRes' }[r.codec]}.`);
   if (s.python) lines.push(`- Selected Python: ${quotedPath(expandHome(s.python))}. Use this executable (also STUDIO_PYTHON) for all Python tools. Its directory is on PATH. Do not substitute another project environment or install into this shared environment without permission.`);
-  lines.push('- Python: transcription on this computer, the rough cut, join check, tools/cut/apply_edit.py and object separation run Python (the explicitly selected Python first, otherwise the studio\'s .venv). When a step needs it and it isn\'t there (Setup may have said "Not needed"), say so in one line, offer to set it up (Python 3.10+, a .venv in the studio with its requirements.txt) and ask before installing anything.');
+  lines.push(`- Python: transcription on this computer, the rough cut, join check, tools/cut/apply_edit.py and object separation run Python ($STUDIO_PYTHON, the Python selected in Video Octopus, first; otherwise the studio's .venv).${s.python ? '' : ' No Python is selected yet.'} When a step needs Python and neither is there (Setup may have said "Not needed"), do not offer to create a new environment first: this computer may already have one (a project's .venv, or another app's, such as OpenToolkit's). Say so in one line and point the creator to Video Octopus's Setup → Check my computer → Python environments, which finds them and offers "Use this" on the best match. Only if none fits, offer to set one up (Python 3.10+, a .venv in the studio with its requirements.txt), and ask before installing anything.`);
   const o = section('objsep', s), sam = sam2Have();
   lines.push(`- Object separation: the object-separation skill with SAM 2.1 ${o.model === 'auto' ? 'as recommended for this computer (--model left out: its own pick)' : `${o.model} (STUDIO_OBJSEP_MODEL=${o.model})`}; downloaded: ${sam.length ? sam.join(', ') : 'none yet'}. The skill never downloads a model: when it isn't there, the creator presses Download in Video Octopus's Setup (Object separation row) or picks another one in Settings → Rendering.`);
   lines.push(`- Sound sources: ${[so.claude && 'made by Claude', so.epidemic && 'Epidemic Sound (through its connector)', so.library && `the library folder ${so.library}`].filter(Boolean).join(', ') || 'none picked'}; effects sit about ${Math.abs(so.fxDb)} dB under the voice (an effect's loudest 0.2 s against the voice's level while it talks: Video Octopus's export and canvas mix sound cues this way, so mix your renders the same).`);
@@ -372,12 +377,38 @@ export function whisperPick({ apple = false, arm64 = false, ramGB = 0, gpu = nul
 // The Whisper build in use: Settings → Transcription's, or for auto the recommended one (MLX only where it runs).
 // Auto keeps to a build that has a model here: until an MLX model is downloaded, a computer with faster-whisper models
 // goes on using them.
+// Parakeet only where it runs: Apple Silicon running natively, with a selected Python whose check found parakeet-mlx;
+// otherwise the Whisper pick below. Auto also leaves a build whose best downloaded model is a small one (tiny, base,
+// small) for the other build's medium or large one: tiny.en on the GPU is no better pick than medium.en on the CPU.
 export async function whisperEngine(s = settings()) {
-  const e = section('transcribe', s).whisperEngine, mac = await machineInfo();
-  if (e === 'faster-whisper' || (e === 'mlx' && !mac.arm64)) return 'faster-whisper';
-  if (e === 'mlx') return 'mlx';
-  if (s.python && ['mlx', 'faster-whisper'].includes(s.pythonEngine)) return s.pythonEngine === 'mlx' && !mac.arm64 ? 'faster-whisper' : s.pythonEngine;
-  return mac.whisper.engine === 'mlx' && !downloaded('mlx').length && downloaded('whisper').length ? 'faster-whisper' : mac.whisper.engine;
+  return localEngine({ choice: section('transcribe', s).whisperEngine, mac: await machineInfo(), python: s.python, pythonEngine: s.pythonEngine, pythonParakeet: s.pythonParakeet,
+    have: { mlx: downloaded('mlx'), whisper: downloaded('whisper') } });
+}
+// The Whisper build alone (for the Whisper rows, and when Parakeet has no model for the language): never parakeet.
+export async function whisperBuild(s = settings()) {
+  const choice = section('transcribe', s).whisperEngine;
+  return localEngine({ choice: choice === 'parakeet' ? 'auto' : choice, mac: await machineInfo(), python: s.python, pythonEngine: s.pythonEngine, have: { mlx: downloaded('mlx'), whisper: downloaded('whisper') } });
+}
+export const parakeetReady = ({ mac = {}, python = '', pythonParakeet = false } = {}) => Boolean(mac.arm64 && python && pythonParakeet);
+const STRONG = ['large-v3', 'large-v3-turbo', 'distil-large-v3', 'medium', 'medium.en'];
+export function localEngine({ choice = 'auto', mac = {}, python = '', pythonEngine = '', pythonParakeet = false, have = { mlx: [], whisper: [] } } = {}) {
+  if (choice === 'parakeet' && parakeetReady({ mac, python, pythonParakeet })) return 'parakeet';
+  if (choice === 'faster-whisper' || (choice === 'mlx' && !mac.arm64)) return 'faster-whisper';
+  if (choice === 'mlx') return 'mlx';
+  if (python && ['mlx', 'faster-whisper'].includes(pythonEngine)) return pythonEngine === 'mlx' && !mac.arm64 ? 'faster-whisper' : pythonEngine;
+  const pick = mac.whisper?.engine || 'faster-whisper';
+  if (pick !== 'mlx') return pick;
+  const strong = (list) => list.some((m) => STRONG.includes(m));
+  return (!have.mlx.length && have.whisper.length) || (!strong(have.mlx) && strong(have.whisper)) ? 'faster-whisper' : 'mlx';
+}
+
+// Parakeet's model for a language, from the ones downloaded (the transcribe skill's pick_parakeet): v2 for English,
+// v3 for the other European languages it knows, and for Detect (v3 detects the language itself). Null: none fits.
+export const PARAKEET_V3_LANGS = ['bg', 'hr', 'cs', 'da', 'nl', 'en', 'et', 'fi', 'fr', 'de', 'el', 'hu', 'it', 'lv', 'lt', 'mt', 'pl', 'pt', 'ro', 'sk', 'sl', 'es', 'sv', 'ru', 'uk'];
+export function parakeetPick(lang, have = downloaded('parakeet')) {
+  const v2 = 'parakeet-tdt-0.6b-v2', v3 = 'parakeet-tdt-0.6b-v3';
+  const order = lang === 'en' ? [v2, v3] : !lang ? [v3, v2] : PARAKEET_V3_LANGS.includes(lang) ? [v3] : [];
+  return { model: order.find((m) => have.includes(m)) || null, wanted: order[0] || null };
 }
 
 // Whether something on this computer needs Python: transcription here (picked, or a cloud service whose key isn't
@@ -407,7 +438,7 @@ async function otherMachine() {
 // Whisper models already downloaded (the Hugging Face cache), for faster-whisper (Systran's repos) or MLX
 // (mlx-community's): refs/main names a snapshot with the weights and the files around them (hfmodels.mjs), so a
 // download that didn't finish never counts.
-export const whisperModels = (engine = 'faster-whisper') => downloaded(engine === 'mlx' ? 'mlx' : 'whisper');
+export const whisperModels = (engine = 'faster-whisper') => downloaded(engine === 'mlx' ? 'mlx' : engine === 'parakeet' ? 'parakeet' : 'whisper');
 
 // What --model auto picks (the transcribe skill's order): the best verbatim model already downloaded, else medium.en
 // for English (medium otherwise), which isn't downloaded yet.
@@ -423,7 +454,7 @@ export function autoWhisper(lang, have = whisperModels()) {
 // fill: also the rough cut's filler pass into work/tr_fill/ (one run, one model loaded, the passes one after the
 // other: two side by side took 4–5 min for a 2:43 take on an Apple Silicon Mac, one run ~1.5 min).
 // Returns { text, fallback: the provider's name when it fell back to this computer, else null, model }.
-export const AUTO_ORDER = { en: ['medium.en', 'large-v3', 'medium', 'small.en', 'small', 'base.en', 'tiny.en'], other: ['large-v3', 'medium', 'small', 'base', 'tiny'] };
+export const AUTO_ORDER = { en: ['medium.en', 'large-v3', 'large-v3-turbo', 'medium', 'small.en', 'small', 'base.en', 'tiny.en'], other: ['large-v3', 'large-v3-turbo', 'medium', 'small', 'base', 'tiny'] };
 // has: whether a key is saved (the Keychain; a test passes its own).
 export async function transcribeHow({ fill = false, has = hasKey } = {}) {
   const t = section('transcribe');
@@ -434,13 +465,27 @@ export async function transcribeHow({ fill = false, has = hasKey } = {}) {
     return { model: null, fallback: null, text: `How (Settings → Transcription): through ${p.label}'s API, with the key in $${p.key} (never print it). Send the audio once with word timestamps${fill ? ` and filler words kept${fillers ? ` (${fillers})` : ''}` : ''}${lang ? `, language ${lang}` : ''}${t.vocab.length ? `, with these spelled right: ${t.vocab.join(', ')}` : ''}, and write the transcribe skill's files from it: words.json as [[start, end, word], …] and the SRT into work/tr/${fill ? ', and the same words.json into work/tr_fill/ (that one request is the filler pass too)' : ''}.` };
   }
   // On this computer: the model picked, or what --model auto picks, with the Whisper build (MLX or faster-whisper).
-  const engine = await whisperEngine(), have = whisperModels(engine);
+  const engine = await whisperEngine();
+  if (engine === 'parakeet') {
+    const pk = parakeetPick(lang, whisperModels('parakeet'));
+    if (pk.model) {
+      const cmd = `transcribe.py <file> --engine parakeet --model auto --out work/tr${fill ? ' --fill-out work/tr_fill' : ''}${lang ? ` --lang ${lang}` : ''}`;
+      return { model: pk.model, fallback: null, text: `How (Settings → Transcription): on this computer with Parakeet (${pk.model}, parakeet-mlx on the Mac's GPU): the transcribe skill's ${cmd}, with the selected Python ($STUDIO_PYTHON).${fill ? ' Parakeet takes no prompt, so one pass writes both folders (--fill-out gets the same words); it can leave out some ums and repeats, so the rough cut finds fewer fillers.' : ''}${t.vocab.length ? ` Parakeet takes no spelling hints: check ${t.vocab.join(', ')} in the text afterwards.` : ''}` };
+    }
+    // No Parakeet model for this language here: the Whisper pick, said once.
+  }
+  const wengine = engine === 'parakeet' ? await whisperBuild() : engine;
+  const note = engine === 'parakeet' ? `Settings → Transcription picks Parakeet, but no Parakeet model for ${lang ? LANGS[lang] || lang : 'this language'} is downloaded (${parakeetPick(lang, []).wanted || 'Parakeet does not know this language'}), so use Whisper this time. ` : '';
+  return whisperHow({ t, p, lang, fill, engine: wengine, note });
+}
+async function whisperHow({ t, p, lang, fill, engine, note = '' }) {
+  const have = whisperModels(engine);
   const model = t.model !== 'auto' ? t.model : autoWhisper(lang, have);
   const size = have.includes(model) ? '' : (await sources(engine === 'mlx' ? 'mlx' : 'whisper', { cached: true }))[model]?.size;
   const extra = [lang && `--lang ${lang}`, t.vocab.length && `--prompt "${t.vocab.join(', ').replace(/"/g, '')}"`].filter(Boolean).join(' ');
   const cmd = `transcribe.py <file> --engine ${engine} --model ${t.model === 'auto' ? 'auto' : model} --out work/tr${fill ? ' --fill-out work/tr_fill' : ''}${extra ? ` ${extra}` : ''}`;
   const fallback = t.engine === 'cloud' && p ? p.label : null;
-  const text = `${fallback ? `Settings → Transcription picks ${p.label}, but no ${p.label} key is saved, so transcribe on this computer this time. ` : ''}`
+  const text = `${note}${fallback ? `Settings → Transcription picks ${p.label}, but no ${p.label} key is saved, so transcribe on this computer this time. ` : ''}`
     + `How${fallback ? '' : ' (Settings → Transcription)'}: on this computer with ${model}${engine === 'mlx' ? ' on MLX Whisper' : ''}${fill ? ', both passes in one run (the model loads once and they go one after the other)' : ''}: the transcribe skill's ${cmd}.`
     + `${fill ? ' Never two transcriptions side by side: they fight over the same cores and take three times as long.' : ''}`
     + `${have.includes(model) ? '' : ` The ${model} model isn't downloaded on this computer yet${have.length ? ` (these are: ${have.join(', ')})` : ''}: the creator downloads it in Video Octopus's Setup (Transcription model (Whisper) → Download${size ? `, ${size}` : ''}), or ask me before downloading it, or use one that is here.`}`;
@@ -465,10 +510,15 @@ export async function settingsView() {
     keyInfo: Object.fromEntries(Object.entries(KEYS).map(([k, v]) => [k, { label: v.label, test: Boolean(v.test) }])),
     providers: PROVIDERS, models: MODELS, langs: LANGS,
     machine: await machineInfo(), whisperEngine: await whisperEngine(s),
-    downloaded: whisperModels(await whisperEngine(s)), autoWhisper: autoWhisper(section('transcribe', s).language === 'auto' ? null : section('transcribe', s).language, whisperModels(await whisperEngine(s))),
+    // Parakeet (Settings → Transcription offers it when the selected Python has parakeet-mlx on Apple Silicon).
+    parakeet: { ready: parakeetReady({ mac: await machineInfo(), python: s.python, pythonParakeet: s.pythonParakeet }), python: s.python || '', have: whisperModels('parakeet'),
+      pick: parakeetPick(section('transcribe', s).language === 'auto' ? null : section('transcribe', s).language, whisperModels('parakeet')).model },
+    // The Whisper rows (model, downloaded, sources) are the Whisper build's, also while Parakeet is picked.
+    whisperBuild: await whisperBuild(s),
+    downloaded: whisperModels(await whisperBuild(s)), autoWhisper: autoWhisper(section('transcribe', s).language === 'auto' ? null : section('transcribe', s).language, whisperModels(await whisperBuild(s))),
     // Where each model comes from, as last checked (Setup asks Hugging Face; a page that must answer at once only reads
     // what's kept, and a stale or missing one is asked again in the background for the next look).
-    whisperSources: await modelSources(await whisperEngine(s) === 'mlx' ? 'mlx' : 'whisper'),
+    whisperSources: await modelSources(await whisperBuild(s) === 'mlx' ? 'mlx' : 'whisper'),
     // Object separation's models; the recommendation from the hardware here (Setup's row also asks torch).
     sam2: { models: SAM2_MODELS, have: sam2Have(), recommended: sam2Recommend(sam2Machine(await machineInfo())), sources: await modelSources('sam2') },
     envApiKey: Boolean(process.env.ANTHROPIC_API_KEY),

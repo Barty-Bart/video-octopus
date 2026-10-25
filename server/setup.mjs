@@ -2,7 +2,7 @@
 // A failing check carries `fix` (a request for the Video Octopus assistant, see assistant.mjs) or `how` (what the
 // creator does by hand: installing and signing in to the agent is theirs alone, the app never touches that login).
 import { existsSync, statSync, accessSync, constants } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, isAbsolute } from 'node:path';
 import { execFile } from 'node:child_process';
 import { settings, saveSettings, shellPath, studioTool, python, childPathEnv, tildePath as tilde, hfHub, IS_WIN, IS_MAC, APP_DIR } from './util.mjs';
 import { claudeInfo } from './claude.mjs';
@@ -11,7 +11,7 @@ import { codexInfo } from './codex.mjs';
 import { piInfo } from './pi.mjs';
 import { engineName, ENGINES } from './engines.mjs';
 import { formats } from './studio.mjs';
-import { settingsView, saveSection, section, profile, saveProfile, testKey, KEYS, PROVIDERS, machineInfo, whisperModels, autoWhisper, whisperEngine, needsLocalPython, MODELS, settingsChanged } from './settings.mjs';
+import { settingsView, saveSection, section, profile, saveProfile, testKey, KEYS, PROVIDERS, machineInfo, whisperModels, autoWhisper, whisperEngine, whisperBuild, parakeetPick, needsLocalPython, MODELS, settingsChanged } from './settings.mjs';
 import { saveKey, removeKey, hasKey } from './keychain.mjs';
 import { createStudio, studioPathInfo, defaultStudioPath } from './starter.mjs';
 import { SAM2_MODELS, sam2Have, sam2Recommend, sam2Machine, sam2Download } from './sam2.mjs';
@@ -107,7 +107,7 @@ async function environments(action, b) {
   try {
     const machine = await machineInfo();
     if (action === 'scan') {
-      environmentScan = await scanPython({ path: await shellPath(), studio: settings().studio, configured: settings().python, extra: b.path || '' }, machine);
+      environmentScan = await scanPython({ path: await shellPath(), studio: settings().studio, configured: settings().python, extra: b.path || '', suggested: pythonSuggestions() }, machine);
       return { ...environmentScan, machine };
     }
     const candidate = environmentScan?.environments.find(x => x.path === b.path);
@@ -115,11 +115,23 @@ async function environments(action, b) {
     const checked = describeEnvironment({ path: candidate.path, source: candidate.source, ...await probePython(candidate.path), verification: await probePython(candidate.path, { verify: true }) }, machine);
     if (action === 'select') {
       if (!checked.verified || !checked.transcription) throw Error('This environment did not pass the transcription library checks. Review its results or choose another.');
-      saveSettings({ python: checked.path, pythonEngine: checked.engine });
+      saveSettings({ python: checked.path, pythonEngine: checked.engine, pythonParakeet: checked.parakeet });
       settingsChanged('python');
     }
     return { environment: checked, selected: action === 'select' };
   } finally { environmentBusy = false; }
+}
+
+// Where the assistant's read-only search found Python (Setup's "Ask Claude to look for it"): kept in this app's local
+// settings only, shown by the next scan as "Found by the assistant". Selecting one stays the creator's Use this.
+export const pythonSuggestions = () => (Array.isArray(settings().pythonSuggestions) ? settings().pythonSuggestions.filter((x) => typeof x === 'string') : []);
+export function suggestPython(path) {
+  const p = String(path || '').trim();
+  if (!p || !isAbsolute(p)) throw Error('Give the absolute path to a Python executable, environment or project folder.');
+  if (!existsSync(p)) throw Error('That location does not exist.');
+  const list = [p, ...pythonSuggestions().filter((x) => x !== p)].slice(0, 8);
+  saveSettings({ pythonSuggestions: list });
+  return { suggestions: list, next: 'Setup → Python environments shows it on its next scan; the creator presses Use this to select it.' };
 }
 
 export async function runCheck(id) {
@@ -204,20 +216,20 @@ const CHECK = {
   // it never blocks. Needed and missing: an Install that asks the Video Octopus assistant (it asks before each step).
   async python() {
     if (!(await needsLocalPython())) return { state: 'skip', detail: 'Not needed: nothing here runs models on this computer (a cloud agent and cloud transcription). The rough cut, join check and apply_edit ask for Python the first time they need it.' };
-    const py = python(), mlx = await whisperEngine() === 'mlx';
+    const py = python(), eng = await whisperEngine(), mlx = eng === 'mlx', pk = eng === 'parakeet';
     // cv2 (OpenCV 4): Auto-frame finds the face with it on Windows and Linux (tools/face.py); a Mac uses Vision.
-    const code = 'import sys, json, platform\nout = {"py": sys.version.split()[0], "arch": platform.machine()}\nfor m in ("faster_whisper", "numpy", "cv2", "mlx_whisper"):\n    try:\n        out[m] = getattr(__import__(m), "__version__", "ok")\n    except Exception:\n        out[m] = None\nprint(json.dumps(out))';
+    const code = 'import sys, json, platform\nout = {"py": sys.version.split()[0], "arch": platform.machine()}\nfor m in ("faster_whisper", "numpy", "cv2", "mlx_whisper", "parakeet_mlx"):\n    try:\n        out[m] = getattr(__import__(m), "__version__", "ok")\n    except Exception:\n        out[m] = None\nprint(json.dumps(out))';
     const r = await run(py, ['-c', code], 20000);
     let j = null;
     try { j = JSON.parse(r.out.split('\n').pop()); } catch {}
     if (!j) return { state: 'fail', install: true, detail: `Python could not complete its check (${tilde(py)}). It may be unavailable or a library import may have failed.`,
-      fix: `Setup check "Python" failed: Video Octopus can't run Python (it tried ${py}). Transcription on this computer (faster-whisper${mlx ? ' or MLX Whisper' : ''}) and the rough cut and join check skills (numpy) need Python 3.10 or newer. Set it up on this computer (a venv in the studio folder at .venv is what Video Octopus looks for first${IS_WIN ? '; on Windows, winget install Python.Python.3.12' : ''}), then install the studio's requirements.txt into it. Tell me your plan first and ask before installing anything.` };
+      fix: `Setup check "Python" failed: Video Octopus can't run Python (it tried ${py}). Transcription on this computer (faster-whisper${mlx ? ' or MLX Whisper' : ''}) and the rough cut and join check skills (numpy) need Python 3.10 or newer. First look for an environment this computer already has: Setup → Check my computer → Python environments finds project and app environments (a project's .venv, or another app's such as OpenToolkit's) and offers Use this on the best match. Only if none fits, set it up on this computer (a venv in the studio folder at .venv is what Video Octopus looks for first${IS_WIN ? '; on Windows, winget install Python.Python.3.12' : ''}), then install the studio's requirements.txt into it. Tell me your plan first and ask before installing anything.` };
     // Too old: Fix asks the assistant to set up a newer one (the row's Fix, as the page promises), or pick one that is.
     if (Number(j.py.split('.')[0]) !== 3 || Number(j.py.split('.')[1]) < 10) return { state: 'warn', install: true, detail: `Python ${j.py} found at ${tilde(py)}. Choose Python 3.10 or newer in Python environments, or press Set up libraries.`,
-      fix: `Setup check "Python": ${py} is Python ${j.py}, and Video Octopus needs Python 3.10 or newer for transcription on this computer (faster-whisper${mlx ? ' or MLX Whisper' : ''}) and the rough cut and join check skills (numpy). Set up Python 3.10 or newer for the studio (a venv in the studio folder at .venv is what Video Octopus looks for first${IS_WIN ? '; on Windows, winget install Python.Python.3.12' : IS_MAC ? '; on a Mac, Homebrew\'s python@3.12 is the usual way' : ''}), then install the studio's requirements.txt into it. Tell me your plan first and ask before installing anything.` };
-    const missing = [!mlx && !j.faster_whisper && 'faster-whisper', !j.numpy && 'numpy', mlx && !j.mlx_whisper && 'mlx-whisper'].filter(Boolean);
-    const base = `Python ${j.py}${j.faster_whisper ? ` · faster-whisper ${j.faster_whisper}` : ''}${mlx && j.mlx_whisper ? ` · mlx-whisper ${j.mlx_whisper}` : ''}`;
-    if (mlx && j.arch !== 'arm64') return { state: 'warn', install: true, detail: `${base} · this Python is an Intel build (${j.arch}), which can't run MLX Whisper: transcription falls back to faster-whisper.`,
+      fix: `Setup check "Python": ${py} is Python ${j.py}, and Video Octopus needs Python 3.10 or newer for transcription on this computer (faster-whisper${mlx ? ' or MLX Whisper' : ''}) and the rough cut and join check skills (numpy). First look for an environment this computer already has: Setup → Check my computer → Python environments finds project and app environments (a project's .venv, or another app's such as OpenToolkit's) and offers Use this on the best match. Only if none fits, set up Python 3.10 or newer for the studio (a venv in the studio folder at .venv is what Video Octopus looks for first${IS_WIN ? '; on Windows, winget install Python.Python.3.12' : IS_MAC ? '; on a Mac, Homebrew\'s python@3.12 is the usual way' : ''}), then install the studio's requirements.txt into it. Tell me your plan first and ask before installing anything.` };
+    const missing = [!mlx && !pk && !j.faster_whisper && 'faster-whisper', !j.numpy && 'numpy', mlx && !j.mlx_whisper && 'mlx-whisper', pk && !j.parakeet_mlx && 'parakeet-mlx'].filter(Boolean);
+    const base = `Python ${j.py}${j.faster_whisper ? ` · faster-whisper ${j.faster_whisper}` : ''}${mlx && j.mlx_whisper ? ` · mlx-whisper ${j.mlx_whisper}` : ''}${j.parakeet_mlx ? ` · parakeet-mlx ${j.parakeet_mlx}` : ''}`;
+    if ((mlx || pk) && j.arch !== 'arm64') return { state: 'warn', install: true, detail: `${base} · this Python is an Intel build (${j.arch}), which can't run MLX Whisper: transcription falls back to faster-whisper.`,
       fix: `Setup check "Python": ${py} is an Intel (${j.arch}) Python running under Rosetta, so MLX Whisper can't run on it. Set up a native arm64 Python 3.10+ for the studio's .venv and install requirements.txt into it. Ask me before installing anything.` };
     if (missing.length) return { state: 'warn', install: true, detail: `Python ${j.py} found at ${tilde(py)}, but ${missing.join(' and ')} ${missing.length > 1 ? 'aren\'t' : 'isn\'t'} installed.`,
       fix: `Setup check "Python" failed: Python ${j.py} (${py}) is there but ${missing.join(' and ')} can't be imported. faster-whisper${mlx ? ' and mlx-whisper are' : ' is'} for transcribing on this computer, numpy is for the rough cut and join check skills. Install ${missing.join(' and ')} for that Python (pip; if it says "externally managed", use the studio's .venv; the studio's requirements.txt lists them). Ask me before installing.` };
@@ -234,7 +246,9 @@ const CHECK = {
   async whisper() {
     const t = section('transcribe'), mac = await machineInfo(), rec = mac.whisper;
     // The build: MLX Whisper (Apple Silicon's GPU, mlx-community's models) or faster-whisper (Systran's).
-    const engine = await whisperEngine(), fam = engine === 'mlx' ? 'mlx' : 'whisper';
+    // Parakeet picked: this row stays the Whisper build's (the fallback for a language Parakeet has no model for).
+    const engine = await whisperBuild(), fam = engine === 'mlx' ? 'mlx' : 'whisper', local = await whisperEngine();
+    const pkLine = local === 'parakeet' ? (() => { const pk = parakeetPick(t.language === 'auto' ? null : t.language, whisperModels('parakeet')); return pk.model ? `Parakeet (${pk.model}) transcribes, from Settings → Transcription; Whisper below is the fallback · ` : `Parakeet is picked, but ${pk.wanted || 'no Parakeet model fits this language'}${pk.wanted ? ' isn\'t downloaded' : ''}: Whisper transcribes · `; })() : '';
     const have = whisperModels(engine), src = await sources(fam), dl = downloadState(fam);
     const auto = autoWhisper(t.language === 'auto' ? null : t.language, have);
     // What Download offers: the pick, or for Auto the model it uses, else the recommended one.
@@ -252,8 +266,8 @@ const CHECK = {
     const recLine = `recommended for this computer: ${rec.model} on ${rec.engine === 'mlx' ? 'MLX Whisper' : 'faster-whisper'} (${rec.speed})`;
     if (t.engine === 'cloud') return { state: 'ok', whisper, detail: `Transcription goes to ${PROVIDERS[t.provider]?.label || 'a cloud service'} (Settings → Transcription): no model needed here${have.length ? ` · downloaded: ${have.join(', ')}` : ''}` };
     if (!there) return { state: 'warn', whisper,
-      detail: `${t.model === 'auto' ? `Auto uses the best model already downloaded, and none is yet: ${picked}${size(picked)} is the one recommended for this computer (${rec.speed})` : `${picked}${size(picked)}, your pick, isn't downloaded yet · ${recLine}`}${have.length ? ` · downloaded: ${have.join(', ')}` : ''}.` };
-    return { state: 'ok', whisper, detail: `${t.model === 'auto' ? `Auto: ${picked}, the best downloaded for a verbatim transcript` : `${picked}, your pick`} on ${engine === 'mlx' ? 'MLX Whisper' : 'faster-whisper'} · ${recLine} · in ${tilde(hfHub())}` };
+      detail: `${pkLine}${t.model === 'auto' ? `Auto uses the best model already downloaded, and none is yet: ${picked}${size(picked)} is the one recommended for this computer (${rec.speed})` : `${picked}${size(picked)}, your pick, isn't downloaded yet · ${recLine}`}${have.length ? ` · downloaded: ${have.join(', ')}` : ''}.` };
+    return { state: 'ok', whisper, detail: `${pkLine}${t.model === 'auto' ? `Auto: ${picked}, the best downloaded for a verbatim transcript` : `${picked}, your pick`} on ${engine === 'mlx' ? 'MLX Whisper' : 'faster-whisper'} · ${recLine} · in ${tilde(hfHub())}` };
   },
 
   // Object separation (the object-separation skill, starter/.claude/skills): torch, torchvision, transformers (SAM 2's
@@ -356,13 +370,16 @@ export async function appRoute(req, res, url, { send, body }) {
     if (p === '/api/app/profile') return send(res, 200, post ? saveProfile(b) : profile() || {}), true;
     if (p === '/api/app/setup' && !post) return send(res, 200, { needed: setupNeeded(), studioReady: Boolean(settings().studio && existsSync(settings().studio)), done: section('setup').done, checks: CHECKS.map(([id, title]) => ({ id, title, card: CARD[id] })), formats: formats() }), true;
     if (p === '/api/app/setup' && post) { saveSection('setup', { done: Boolean(b.done) }); return send(res, 200, { done: section('setup').done }), true; }
+    if (p === '/api/app/setup/environments/suggest' && post) return send(res, 200, suggestPython(b.path)), true;
+    if (p === '/api/app/setup/environments/suggestions' && !post) return send(res, 200, { suggestions: pythonSuggestions() }), true;
     if (/^\/api\/app\/setup\/environments\/(scan|verify|select)$/.test(p) && post) return send(res, 200, await environments(p.split('/').pop(), b)), true;
     if (p === '/api/app/setup/check') return send(res, 200, await runCheck(url.searchParams.get('id'))), true;
-    // A model row's download (sam2: object separation, whisper: transcription): its progress, start it (the row's
-    // picked model unless one is named), stop it.
-    const md = /^\/api\/app\/setup\/(sam2|whisper|mlx)(\/download|\/stop)?$/.exec(p);
+    // A model row's download (sam2: object separation, whisper: transcription; parakeet: only a model named, after the
+    // creator's yes): its progress, start it (the row's picked model unless one is named), stop it.
+    const md = /^\/api\/app\/setup\/(sam2|whisper|mlx|parakeet)(\/download|\/stop)?$/.exec(p);
     if (md) {
-      const fam = md[1], have = fam === 'sam2' ? sam2Have() : whisperModels(fam === 'mlx' ? 'mlx' : 'faster-whisper');
+      const fam = md[1], have = fam === 'sam2' ? sam2Have() : whisperModels(fam === 'mlx' ? 'mlx' : fam === 'parakeet' ? 'parakeet' : 'faster-whisper');
+      if (fam === 'parakeet' && md[2] === '/download' && post && !b.size) throw Error('Name the Parakeet model to download.');
       if (!md[2] && !post) return send(res, 200, { ...downloadState(fam), have }), true;
       if (md[2] === '/stop' && post) return send(res, 200, stopDownload(fam)), true;
       if (md[2] === '/download' && post) {

@@ -26,6 +26,8 @@ export const FAMILIES = {
     need: ['config.json', 'model.bin', 'tokenizer.json', 'vocabulary.*'],
     models: Object.fromEntries([
       ['large-v3', 'Systran/faster-whisper-large-v3', ['preprocessor_config.json']],
+      // large-v3-turbo: the transcribe skill's faster-whisper conversion of it (transcribe.py fw_cached).
+      ['large-v3-turbo', 'mobiuslabsgmbh/faster-whisper-large-v3-turbo', ['preprocessor_config.json']],
       ['distil-large-v3', 'Systran/faster-distil-whisper-large-v3', ['preprocessor_config.json']],
       ['medium', 'Systran/faster-whisper-medium'], ['medium.en', 'Systran/faster-whisper-medium.en'],
       ['small', 'Systran/faster-whisper-small'], ['small.en', 'Systran/faster-whisper-small.en'],
@@ -37,9 +39,18 @@ export const FAMILIES = {
   // snapshot_download, which wants every file in it, so all of them come down (a config, the weights, two small texts).
   mlx: {
     label: 'MLX Whisper', files: ['*'], need: ['config.json', 'weights.*'],
-    models: Object.fromEntries([['large-v3', 'mlx-community/whisper-large-v3-mlx'], ['distil-large-v3', 'mlx-community/distil-whisper-large-v3'],
+    models: Object.fromEntries([['large-v3', 'mlx-community/whisper-large-v3-mlx'], ['large-v3-turbo', 'mlx-community/whisper-large-v3-turbo'], ['distil-large-v3', 'mlx-community/distil-whisper-large-v3'],
       ...['medium', 'medium.en', 'small', 'small.en', 'base', 'base.en', 'tiny', 'tiny.en'].map((id) => [id, `mlx-community/whisper-${id}-mlx`])]
       .map(([id, repo]) => [id, { repo, also: [] }])),
+  },
+  // Parakeet (parakeet-mlx, Apple Silicon): mlx-community's conversions of NVIDIA's Parakeet TDT. from_pretrained reads
+  // config.json and model.safetensors. v2 is English only; v3 adds 24 more European languages.
+  parakeet: {
+    label: 'Parakeet', files: ['config.json', 'model.safetensors'], need: ['config.json', 'model.safetensors'],
+    models: {
+      'parakeet-tdt-0.6b-v2': { repo: 'mlx-community/parakeet-tdt-0.6b-v2', also: [] },
+      'parakeet-tdt-0.6b-v3': { repo: 'mlx-community/parakeet-tdt-0.6b-v3', also: [] },
+    },
   },
   sam2: {
     label: 'SAM 2.1', files: ['config.json', 'preprocessor_config.json', 'processor_config.json', 'video_preprocessor_config.json', 'model.safetensors'],
