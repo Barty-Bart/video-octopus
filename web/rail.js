@@ -24,6 +24,7 @@
 //   help (once, saved in settings as help.stepsIntro; the ? next to the stages opens it again).
 import { $, h, esc, api, toast } from './ui.js';
 import { stagesOf, stageSlug, STAGE_PANE, PANE_WORDS } from './stages.js';
+import { pending, onAttention } from './attention.js';
 
 const ICON = {
   tick: '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 6.2l2.4 2.4 4.6-5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>',
@@ -638,7 +639,7 @@ export function makeRail({ root, id, getP, hooks }) {
     }
     render();
   }
-  function render() { renderBar(); renderDock(); fillPop(); fillMenu(); }
+  function render() { renderBar(); renderDock(); fillPop(); fillMenu(); paintEmpties(); }
 
   // ---------- Show me ----------
   // The thing a step makes, on its tab: an element, or a lane of the canvas timeline (labels + lanes on one row).
@@ -731,25 +732,54 @@ export function makeRail({ root, id, getP, hooks }) {
       const doneLead = path.findIndex((s) => !s.done);
       if (path.length > 5 && doneLead > 1) path = [{ more: doneLead - 1 }, ...path.slice(doneLead - 1)];
     }
-    // Each chip keeps its arrow, so a wrapped row never starts with one.
-    const chips = path.map((s, k) => {
-      const arrow = k < path.length - 1 ? '<i class="ep-ar" aria-hidden="true">→</i>' : '';
-      if (s.more) return `<span class="ep-w"><span class="ep done">${ICON.tick}${s.more} done</span>${arrow}</span>`;
-      const c = s.done ? 'done' : s === cur ? 'next' : 'todo';
-      return `<span class="ep-w"><span class="ep ${c}">${c === 'done' ? ICON.tick : '<i aria-hidden="true"></i>'}${esc(s.name)}<span class="vh">${c === 'done' ? ' (done)' : c === 'next' ? ' (next)' : ''}</span></span>${arrow}</span>`;
-    }).join('');
-    const own = cur && cur === fill && opts.run;
     const node = h(`<div class="rail-empty ${kind}">
       <div class="em-art ${kind}" aria-hidden="true"><i></i><i></i><i></i></div>
       <h3>${title}</h3>
       <p>${text}</p>
       ${why ? `<p class="sub em-why">${esc(why)}</p>` : ''}
-      ${chips ? `<div class="em-path" aria-label="The way there">${chips}</div>` : ''}
-      <div class="em-acts">${cur ? `<button type="button" class="nc-run" data-a="em-run">${ICON.play}${esc(own ? cur.name : `Next: ${cur.name}`)}</button>` : ''}<button type="button" class="nc-link" data-a="em-help">How the steps work</button></div></div>`);
-    $('[data-a=em-run]', node)?.addEventListener('click', () => (own ? (dismissDone(), opts.run()) : run(cur)));
-    $('[data-a=em-help]', node).onclick = () => openHelp(true);
+      ${path.length ? '<div class="em-path" aria-label="The way there"></div>' : ''}
+      <div class="em-acts"></div></div>`);
+    node.__em = { fill, path, run: opts.run };
+    paintEmpty(node);
+    empties.add(node);
     return node;
   }
+  // The way there and the button follow what Claude is doing (every render, and when a request starts or stops
+  // waiting): while the step is running, the empty state says so ("Clean up is running · waiting for you in the chat")
+  // instead of offering to start it again.
+  const empties = new Set();
+  const waitingHere = () => pending([id, `${id}.packaging`]);
+  function paintEmpties() {
+    for (const n of empties) { if (!n.isConnected) { if (n.__shown) empties.delete(n); continue; } n.__shown = true; paintEmpty(n); }
+  }
+  function paintEmpty(node) {
+    const { fill, path, run: runOwn } = node.__em;
+    if (!pl()) return;
+    const cur = current(), rs = running(), asks = rs ? waitingHere() : [];
+    const sig = JSON.stringify([path.map((s) => s.more || [s.id, stepOf(s.id)?.done]), cur?.id, rs?.id, asks.length]);
+    if (node.__sig === sig) return;
+    node.__sig = sig;
+    // Each chip keeps its arrow, so a wrapped row never starts with one.
+    const chips = path.map((s, k) => {
+      const arrow = k < path.length - 1 ? '<i class="ep-ar" aria-hidden="true">→</i>' : '';
+      if (s.more) return `<span class="ep-w"><span class="ep done">${ICON.tick}${s.more} done</span>${arrow}</span>`;
+      const st = stepOf(s.id) || s;
+      const c = st.done ? 'done' : rs && st.id === rs.id ? 'run' : st.id === cur?.id ? 'next' : 'todo';
+      return `<span class="ep-w"><span class="ep ${c}">${c === 'done' ? ICON.tick : c === 'run' ? '<span class="spin" aria-hidden="true"></span>' : '<i aria-hidden="true"></i>'}${esc(st.name)}<span class="vh">${{ done: ' (done)', next: ' (next)', run: ' (running)' }[c] || ''}</span></span>${arrow}</span>`;
+    }).join('');
+    const pathBox = node.querySelector('.em-path');
+    if (pathBox) pathBox.innerHTML = chips;
+    const own = cur && fill && cur.id === fill.id && runOwn;
+    const acts = node.querySelector('.em-acts');
+    acts.innerHTML = rs
+      ? `<p class="em-run" role="status"><span class="spin" aria-hidden="true"></span><span><b>${esc(rs.name)}</b> is running${asks.length ? ' · waiting for you in the chat' : ''}</span></p>${asks.length ? '<button type="button" class="nc-run" data-a="em-answer">Answer in the chat</button>' : ''}`
+      : cur ? `<button type="button" class="nc-run" data-a="em-run">${ICON.play}${esc(own ? cur.name : `Next: ${cur.name}`)}</button>` : '';
+    acts.append(h('<button type="button" class="nc-link" data-a="em-help">How the steps work</button>'));
+    $('[data-a=em-run]', acts)?.addEventListener('click', () => (own ? (dismissDone(), runOwn()) : run(cur)));
+    $('[data-a=em-answer]', acts)?.addEventListener('click', () => waitingHere()[0]?.focus?.());
+    $('[data-a=em-help]', acts).onclick = () => openHelp(true);
+  }
+  const unlistenWait = onAttention(() => paintEmpties());
 
   // ---------- first-time help ----------
   function maybeHelp() {
@@ -811,7 +841,7 @@ export function makeRail({ root, id, getP, hooks }) {
   return {
     bar, dock, update, render, fit, show, empty, marker, maybeHelp, openHelp, dismissDone, closePop,
     destroy: () => {
-      closePop(); closeMenu(); clearTimeout(longPress); overlay?.stop(); removeEventListener('resize', onResize); unlistenSheet(); dockRO?.disconnect(); clearTimeout(greenTimer); clearInterval(ticker);
+      closePop(); closeMenu(); clearTimeout(longPress); overlay?.stop(); removeEventListener('resize', onResize); unlistenSheet(); dockRO?.disconnect(); clearTimeout(greenTimer); clearInterval(ticker); unlistenWait(); empties.clear();
       if (helpOpen) { const m = $('#modal'); m.hidden = true; m.replaceChildren(); helpOpen = false; }
     },
   };
