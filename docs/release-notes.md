@@ -1,10 +1,12 @@
-# Unreleased
+# v0.1.0-beta.22
 
 - **Dropped files are in Recordings.** A video file you drop or import into a video now shows in **Recordings** next to your takes, marked **Imported**, named after the original file ("Screen Recording 2026-10-24 at 10.02.11.mov") and with the video it's in. It is listed where it already is, in that video's `source/` folder: nothing is copied a second time. Files imported before this update show up too, by their original name when the video's WORKLOG says it, else by the file's name. **Open video** goes to the video.
 - **Deleting an imported file works like a take.** **Delete** in Recordings, and **Delete recording** in the editor's Media section, ask the same question. **Remove from this video** keeps the file: it moves to the recordings folder, so it stays in Recordings and you can use it again (Undo puts it back in the video). **Delete recording** takes it out of the video and out of Recordings and moves it to your computer's Bin (the studio's trash when there is no Bin), with Undo. Both are refused while Claude or an export is using the video's files.
 - **Start a video from an imported file.** Once a file is back in Recordings on its own, **Start a video from it** moves the file into the new video instead of copying it, so it is never in two places.
 - **The way back to Projects is always there.** In the editor, the top bar's logo now reads **‹ Projects** and takes you to the Projects page (it was the logo alone since beta.19). The bar itself can no longer go missing: when a page failed to load (Settings while the app restarted, for example), it left its page classes behind and the next video you opened had no top bar at all, so no logo, name, style picker, stage bar or way home. Every page now starts clean, and the editor's bar shows whatever page came before.
 - **No sideways scroll in the editor on a phone.** The stage bar folds into its one-button form by the same 760 px breakpoint as the layout, so an overflowing page can no longer keep it wide.
+
+Verified with 481 unit tests on Node 24.22.1 and 22.22.1, the format-skill and learning runtimes, and disposable browser runs with fake agents and a fake Bin (Recordings with imported files at 1440 and 375, both delete answers, Undo, Start a video from a removed file; the editor after a failed Settings load at 2000, 1440 and 375). The phone stage-bar fold is unit-tested only. This is a source update on main; the downloadable tagged prerelease remains separate.
 
 # v0.1.0-beta.21
 
