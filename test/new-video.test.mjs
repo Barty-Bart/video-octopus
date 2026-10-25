@@ -112,7 +112,8 @@ export async function removeKey() { throw new Error('Fixture does not remove cre
   const settings = () => JSON.parse(readFileSync(join(local, 'settings.json'), 'utf8'));
   const db = (fn) => { const d = new DatabaseSync(join(studio, '.studio/studio.sqlite')); d.exec('PRAGMA busy_timeout=5000'); try { return fn(d); } finally { d.close(); } };
   const until = async (check, what) => {
-    for (let i = 0; i < 100; i++) { const v = await check(); if (v) return v; await sleep(50); }
+    // 5 s, 20 s on Windows: starting a fake agent there can take longer than the reply itself.
+    for (let i = 0; i < (process.platform === 'win32' ? 400 : 100); i++) { const v = await check(); if (v) return v; await sleep(50); }
     throw new Error(`Timed out: ${what}\n${logs.slice(-1500)}`);
   };
   return { root, studio, local, url, req, ok, wire, meta, settings, db, until };
