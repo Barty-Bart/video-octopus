@@ -404,7 +404,8 @@ a.btn { text-decoration: none; }
 .toggle input:focus-visible + .sw { outline: 2px solid var(--focus, var(--sel)); outline-offset: 2px; }
 
 /* ---------- home: sidebar · projects · recordings ---------- */
-body.in-home .bar { display: none; }
+/* The shell pages have their own rail; the editor (in-project) always keeps this bar, whatever class is left over. */
+body.in-home:not(.in-project) .bar { display: none; }
 body.in-home main { height: 100%; }
 .home { display: grid; grid-template-columns: 220px minmax(0, 1fr) 320px; height: 100%; }
 .home:not(:has(.home-rec)) { grid-template-columns: 220px minmax(0, 1fr); }
@@ -2539,7 +2540,6 @@ iframe.cut.studio { margin: 0; width: 100%; border: 0; border-radius: 0; backgro
 /* 760 px and below: the project's bar is one row of where you are (logo, the name, the one stage button, ?, ⋯) with
    Record, Export and the rest on the row under it. */
 @media (max-width: 760px) {
-  body.in-project .bar .brand { font-size: 0; gap: 0; }
   body.in-project .bar .crumbs { flex: 1 1 0; flex-wrap: nowrap; min-width: 0; max-width: none; gap: 8px; overflow: hidden; }
   body.in-project .bar .crumbs .pt { flex: 0 1 auto; min-width: 0; }
   body.in-project .bar .crumbs .sp { min-width: 0; flex: none; }
@@ -2558,8 +2558,15 @@ iframe.cut.studio { margin: 0; width: 100%; border: 0; border-radius: 0; backgro
    picker's "· kit" is in its tooltip and its list), and
    the plan-usage meter as two small bars (its name and tooltip have the numbers; at 1180 px and below it is hidden,
    as before, and Settings › Agent shows it). The theme switch is in the ⋯ menu (app.js). */
-body.in-project .bar .brand { font-size: 0; gap: 0; }
-body.in-project .bar .crumbs > span:first-child { display: none; }
+body.in-project .bar .brand-t, body.in-project .bar .crumbs > span:first-child { display: none; }
+/* The way back: the logo and "‹ Projects", one link to the Projects page (its hover says so too). */
+.brand-home { display: none; }
+body.in-project .bar .brand { gap: 8px; height: 34px; margin-left: -6px; padding: 0 10px 0 6px; border-radius: var(--ctl-radius); font-size: 13px; font-weight: 500; color: var(--text-2); }
+body.in-project .bar .brand:hover { background: var(--panel-3); color: var(--text); }
+body.in-project .bar .brand-home { display: inline-flex; align-items: center; gap: 3px; }
+.brand-home svg { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+/* The editor fills the window under its bar (the page never scrolls above 980 px), also after a shell page. */
+@media (min-width: 981px) { body.in-project main { height: calc(100% - 56px); } }
 body.in-project .bar { gap: 12px; }
 body.in-project .bar .pt { max-width: 184px; }
 body.in-project .bar .sp-btn { max-width: 180px; }

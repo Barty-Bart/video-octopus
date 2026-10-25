@@ -14,7 +14,7 @@ import { makeUndo, tokens, lookKey as appearanceKey } from './tlcore.js';
 import { makeScenes, cutMap } from './scenes.js';
 import { makeCompare, previousOf, versionName } from './compare.js';
 import { appPage } from './settings.js';
-import { makeRouter, legacyRoute, parseRoute, routeNeedsLookup } from './nav.js';
+import { makeRouter, legacyRoute, parseRoute, routeNeedsLookup, PAGE_CLASSES } from './nav.js';
 import { TERMS } from './terms.js';
 import { renderProjects, setTypeNames } from './projects-home.js';
 import { makeStartScreen } from './start-screen.js';
@@ -175,7 +175,7 @@ const router = makeRouter(async (nav) => {
   const proj = parseProjectHash(location.hash);
   if (proj) return openProject(proj.id);
   return home(parseRoute(location.hash), nav);
-});
+}, { reset: () => document.body.classList.remove(...PAGE_CLASSES) }); // no page class outlives its page, even a failed one
 // The open project's page: an address change that only moves between its stages (#/p/<id>?stage=…) switches the stage
 // in place, so nothing on the page (the chat, a running step, an upload) starts again.
 let projectPage = null;
@@ -414,6 +414,8 @@ async function openProject(id) {
   await loadStatus();
   let P = await api(`/api/projects/${encodeURIComponent(id)}`);
   clearBar(); // nothing of another project's bar stays (its stages, its actions)
+  // The editor is never a shell page: its top bar (and the way back to Projects) shows whatever came before.
+  document.body.classList.remove('in-home', 'in-app-page');
   document.body.classList.add('in-project');
   // The bar's left side (design V2 §6–7): the name (click to rename), a line under it, and the style picker.
   const crumbs = $('#crumbs');

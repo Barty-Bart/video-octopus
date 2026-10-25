@@ -1,3 +1,7 @@
+# Unreleased
+
+- **The way back to Projects is always there.** In the editor, the top bar's logo now reads **‹ Projects** and takes you to the Projects page (it was the logo alone since beta.19). The bar itself can no longer go missing: when a page failed to load (Settings while the app restarted, for example), it left its page classes behind and the next video you opened had no top bar at all, so no logo, name, style picker, stage bar or way home. Every page now starts clean, and the editor's bar shows whatever page came before.
+
 # v0.1.0-beta.21
 
 - **One next step.** The dock above the message box is the only place that says what's next, and everything else agrees with it. Projects names the dock's step (a finished video with only an optional step left says "Done · Next: Package (optional)"). The Cut panel's **Save and lock the cut** is the big button only while Lock is the next step; before that it says the dock's step comes first, and it no longer promises that planning the scenes comes next. The Blocks band offers **Split into sections** only while that is the next step. A new video's chat offers **Outline a script** and **Give me 5 hooks** while Record is next ("Before you record…").
