@@ -102,12 +102,11 @@ function profileCard(p, open) {
   return el;
 }
 
-// The profiles row on Projects. host: an element; ctx: { profiles, open(id), changed() }.
-export function profileCards(host, { profiles, open, changed }) {
+// The profiles row on Projects: one card each. Profiles come from finished videos (Save as a profile), so there's no
+// New profile here; Resources keeps one. host: an element; ctx: { profiles, open(id) }.
+export function profileCards(host, { profiles, open }) {
   const row = h('<div class="pf-row"></div>');
-  const add = h(`<button type="button" class="pf-card pf-add">${icon('plus', 16)}<b>New profile</b><span class="sub">One for each kind of video you make: its own look, files and lessons.</span></button>`);
-  add.onclick = async () => { const p = await newProfile(); if (p) { toast(`${p.name} is ready.`); changed(); } };
-  row.append(...profiles.map((p) => profileCard(p, open)), add);
+  row.append(...profiles.map((p) => profileCard(p, open)));
   host.replaceChildren(row);
 }
 
@@ -147,10 +146,9 @@ export function renderProfilesPage(main, { slug = null, projects = [] } = {}) {
 
   function paintEmpty() {
     up.hidden = true;
-    body.replaceChildren(h(`<div class="res-empty rp-first"><b>Make your first profile</b>
-      <span class="sub">A profile is one kind of video you make: your main channel, your shorts, a podcast. It keeps its own look and files, and ${esc(agent())} learns how you like it.</span>
-      <button type="button" class="btn primary">${icon('plus', 14)}New profile</button></div>`));
-    $('button', body).onclick = async () => { const p = await newProfile(); if (p) location.hash = `#/profile/${encodeURIComponent(p.slug)}`; };
+    body.replaceChildren(h(`<div class="res-empty rp-first"><b>No profiles yet</b>
+      <span class="sub">Make a video the usual way. When it’s done, press <b>Save as a profile</b> (or tell ${esc(agent())} “make this repeatable”): its look, files, how you made it and your corrections land here, and the next one like it starts from Projects in one click.</span>
+      <a class="btn" href="#/?new">${icon('plus', 14)}New video</a></div>`));
   }
 
   function paint() {

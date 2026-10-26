@@ -30,7 +30,8 @@ import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { pipeline } from 'node:stream/promises';
 import { Transform } from 'node:stream';
-import { settings, readJSON, writeJSON, studioTool, h264 } from './util.mjs';
+import { copyFileSync, constants as fsConstants } from 'node:fs';
+import { settings, readJSON, writeJSON, studioTool, h264, inside } from './util.mjs';
 import { listProjects, projectDir, projectMeta, saveProjectMeta, appendWorklog, roles, probe } from './studio.mjs';
 import { createConfiguredProject, simpleVideoChoice } from './profiles.mjs';
 import { UNTITLED } from './naming.mjs';
@@ -312,6 +313,45 @@ export function harvestLearnings(id) {
   return fresh.map((l) => ({ ...l, profile: p.name }));
 }
 
+// ---- a profile from a finished video ----
+// "Make this repeatable": Claude writes work/profile-draft.json from how this video was made, and when its reply ends
+// Video Octopus makes the profile from it (draftContext tells Claude the shape): its kind, look, a few lines on how
+// these videos are made, the lessons from the creator's corrections, and the project files worth keeping (copied into
+// the profile's resources/). The video then belongs to the new profile; the draft is renamed so it's used once.
+//   { "name": "Main channel", "kind": "youtube-face" | "youtube-voice" | "shorts-batch" | "shorts-voice",
+//     "look": { "colors": ["#hex"], "font": "", "voice": "" }, "instructions": "…", "lessons": ["…"], "files": ["source/logo.png"] }
+const DRAFT = 'profile-draft.json';
+export const draftContext = () => [
+  `Repeatable profiles: when the creator asks to make this video repeatable, save it as a profile or template, or "do the next one like this", write work/${DRAFT} in this project: {"name": "a short name for this kind of video", "kind": "youtube-face" (YouTube, talking head, talking points) | "youtube-voice" (YouTube, voiceover, full script) | "shorts-batch" (several shorts recorded in one take) | "shorts-voice" (vertical voiceover, full script), "look": {"colors": ["#rrggbb", the lead colour first], "font": "", "voice": "how the words sound"}, "instructions": "a few plain lines on how these videos are made: who they're for, the length, the structure, the style of the edit", "lessons": ["each correction or preference the creator gave you in this video, as one short rule"], "files": ["paths inside this project worth reusing next time: logo, fonts, photos of the creator, music, a background"]}. Take all of it from what actually happened in this video, never invent. Video Octopus makes the profile when your reply ends and tells the creator; the next video of this kind starts from it on Projects.`,
+];
+
+export function profileFromDraft(id) {
+  const dir = projectDir(id);
+  if (!dir) return null;
+  const file = join(dir, 'work', DRAFT);
+  if (!existsSync(file)) return null;
+  const d = readJSON(file, null);
+  renameSync(file, join(dir, 'work', `profile-draft.${Date.now()}.used.json`)); // once, whatever happens next
+  if (!d || typeof d !== 'object') throw Object.assign(new Error('The profile draft wasn’t readable.'), { status: 400 });
+  const preset = PRESETS[d.kind] ? d.kind : 'youtube-face';
+  const p = createProfile({ name: String(d.name || projectMeta(dir)?.name || 'My videos'), preset });
+  updateProfile(p.slug, { look: d.look || {}, instructions: typeof d.instructions === 'string' ? d.instructions : '' });
+  for (const l of (Array.isArray(d.lessons) ? d.lessons : []).slice(0, 40)) { try { editLessons(p.slug, { add: String(l) }); } catch {} }
+  const res = join(p.path, 'resources');
+  let copied = 0;
+  for (const rel of (Array.isArray(d.files) ? d.files : []).slice(0, 60)) {
+    const from = inside(dir, String(rel || ''));
+    if (!from || !isFile(from) || /(^|[\\/])\./.test(String(rel))) continue;
+    const name = cleanFileName(from);
+    if (!name) continue;
+    copyFileSync(from, join(res, freeIn(res, name)), fsConstants.COPYFILE_FICLONE);
+    copied++;
+  }
+  saveProjectMeta(dir, { simpleProfile: p.slug });
+  appendWorklog(dir, `Saved as the profile ${p.name} (${copied} file${copied === 1 ? '' : 's'})`);
+  return { ...getProfile(p.slug), copied };
+}
+
 // ---- splitting a batch ----
 function ffmpeg(args) {
   return new Promise((resolve, reject) => {
@@ -362,7 +402,7 @@ export async function splitBatch(id) {
 export function splitState(id) {
   const dir = projectDir(id);
   const meta = (dir && projectMeta(dir)) || {};
-  if (!meta.batch) return null;
+  if (!meta.batch) return { profile: meta.simpleProfile || null };
   const plan = readJSON(join(dir, 'work', 'batch-split.json'), null);
   return { take: Boolean(roles(dir).main), ready: Boolean(plan?.videos?.length), count: plan?.videos?.length || 0, split: Array.isArray(meta.split) ? meta.split : [] };
 }
@@ -382,7 +422,7 @@ export async function simpleProfilesRoute(req, res, url, { send, body, started }
   try {
     if (req.method === 'GET') {
       if (!parts.length) return reply({ profiles: listProfiles() });
-      if (parts[0] === 'split-state' && parts[1]) return reply(splitState(parts[1]) || {});
+      if (parts[0] === 'split-state' && parts[1]) return reply(splitState(parts[1]));
       if (parts[1] === 'file' && parts[2]) { serveFile(res, filePath(parts[0], parts[2])); return true; }
       if (parts.length === 1) return reply(getProfile(parts[0]));
       return reply({ error: 'Not found.' }, 404);

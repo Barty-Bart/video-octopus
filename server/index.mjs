@@ -48,7 +48,7 @@ import { mediaRoute, importedRecordings } from './media.mjs';
 import { playSource, playbackView, playbackMode, PLAYBACK_MODES, copiesSummary, deleteCopies, allCopies, deleteAllCopies } from './playback.mjs';
 import { trashRoute, binEntry } from './trash.mjs';
 import { simpleResourcesRoute, resourcesForNewVideo } from './simple-resources.mjs';
-import { simpleProfilesRoute, profileContext, harvestLearnings } from './simple-profiles.mjs';
+import { simpleProfilesRoute, profileContext, harvestLearnings, draftContext, profileFromDraft } from './simple-profiles.mjs';
 import { makeBed } from './simple-music.mjs';
 import { agentChoice, setAgentChoice, choiceView, codexModels } from './agent-choices.mjs';
 import { ccSource } from './claude-source.mjs';
@@ -127,6 +127,10 @@ function chatFor(id) {
     // A profile's video: lessons Claude saved this reply go into the profile's LEARNINGS.md, with one line in the chat.
     chat.listeners.add((ev) => {
       if (ev.t !== 'busy' || ev.busy || ev.replay) return;
+      try {
+        const made = profileFromDraft(id);
+        if (made) logEvent(id, { t: 'note', text: `Saved as the profile “${made.name}”: ${made.lessons.length} lesson${made.lessons.length === 1 ? '' : 's'}, ${made.copied} file${made.copied === 1 ? '' : 's'}. The next one starts from it on Projects.` });
+      } catch (e) { logEvent(id, { t: 'note', text: `The profile wasn’t saved: ${e.message}` }); }
       try { for (const l of harvestLearnings(id)) logEvent(id, { t: 'note', text: `Learned for ${l.profile}: ${l.text}` }); }
       catch (e) { console.error(`Learnings for ${id}:`, e.message); }
     });
@@ -212,6 +216,7 @@ function projectContext(id) {
     ...(dir ? kitContext(dir, meta) : []),
     ...learningProjectContext({...meta, learning: projectLearning(id,meta)}),
     ...profileContext(meta),
+    ...(meta.simpleProfile ? [] : draftContext()),
     blocksContext(),
     shotsContext(),
     `Everything in this project's window is a file you can change, and the window follows within a second: the layout and frame (project.json layout), the blocks (work/blocks.json), sound cues (work/sfx.json), notes and Look changes (work/notes.json), keyframes and moves (work/overrides.json), the post kit (work/post.json). So when the creator asks for a change anywhere in the window, make it in the file rather than describing where to click. Read the file first and change only the keys you mean to (keep the rest exactly). Changes you make yourself don't go into the change package; the creator's do. Your changes (in a reply or a step) apply directly: the creator sees them in the chat and can undo your last reply or step there.`,

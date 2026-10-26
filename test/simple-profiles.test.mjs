@@ -69,6 +69,11 @@ async function fakeClaude() {
         sources: [{ url: 'https://example.com/', note: 'Synthetic fixture page: no network.' }], assets: [],
       }));
     }
+    if (text.includes('PROFILE-FIXTURE')) {
+      mkdirSync(join(process.cwd(), 'work'), { recursive: true });
+      writeFileSync(join(process.cwd(), 'work', 'profile-draft.json'), JSON.stringify({ name: 'Tool reviews', kind: 'youtube-voice', look: { colors: ['#2563eb'], font: 'Inter', voice: 'Calm' },
+        instructions: 'Ten minutes, voiceover over screen recordings.', lessons: ['Cut every pause over half a second', 'Show the price on screen'], files: ['source/logo.png', '../../outside.txt', 'source/.hidden'] }));
+    }
     if (text.includes('LEARN-FIXTURE')) {
       mkdirSync(join(process.cwd(), 'work'), { recursive: true });
       writeFileSync(join(process.cwd(), 'work', 'learnings.json'), JSON.stringify({ lessons: [{ text: 'Open with the result, not the setup.', stage: 'script' }] }));
@@ -245,4 +250,27 @@ test('server: a batch takes references, then splits one take into one video per 
   assert.match(readFileSync(join(s.project(videos[0]), 'script.md'), 'utf8'), /Tool one/);
   assert.deepEqual(s.meta(id).split, videos);
   assert.equal((await s.req(`/api/simple-profiles/split/${id}`, {})).status, 400, 'a batch splits once');
+});
+
+test('server: a finished video becomes a profile when Claude writes its draft', async (t) => {
+  const s = await startServer(t);
+  const { id } = await s.ok('/api/projects', { untitled: true, shape: 'youtube' });
+  write(join(s.project(id), 'source', 'logo.png'), 'fixture logo');
+  write(join(s.project(id), 'source', '.hidden'), 'never copied');
+  write(join(s.root, 'outside.txt'), 'never copied');
+  assert.deepEqual(await s.ok(`/api/simple-profiles/split-state/${id}`), { profile: null });
+  await s.ok(`/api/projects/${id}/chat`, { text: 'PROFILE-FIXTURE make this repeatable' });
+  const launch = await s.until(() => s.agentLog().find((e) => e.kind === 'launch'), 'the chat');
+  assert.match(launch.prompt, /profile-draft\.json/, 'Claude is told how to make a profile');
+  const p = await s.until(async () => (await s.ok('/api/simple-profiles')).profiles.find((x) => x.slug === 'tool-reviews'), 'the new profile');
+  const full = await s.ok('/api/simple-profiles/tool-reviews');
+  assert.deepEqual([full.workflow, full.shape, full.script], ['topic', 'youtube', 'full']);
+  assert.deepEqual(full.look, { colors: ['#2563eb'], font: 'Inter', voice: 'Calm' });
+  assert.match(full.instructions, /Ten minutes/);
+  assert.deepEqual(full.lessons.map((l) => l.text), ['Cut every pause over half a second', 'Show the price on screen']);
+  assert.deepEqual(full.fileList.map((f) => f.name), ['logo.png'], 'only files inside the project, no dot files');
+  assert.equal(s.meta(id).simpleProfile, 'tool-reviews');
+  assert.ok(!existsSync(join(s.project(id), 'work', 'profile-draft.json')), 'the draft is used once');
+  assert.equal(p.videos, 1);
+  assert.deepEqual(await s.ok(`/api/simple-profiles/split-state/${id}`), { profile: 'tool-reviews' });
 });

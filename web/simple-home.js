@@ -96,7 +96,7 @@ export function renderSimpleProjects(main, ctx) {
     ${note ? `<p class="pv-note" role="status">${esc(note)} <a href="#/settings/general/editor">Open Settings</a></p>` : ''}
     ${notice}
     <div class="take-banners" id="unsaved"></div>
-    <section class="pf-sec" aria-labelledby="pfH"><h2 class="res-h" id="pfH">Profiles</h2><div id="pfHost"></div></section>
+    <section class="pf-sec" aria-labelledby="pfH" hidden><h2 class="res-h" id="pfH">Start from a profile</h2><div id="pfHost"></div></section>
     <div class="pf-filter" id="pfFilter" role="group" aria-label="Show videos from"></div>
     <div id="grid" class="pv-grid"></div>
   </div>`));
@@ -123,7 +123,7 @@ export function renderSimpleProjects(main, ctx) {
     if (list.length) grid.replaceChildren(...list.map(tile));
     else grid.replaceChildren(h(only
       ? `<div class="empty"><b>No videos from this profile yet</b><span class="sub">Start one from its card above.</span></div>`
-      : `<div class="empty"><b>Make your first video</b><span class="sub">Start one from a profile above, or press + New video and record.</span></div>`));
+      : `<div class="empty"><b>Make your first video</b><span class="sub">Press + New video and record. When it’s done, Save as a profile makes the next one like it a click away.</span></div>`));
     const f = $('#pfFilter', main);
     f.hidden = !profiles.length;
     f.innerHTML = profiles.length ? ['', ...profiles.map((p) => p.slug)].map((k) => {
@@ -135,7 +135,8 @@ export function renderSimpleProjects(main, ctx) {
   const loadProfiles = () => api('/api/simple-profiles').then((r) => {
     profiles = r.profiles || [];
     if (!$('#pfHost', main)) return;
-    profileCards($('#pfHost', main), { profiles, open: (vid) => { location.hash = `#/p/${encodeURIComponent(vid)}`; }, changed: loadProfiles });
+    $('.pf-sec', main).hidden = !profiles.length;
+    profileCards($('#pfHost', main), { profiles, open: (vid) => { location.hash = `#/p/${encodeURIComponent(vid)}`; } });
     paintGrid();
   }).catch(() => {});
   paintGrid();

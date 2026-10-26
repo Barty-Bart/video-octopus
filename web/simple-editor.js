@@ -143,6 +143,8 @@ export function mountSimpleEditor(ctx) {
         ${isAudio(P) && !tgt.files.some((f) => /MP3/.test(f.label)) ? '<button type="button" class="btn" data-a="mp3">Make an MP3 too</button>' : ''}
         ${st.mainThumb ? `<a class="btn" href="/api/packaging/${encodeURIComponent(id)}/item/${encodeURIComponent(st.mainThumb.id)}" download="${esc(`${P.name || id} ${isAudio(P) ? 'cover' : 'thumbnail'}.${st.mainThumb.ext || 'png'}`)}" data-a="dl">${isAudio(P) ? 'Download the cover' : 'Download the thumbnail'}</a>` : ''}</div>`;
       if (c.post === 'offer') extra += `<div class="sx-post"><span>Want a title and description for YouTube too?</span><div class="sx-btns"><button type="button" class="btn" data-a="post">Write them</button><button type="button" class="btn ghost" data-a="no-post">No thanks</button></div></div>`;
+      // A video from no profile yet: make the next one like it start from here (server/simple-profiles.mjs profileFromDraft).
+      if (st.profile === null && !st.profileAsked) extra += `<div class="sx-post"><span>Make more videos like this one?</span><div class="sx-btns"><button type="button" class="btn" data-a="make-profile"${P.busy ? ' disabled' : ''}>Save as a profile</button></div></div>`;
       if (post && st.postDone) extra += `<p class="sx-say">The title and description are written: ask ${esc(who())} to show them, or to change anything.</p>`;
       if (c.post === 'writing') extra += `<p class="sx-say">${esc(who())} is writing the title and description in the chat below.</p>`;
     }
@@ -439,6 +441,11 @@ export function mountSimpleEditor(ctx) {
     if (a === 'mp3') { b.disabled = true; try { await api(`${base}/export-audio`, { format: 'mp3', contents: 'mix' }); st.job = { id: 'export', progress: 0 }; } catch (err) { toast(err.message); } update(); }
     if (a === 'post') { try { await api(`${base}/post-write`, {}); st.posting = true; } catch (err) { toast(err.message); } update(); }
     if (a === 'no-post') { st.postDone = true; update(); }
+    if (a === 'make-profile') {
+      st.profileAsked = true; update();
+      try { await api(`${base}/chat`, { text: 'Make this video repeatable: save it as a profile from how we made it (its look, the files worth reusing, how these videos are made, and every correction I gave you), then tell me its name and what the next one will do on its own.' }); }
+      catch (err) { st.profileAsked = false; update(); toast(err.message); }
+    }
     if (a === 'find-split') {
       try { await api(`${base}/chat`, { text: 'The take is in. Transcribe it, find where each script of script.md starts and ends in the take (the last take of each, without the restarts and the pauses between), and write work/batch-split.json. Then tell me how many videos you found.' }); }
       catch (err) { toast(err.message); }
@@ -650,7 +657,8 @@ export function mountSimpleEditor(ctx) {
   async function loadSplit() {
     const r = await api(`/api/simple-profiles/split-state/${encodeURIComponent(id)}`).catch(() => null);
     const next = r && 'ready' in r ? r : null;
-    if (JSON.stringify(next) !== JSON.stringify(st.split)) { st.split = next; update(); }
+    const profile = r ? r.profile || null : st.profile;
+    if (JSON.stringify(next) !== JSON.stringify(st.split) || profile !== st.profile) { st.split = next; st.profile = profile; update(); }
   }
   st.takes = [];
   loadSplit();
