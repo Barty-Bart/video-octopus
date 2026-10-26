@@ -438,7 +438,9 @@ test('B9: the question at drop time, the route, the step list and the prompt', a
   assert.equal(await askAlreadyEdited('my video', { ask: async () => true, call: async (...a) => { calls.push(a); return { transcribing: true }; }, say: (t) => said.push(t) }), true);
   assert.deepEqual(calls, [['/api/projects/my%20video/already-edited', {}]]);
   assert.match(said.at(-1), /Claude is transcribing it/);
-  assert.match(src('web/app.js'), /toast\(`\$\{file\.name\} is the take\.`\);\n    await askAlreadyEdited\(id\);/);
+  // Advanced asks at drop time; Simple's Record page passes askEdited: false (its rough cut handles an edited file).
+  assert.match(src('web/app.js'), /toast\(`\$\{file\.name\} is the take\.`\);\n    if \(askEdited\) await askAlreadyEdited\(id\);/);
+  assert.match(src('web/app.js'), /async function importTakeFile\(id, file, \{ askEdited = true \} = \{\}\)/);
   const idx = src('server/index.mjs');
   assert.match(idx, /if \(action === '\/already-edited'\)/);
   assert.match(idx, /await startStep\(id, dir, 'transcribe'\)/);
