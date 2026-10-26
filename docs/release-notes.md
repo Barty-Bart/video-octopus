@@ -1,4 +1,4 @@
-# Unreleased
+# v0.1.0-beta.25
 
 - **Record shows what you record.** Simple's Record page is built around a live preview in the video's shape: Camera + screen shows your screen with the camera in your style's corner, Camera the camera, Screen the screen, Audio only a big mic level and the timer. Picking a source changes the preview at once. A screen needs your browser's picker: **Choose what to share…** sits in the preview until you pick one, then it plays live with **Change**. Right under the preview, one row: the source, the camera and mic menus (with a small mic level) and **Record**. The take records the same streams, so there is no second picker.
 - **The script is optional and out of the way.** "Script (optional)" is one line while it's empty; open it to paste or write one, or **Ask Claude to write one**. On a wide window it sits beside the preview; narrower, under the controls. It still fills the window as a teleprompter while you record; with no script you see the live picture instead, with Pause, Stop and the time.
@@ -11,6 +11,8 @@
 - **Clicking the waveform moves the playhead,** on a greyed part too. To bring a cut part back, select it (or put the playhead in it) and press **Restore**, or ⌥-click (Alt-click) it. The hint under the waveform says so.
 - **Calmer chat in Simple.** The chat no longer shows tool rows, "What Video Octopus asked Claude" or answered-permission lines in Simple; permission requests, questions and errors still show. The plan-usage meter in the top bar is Advanced only.
 - **Settings in Simple's words.** The Editor mode line and Settings › Updates no longer mention My styles, skills or skill preferences in Simple. Advanced keeps its own wording.
+
+Verified with 562 unit tests on Node 24.22.1 and 22.22.1, the format-skill and learning runtimes, and disposable fake-agent runs in Simple: Record with the live preview for each source, a YouTube video built whole (6 of 6 scenes) and downloaded at 1080p, a Reel, Media delete and Undo, and Advanced unchanged. Not run: real agents, Windows natively. This is a source update on main; the downloadable tagged prerelease remains separate.
 
 # v0.1.0-beta.24
 
