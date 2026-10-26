@@ -9,7 +9,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { tmpdir } from 'node:os';
+import { tmpdir, homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { spawn, execFileSync } from 'node:child_process';
 import { createServer } from 'node:net';
@@ -235,7 +235,7 @@ export async function removeKey() { throw new Error('Fixture does not remove cre
 }
 
 const PNG = png(4, 3, (x, y) => [x * 60, y * 80, 120]);
-const findFfmpeg = () => { for (const f of [process.env.TEST_FFMPEG, 'ffmpeg', '/Users/bartlomiej/.local/bin/ffmpeg', '/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg'].filter(Boolean)) { try { execFileSync(f, ['-version'], { stdio: 'pipe' }); return f; } catch {} } return null; };
+const findFfmpeg = () => { for (const f of [process.env.TEST_FFMPEG, 'ffmpeg', join(homedir(), '.local/bin/ffmpeg'), '/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg'].filter(Boolean)) { try { execFileSync(f, ['-version'], { stdio: 'pipe' }); return f; } catch {} } return null; };
 const storeFiles = (studio) => { const out = []; const walk = (d) => { if (!existsSync(d)) return; for (const e of readdirSync(d, { withFileTypes: true })) { if (e.isDirectory()) walk(join(d, e.name)); else if (!e.name.startsWith('.')) out.push(join(d, e.name)); } }; walk(join(studio, '.studio', 'files')); return out; };
 
 test('server: Also add to Resources stores a dropped file once; Music makes a bed and places it as a cue', async (t) => {

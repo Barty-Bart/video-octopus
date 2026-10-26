@@ -1,4 +1,4 @@
-# Unreleased
+# v0.1.0-beta.24
 
 - **Simple is the default.** Settings › General has a new **Editor mode: Simple | Advanced**. Simple is on for everyone, existing studios included. Advanced shows the app exactly as before. Switching changes only that setting: no styles, kits, memories, skills, projects or files are deleted or moved, and you can switch back any time.
 - **A shorter sidebar.** In Simple the sidebar has **Projects** and **Resources**, with **Settings** at the foot.
@@ -34,6 +34,8 @@
 - **The step line fits at 1100 px.** Below 1280 px wide, Simple's top bar shows the finished and later steps as dots and names only the current one, instead of cutting off the first and last names.
 - **Set up lands on Object separation.** Opening Setup from "Built without the cutout · Set up" brings that row back into view while the other checks above it finish.
 - **The dock's cutting line fits.** In Advanced, "Cutting you out for scene 2…" gets its own line in the dock instead of being cut off.
+
+Verified with 546 unit tests on Node 24.22.1 and 22.22.1, the format-skill and learning runtimes, and a full disposable walkthrough with fake Claude and fake Codex: YouTube (record with script and teleprompter, pause, delete and undo, record again, waveform edits, rough cut, scenes, build with the cutout fallback, thumbnail, 1080p download), Reel (shape chip, Opt-Cmd-R, 1080×1920 render), Audio only (WAV, MP3, transcript), Resources, and Simple → Advanced → Simple with the studio database byte-identical. Not run: real agents, real Codex images, a real cutout (no SAM 2.1 model on the test Mac), Windows natively. This is a source update on main; the downloadable tagged prerelease remains separate.
 
 # v0.1.0-beta.23
 
