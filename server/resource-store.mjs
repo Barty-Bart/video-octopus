@@ -18,6 +18,9 @@ export const RESOURCE_KINDS = {
   reference: 'Reference thumbnail',
   font: 'Font',
   note: 'Style note',
+  // Simple mode's Resources page (V1 spec §4): a product shot and a video clip of the creator's.
+  product: 'Product',
+  clip: 'Video clip',
 };
 // "Who is in it" (a photo must say): me, someone who agreed, someone else (never sent to an image model), nobody.
 export const LIKENESS = {
@@ -29,9 +32,17 @@ export const LIKENESS = {
 // always: attached to every Generate; ask: listed for the agent; never: kept here only.
 export const USES = ['always', 'ask', 'never'];
 export const MAX_RESOURCE_BYTES = 50 * 1024 * 1024;
+// A video clip (kind clip) may be bigger than a picture: up to 2 GB, like the brand folder's example videos.
+export const MAX_CLIP_BYTES = 2 * 1024 * 1024 * 1024;
+export const maxBytesFor = (kind) => (kind === 'clip' ? MAX_CLIP_BYTES : MAX_RESOURCE_BYTES);
 export const MAX_RESOURCES_PER_SCOPE = 300;
 const IMAGE = /\.(png|jpe?g|webp|gif|svg)$/i;
 const FONT = /\.(ttf|otf|woff2?)$/i;
+const VIDEO = /\.(mp4|mov|m4v|webm)$/i;
+// The files each kind takes, and what to say when a file doesn't fit.
+const FILES_FOR = (kind) => (kind === 'font' ? FONT : kind === 'clip' ? VIDEO : IMAGE);
+const WRONG_FILE = (kind) => (kind === 'font' ? 'Choose a font file (.ttf, .otf, .woff, .woff2).'
+  : kind === 'clip' ? 'Choose a video clip (.mp4, .mov, .m4v or .webm).' : 'Choose an image (.png, .jpg, .webp, .gif or .svg).');
 const SHA = /^[a-f0-9]{64}$/;
 
 const now = () => new Date().toISOString();
@@ -116,13 +127,14 @@ export function addResource(store, { scope, tempPath = null, bytes = null, text 
   } else {
     const fileName = cleanFileName(clean.name);
     const ext = extensionOf(fileName);
-    if (!(clean.kind === 'font' ? FONT : IMAGE).test(ext)) fail(clean.kind === 'font' ? 'Choose a font file (.ttf, .otf, .woff, .woff2).' : 'Choose an image (.png, .jpg, .webp, .gif or .svg).');
+    if (!FILES_FOR(clean.kind).test(ext)) fail(WRONG_FILE(clean.kind));
+    const max = maxBytesFor(clean.kind), tooBig = clean.kind === 'clip' ? 'A clip can be at most 2 GB.' : 'Resources can be at most 50 MB.';
     let stored;
     if (tempPath) {
-      if (lstatSync(tempPath).size > MAX_RESOURCE_BYTES) fail('Resources can be at most 50 MB.');
-      stored = store.files.putFile(tempPath, { ext, maxBytes: MAX_RESOURCE_BYTES });
+      if (lstatSync(tempPath).size > max) fail(tooBig);
+      stored = store.files.putFile(tempPath, { ext, maxBytes: max });
     } else if (bytes) {
-      if (bytes.length > MAX_RESOURCE_BYTES) fail('Resources can be at most 50 MB.');
+      if (bytes.length > max) fail(tooBig);
       stored = store.files.putBuffer(bytes, { ext });
     } else fail('Choose a file.');
     Object.assign(record, { name: fileName, hash: stored.sha256, size: stored.size, ext, mime: mimeOf(fileName) });
@@ -139,6 +151,8 @@ export function updateResource(store, id, { expected, scope, ...fields } = {}) {
     const next = { ...r, ...cleanFields(fields, r), revision: r.revision + 1, updated: now() };
     if (r.kind !== 'note' && next.kind === 'note') fail('A file cannot become a style note.');
     if (r.kind === 'note' && next.kind !== 'note') fail('A style note cannot become a file.');
+    // A file keeps its kind of file: an image stays an image kind, a font a font, a clip a clip.
+    if (r.kind !== 'note' && r.ext && !FILES_FOR(next.kind).test(r.ext)) fail(WRONG_FILE(next.kind));
     if (r.kind === 'note' && fields.text !== undefined) next.text = words(fields.text, 20000, 'The note text') || fail('Write the style note.');
     if (r.kind !== 'note' && fields.name !== undefined) next.name = cleanFileName(next.name);
     if (scope !== undefined && scope !== r.scope) {
