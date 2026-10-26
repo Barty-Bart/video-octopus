@@ -3,6 +3,7 @@
 // work/post.json from the transcript and the project, fact-checked; edits here save as you type.
 import { $, esc, h, api, toast, ago } from './ui.js';
 import { styleSection } from './library.js';
+import { isAdvanced } from './mode.js';
 
 const isShort = (t) => ['short', 'reel'].includes(t);
 const MARK = {
@@ -63,7 +64,8 @@ export function makePostKit({ pane, id, getP, empty }) {
     const P = getP();
     const short = isShort(P.type);
     const p = data?.post;
-    const cards = CARDS.filter((c) => short || !c.short);
+    // Simple mode has no Comment WORD → DM (V1 spec §8; web/mode.js).
+    const cards = CARDS.filter((c) => (short || !c.short) && (c.key !== 'dm' || isAdvanced()));
     const sig = JSON.stringify([short, Boolean(data?.exists), data?.exists ? null : P.pipeline?.current]);
     const writeLabel = data?.exists ? 'Rewrite with Claude' : 'Write it with Claude';
     if (built !== sig) {

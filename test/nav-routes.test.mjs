@@ -174,7 +174,7 @@ test('legacyRoute maps the old Settings sections to the six groups', () => {
 
 test('every Settings section belongs to one of the six groups', () => {
   assert.deepEqual(SETTINGS_GROUPS, ['general', 'agent', 'recording', 'editing', 'export', 'storage']);
-  const sections = ['claude', 'transcribe', 'render', 'recorder', 'editing', 'sound', 'appearance', 'look', 'folders', 'storage', 'playback', 'trash', 'usage', 'updates'];
+  const sections = ['claude', 'transcribe', 'render', 'recorder', 'editing', 'sound', 'appearance', 'look', 'folders', 'storage', 'playback', 'trash', 'usage', 'updates', 'editor'];
   assert.deepEqual(Object.keys(SETTINGS_SECTION_GROUP).sort(), sections.sort());
   for (const group of Object.values(SETTINGS_SECTION_GROUP)) assert.ok(SETTINGS_GROUPS.includes(group), group);
 });

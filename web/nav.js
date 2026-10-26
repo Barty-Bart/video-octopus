@@ -4,6 +4,8 @@
 // that loaded is torn down, even one left during its first load, and a slow page can't draw over the next one.
 // `reset()` runs before every page opens, after the last one's teardown: a page that failed while loading never
 // returned its teardown, so whatever it set up on <body> (its page classes) is undone here instead.
+import { hiddenInSimple } from './simple.js';
+
 export function makeRouter(open, { onError = (e) => console.error(e), reset = () => {} } = {}) {
   let current = null, chain = Promise.resolve(), ctl = null;
   return function navigate() {
@@ -46,7 +48,7 @@ const withQuery = (base, query) => {
 // (#/settings/claude…) land on their group, scrolled to the section.
 export const SETTINGS_GROUPS = ['general', 'agent', 'recording', 'editing', 'export', 'storage'];
 export const SETTINGS_SECTION_GROUP = {
-  appearance: 'general', updates: 'general',
+  editor: 'general', appearance: 'general', updates: 'general',
   claude: 'agent',
   recorder: 'recording', transcribe: 'recording',
   editing: 'editing', sound: 'editing', look: 'editing',
@@ -186,6 +188,16 @@ export function parseRoute(hash) {
     const tab = STYLES_TABS.includes(second) ? second : 'styles';
     return { page: 'styles', tab, query };
   }
-  if (['recordings', 'skills', 'scheduled', 'library'].includes(first)) return { page: first, query };
+  // resources: Simple mode's Resources page (V1 spec §4). Which pages Simple hides: web/simple.js HIDDEN_PAGES.
+  if (['recordings', 'skills', 'scheduled', 'library', 'resources'].includes(first)) return { page: first, query };
   return { page: 'projects', query };
+}
+
+// Simple mode hides some shell pages (web/simple.js HIDDEN_PAGES: Recordings, My styles and kits, Library, Skills,
+// Scheduled). A deep link to one in Simple lands on Projects with one quiet line (ADVANCED_NOTE); the router replaces
+// the address in place. Returns { to: '#/', hidden: <page> } or null (shown as it is). Run it after legacyRoute, so
+// old addresses (#/learning, #/memories, #/settings/brand…) are caught by the page they now open.
+export function simpleRedirect(hash, mode) {
+  const route = parseRoute(hash);
+  return hiddenInSimple(route, mode) ? { to: '#/', hidden: route.page } : null;
 }

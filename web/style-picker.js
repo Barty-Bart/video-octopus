@@ -61,7 +61,7 @@ export function makeStylePicker({ id, getP, formatInfo = {}, onChanged }) {
     const P = getP();
     // After a Build step only styles with the video's own setup can be picked (the server refuses the others).
     const built = Boolean(P.pipeline?.steps?.some((x) => x.stage === 'Build' && x.done));
-    const entries = styleEntries({ profiles: data.profiles, formats: data.formats, versions: data.versions, projects, formatInfo }, { archived: true });
+    const entries = styleEntries({ profiles: data.profiles, formats: data.formats, versions: data.versions, projects, formatInfo }, { archived: true, keep: current().formatId });
     const items = pickerItems(entries, { context: current(), built, type: P.type });
     const row = (it) => {
       if (it.kind === 'new') return '<button type="button" class="sp-new">+ New style from this video</button>';

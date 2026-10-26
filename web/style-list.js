@@ -23,7 +23,10 @@ export const initialOf = (name) => (String(name || '').match(/[\p{L}\p{N}]/u)?.[
 
 // One entry per style, most recently used first (its newest video, else when the style was last changed).
 // data: { profiles, formats, versions, projects, drafts (Map formatId → changes waiting), formatInfo }.
-// opts: { archived: include archived styles (and styles of archived kits), profileId: only this kit's }.
+// opts: { archived: include archived styles (and styles of archived kits), profileId: only this kit's, keep: a
+// built-in format's id to list anyway }. Simple mode's built-in formats (builtin: youtube | reel | audio, server
+// learning-store.mjs builtinFormats) are never listed as styles; the editor's picker keeps the one its video uses,
+// shown as "Built-in".
 export function styleEntries(data, opts = {}) {
   const { profiles = [], formats = [], versions = [], projects = [], drafts = new Map(), formatInfo = {} } = data;
   const kits = new Map(profiles.map((p) => [p.id, p]));
@@ -40,6 +43,7 @@ export function styleEntries(data, opts = {}) {
   const stamp = (iso) => { const t = Date.parse(iso || ''); return Number.isNaN(t) ? 0 : t; };
   return formats
     .filter((f) => !opts.profileId || f.profileId === opts.profileId)
+    .filter((f) => !f.builtin || f.id === opts.keep)
     .map((f) => {
       const kit = kits.get(f.profileId) || null;
       const unbranded = !kit || Boolean(kit.system);
@@ -50,7 +54,7 @@ export function styleEntries(data, opts = {}) {
       const color = unbranded ? null : kitColor(kit);
       return {
         id: f.id, name: f.name, description: f.description || '', type: f.type, profileId: f.profileId,
-        kitName: unbranded ? 'No brand' : kit.name, kitColor: color, unbranded,
+        kitName: f.builtin ? 'Built-in' : unbranded ? 'No brand' : kit.name, kitColor: color, unbranded, builtin: Boolean(f.builtin),
         // The drawn cover: the kit colour; a No brand style (or a kit not yet given a colour) one derived from its id.
         coverColor: color || idColor(f.id), initial: initialOf(f.name), camera: shape.camera, coverVideos: coverVideos(f.id),
         tall: shape.tall, aspect: shape.aspect, badge: shape.badge, version: number, videos: used,

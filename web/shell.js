@@ -9,6 +9,7 @@ import { icon } from './icons.js';
 import { TERMS } from './terms.js';
 import { currentAppearance, onAppearance, saveAppearance } from './appearance.js';
 import { avatarInk } from './kit-colors.js';
+import { isAdvanced } from './mode.js';
 
 const RAIL_ICON = 18;
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
@@ -27,7 +28,7 @@ export function channelAvatar(channel, size = '') {
 
 const PAGE_NAMES = {
   projects: 'Projects', recordings: 'Recordings', library: 'Library', skills: 'Skills', scheduled: 'Scheduled',
-  styles: TERMS.myStyles, settings: 'Settings',
+  styles: TERMS.myStyles, settings: 'Settings', resources: 'Resources',
 };
 
 // The Ask Claude button's tooltip: the agent and, on a Claude plan, its usage (the old sidebar card's contents).
@@ -57,6 +58,21 @@ export function sidebarMarkup({ active, counts = {}, takes = [], agent = null, f
   const askWarn = agent && !agent.ok ? dot(`${agent.name || 'The agent'}: ${agent.sub || 'needs attention'}`, 'warn') : '';
   const stylesOn = active.page === 'styles' || active.page === 'style' || active.page === 'kit';
   const expanded = !forceIcons && currentAppearance().sidebar !== 'icons';
+  // Simple mode (web/mode.js, V1 spec §2): Projects and Resources, Settings at the foot, nothing else. New video is
+  // on the Projects page (+ New video ▾). The rest of the rail is Advanced's, as it was.
+  if (!isAdvanced()) {
+    return `<nav class="side-nav shell-nav simple${forceIcons ? ' force-icons' : ''}" id="shellNav" aria-label="Video Octopus">
+      <div class="shell-nav-top">
+        <a class="brand" href="#/" aria-label="Video Octopus, all projects"><span class="logo" aria-hidden="true"><i></i></span><span class="ni-t brand-t">Video Octopus</span></a>
+        <button type="button" class="btn icon-btn shell-close" data-shell-close aria-label="Close menu">${icon('close')}</button>
+      </div>
+      ${item('projects', '#/', 'Projects', 'projects')}
+      ${item('resources', '#/resources', 'Resources', 'media')}
+      <span class="gap"></span>
+      ${item('settings', '#/settings', 'Settings', 'settings', settingsDot)}
+      <button type="button" class="nav-i shell-toggle" data-shell-toggle aria-expanded="${expanded}" aria-label="${expanded ? 'Collapse sidebar' : 'Expand sidebar'}" data-tip="Expand sidebar">${icon('sidebar', RAIL_ICON)}<span class="ni-t">Collapse</span></button>
+    </nav>`;
+  }
   return `<nav class="side-nav shell-nav${forceIcons ? ' force-icons' : ''}" id="shellNav" aria-label="Video Octopus">
       <div class="shell-nav-top">
         <a class="brand" href="#/" aria-label="Video Octopus, all projects"><span class="logo" aria-hidden="true"><i></i></span><span class="ni-t brand-t">Video Octopus</span></a>
@@ -141,7 +157,8 @@ export function wireShell(el, { onNewVideo }) {
     hideTip();
     if (e.target.closest('a[href]') || e.target.closest('[data-open-assistant]')) close(false);
   });
-  $('[data-shell-new]', el).onclick = () => { close(false); onNewVideo(); };
+  const newBtn = $('[data-shell-new]', el); // Advanced's rail only (Simple's New video is on Projects)
+  if (newBtn) newBtn.onclick = () => { close(false); onNewVideo(); };
   const paintToggle = () => {
     const expanded = currentAppearance().sidebar !== 'icons';
     toggle.setAttribute('aria-expanded', String(expanded));

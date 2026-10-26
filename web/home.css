@@ -376,3 +376,46 @@
 .sys-notes .notice .btn { margin-left: 6px; vertical-align: middle; }
 .sys-notes.in-chat { flex: none; margin: 8px 10px 0; }
 .sys-notes.in-chat .notice { padding: 10px 12px; font-size: 12px; line-height: 1.45; }
+
+/* ---------- Simple mode (V1 spec §2, board "V1 Projects"): + New video ▾, the plain grid, the shape chip ----------
+   web/simple-home.js and web/shape-chip.js. The menu opens under its button, right-aligned: never a centred dialog. */
+.pv-simple .pv-head h1 { flex: 1 1 auto; }
+.pv-note { margin: -8px 0 0; font-size: 13px; color: var(--text-2); }
+.pv-note a { color: var(--accent-text); }
+.pv-lead { margin: -12px 0 0; }
+.pv-first-simple { display: grid; place-items: center; min-height: 240px; border-radius: var(--r-l); background: var(--surface-2); }
+.pv-audio { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
+.pv-thumb.in .pv-audio { display: none; }
+.nv { position: relative; flex: none; }
+.nv-btn { gap: 6px; }
+.nv-btn svg:last-child { opacity: 0.8; }
+.nv-pop { position: absolute; right: 0; top: calc(100% + 8px); z-index: 60; width: 440px; max-width: calc(100vw - 32px); display: flex; flex-direction: column; gap: 14px; padding: 16px; border-radius: var(--r-l); background: var(--surface); box-shadow: var(--shadow-pop); }
+.nv-h { font-size: 14px; font-weight: 600; color: var(--text); }
+.nv-picks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.nv-pick { display: flex; flex-direction: column; gap: 12px; padding: 14px; border: 0; border-radius: var(--r-l); background: var(--surface-2); color: var(--text); font: inherit; text-align: left; cursor: pointer; transition: box-shadow var(--t) ease-out, background var(--t) ease-out; }
+.nv-pick:hover { background: var(--hover); }
+.nv-pick[aria-checked="true"] { box-shadow: 0 0 0 2px var(--text); }
+.nv-pick:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.nv-pick.nv-audio { grid-column: 1 / -1; flex-direction: row; align-items: center; }
+.nv-pic { display: flex; align-items: center; justify-content: center; gap: 3px; height: 72px; border-radius: 10px; background: var(--stage); }
+.nv-audio .nv-pic { width: 96px; height: 54px; flex: none; }
+.nv-frame { border-radius: 5px; box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--stage-text) 75%, transparent); }
+.nv-frame.wide { width: 96px; height: 54px; }
+.nv-frame.tall { width: 34px; height: 60px; }
+.nv-wave { display: flex; align-items: center; gap: 3px; }
+.nv-wave i { width: 3px; border-radius: 2px; background: var(--stage-text); }
+.nv-t { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.nv-t b { font-weight: 600; }
+.nv-t span { font-size: 12px; color: var(--text-3); }
+.nv-start { width: 100%; height: 38px; }
+.nv-foot { font-size: 12px; color: var(--text-3); }
+.shape-chip .sp-orient { margin-left: 4px; }
+.shape-ask { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 10px 4px; }
+@media (max-width: 640px) {
+  .pv-simple .pv-head h1 { flex-basis: auto; }
+  .nv-pop { width: calc(100vw - 32px); }
+  .nv-picks { gap: 8px; }
+  .nv-pick { padding: 10px; }
+  .nv-pic { height: 60px; }
+}
+.pv-thumb:has(.pv-audio) .pv-ph { display: none; }

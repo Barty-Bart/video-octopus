@@ -16,6 +16,7 @@ import { updatesSection, markUpdateBadge } from './updates.js';
 import { support, browserName } from './recorder.js';
 import { usageView } from './plan-usage.js';
 import { trashSection } from './trash.js';
+import { isAdvanced, setEditorMode } from './mode.js';
 
 let CTX = null;          // { app, makeChat, loadStatus, status, railAgent, newVideo } from app.js
 let askAvailable = false; // the Ask Claude drawer and ⌘J: every page but a project's (it has its own chat) and Setup
@@ -66,7 +67,7 @@ const ICON = {
 
 // The six groups: [id, label, line in the list, its sections in page order].
 const GROUPS = [
-  ['general', 'General', 'Theme, updates, start-up', ['appearance', 'updates']],
+  ['general', 'General', 'Editor mode, theme, updates', ['editor', 'appearance', 'updates']],
   ['agent', 'Agent', 'Claude Code, Codex or pi', ['claude', 'planusage']],
   ['recording', 'Recording', 'Camera, mic, screen, transcription', ['recorder', 'transcribe']],
   ['editing', 'Editing & sound', 'Cuts, effects, video defaults', ['editing', 'sound', 'look']],
@@ -75,6 +76,7 @@ const GROUPS = [
 ];
 // Each section: its heading and one line about it.
 const SECTIONS = {
+  editor: ['Editor mode', ''],
   appearance: ['Appearance', 'How Video Octopus looks. Your videos keep their own look, under Editing & sound › Video defaults.'],
   updates: ['Updates', 'New versions of Video Octopus, your skills and preferences, and opening Video Octopus when you log in.'],
   claude: ['Agent & model', 'The agent behind every chat (Claude Code, Codex or pi), how much it may do without asking, and the model.'],
@@ -93,6 +95,7 @@ const SECTIONS = {
 };
 // More words the settings search finds a section by: its rows' labels and what people call them.
 const FIND = {
+  editor: 'editor mode simple advanced styles brand kits skills library schedules recordings everything',
   appearance: 'theme dark light mode match system colours colors accent orange blue green violet sidebar icons names rail look looks',
   updates: 'version git github update restart starter files log in login startup autostart open when i log in skills preferences',
   claude: 'claude code codex pi permissions ask before changes file edits auto full access model opus sonnet haiku fable effort reasoning thinking api key ollama lm studio provider clean chats',
@@ -659,7 +662,7 @@ const DRAW = {
     return frag(
       group('',
         row('Your studio folder', 'Home for your projects, recordings, library and local SQLite database. New studios use application storage by default; you can choose another location.', studio),
-        row('Skills & learning', 'Saved in <b>.studio/studio.sqlite</b> inside this studio, including versions and approvals. Any skill folders are app-generated working copies for agents.', h('<a class="btn small" href="#/skills">Open Skills</a>')),
+        isAdvanced() ? row('Skills & learning', 'Saved in <b>.studio/studio.sqlite</b> inside this studio, including versions and approvals. Any skill folders are app-generated working copies for agents.', h('<a class="btn small" href="#/skills">Open Skills</a>')) : null,
         row('Projects folder', `Recordings and source media, editing work and renders. Inside the studio: ${esc(tilde(f.studio))}/<b>${esc(f.projectsDir)}</b>`, projects),
         row('Library folder', `Inside the studio: reusable backgrounds, sounds and cards. ${esc(tilde(f.studio))}/<b>${esc(f.libraryDir)}</b>`, library),
         row('', 'To move the files themselves, ask the Video Octopus assistant.', apply)),
@@ -671,6 +674,22 @@ const DRAW = {
   // Settings › General › Appearance (design V2 §1): Light, Dark or Match system, an accent and the sidebar's width. A
   // pick shows at once on every page (web/appearance.js) and is saved; there's no Save button. After the one-time
   // move from the old looks, a note says which theme the old look became, until OK.
+  // Settings › General › Editor mode (V1 spec §1): Simple | Advanced. Switching changes only this setting: nothing is
+  // deleted or moved, and the page (its sidebar too) draws again in the new mode.
+  editor(V) {
+    const mode = V.values.editor?.mode === 'advanced' ? 'advanced' : 'simple';
+    const pick = async (next) => {
+      try {
+        V = await api('/api/app/settings', { section: 'editor', values: { mode: next } });
+        setEditorMode(next);
+        await CTX.loadStatus?.().catch(() => null);
+        toast(next === 'advanced' ? 'Advanced mode: everything is back in the sidebar.' : 'Simple mode: Projects, Resources and Settings.');
+        dispatchEvent(new HashChangeEvent('hashchange')); // the router draws Settings again, with the new sidebar
+      } catch (e) { toast(e.message); }
+    };
+    return group('', row('Simple or Advanced', 'Simple shows Projects and Resources and makes every video in a few steps. Advanced brings back My styles, brand kits, skills, the library, schedules and recordings. Nothing is lost when you switch.',
+      seg([['simple', 'Simple'], ['advanced', 'Advanced']], mode, pick)));
+  },
   appearance(V, save, redraw) {
     const a = { ...currentAppearance(), ...(V.values.appearance || {}) };
     const pick = async (patch) => {
@@ -740,11 +759,12 @@ const DRAW = {
     drawColors();
     return frag(
       group('Video defaults',
-        row('Styles', 'For pacing, captions, storytelling and style-specific visual rules, use a style’s Skill. Review the scene plan before applying those rules to a video.', h('<a class="btn small" href="#/styles">Open My styles</a>')),
+        // Simple mode has no styles or brand kits (its look is Resources): these two pointers are Advanced's.
+        isAdvanced() ? row('Styles', 'For pacing, captions, storytelling and style-specific visual rules, use a style’s Skill. Review the scene plan before applying those rules to a video.', h('<a class="btn small" href="#/styles">Open My styles</a>')) : null,
         row('Background', 'Behind the picture in the picture-in-picture, Boxed and Split layouts.', sw),
         row('Picture-in-picture frame', '', seg([['rounded', 'Rounded'], ['circle', 'Circle'], ['frame', 'Whole frame']], l.pip, (x) => save('look', { pip: x }).then(redraw)))),
-      group('Style brand',
-        row('Colours, fonts and brand assets', 'Set these in a brand kit. New video loads the approved brand of the style’s kit; these global video controls do not replace it.', h('<a class="btn small" href="#/styles/kits">Open brand kits</a>'))),
+      isAdvanced() ? group('Style brand',
+        row('Colours, fonts and brand assets', 'Set these in a brand kit. New video loads the approved brand of the style’s kit; these global video controls do not replace it.', h('<a class="btn small" href="#/styles/kits">Open brand kits</a>'))) : null,
     );
   },
 };

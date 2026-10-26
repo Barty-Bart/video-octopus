@@ -14,7 +14,11 @@ import { makeUndo, tokens, lookKey as appearanceKey } from './tlcore.js';
 import { makeScenes, cutMap } from './scenes.js';
 import { makeCompare, previousOf, versionName } from './compare.js';
 import { appPage } from './settings.js';
-import { makeRouter, legacyRoute, parseRoute, routeNeedsLookup, PAGE_CLASSES } from './nav.js';
+import { makeRouter, legacyRoute, parseRoute, routeNeedsLookup, PAGE_CLASSES, simpleRedirect } from './nav.js';
+import { isAdvanced, editorMode, setEditorMode } from './mode.js';
+import { ADVANCED_NOTE } from './simple.js';
+import { renderSimpleProjects, renderResourcesPlaceholder } from './simple-home.js';
+import { makeShapeChip } from './shape-chip.js';
 import { TERMS } from './terms.js';
 import { renderProjects, setTypeNames } from './projects-home.js';
 import { makeStartScreen } from './start-screen.js';
@@ -68,6 +72,7 @@ async function loadStatus(refresh = false) {
   STATUS = await api('/api/status' + (refresh ? '?refresh' : ''));
   setSystem(STATUS); // the ~ in paths and the file manager's name (web/ui.js)
   applyAppearance(STATUS.appearance); // Settings › General › Appearance (web/appearance.js)
+  setEditorMode(STATUS.editor?.mode); // Settings › General › Editor mode: the isAdvanced() gate (web/mode.js)
   window.STUDIO_ENGINE = STATUS.engine; // the other pages' chats say which agent is answering
   window.STUDIO_AGENT = { codex: 'Codex', pi: 'pi' }[STATUS.engine] || 'Claude';
   const a = agentView(STATUS), chip = $('#claudeChip');
@@ -166,6 +171,13 @@ const router = makeRouter(async (nav) => {
     const moved = legacyRoute(location.hash, lookup);
     if (moved) history.replaceState(null, '', moved);
   }
+  // Simple mode (web/mode.js): a page it hides (My styles, kits, Library, Skills, Scheduled, Recordings) lands on
+  // Projects with one quiet line. The mode comes from /api/status, so it is read first.
+  if (!STATUS) await loadStatus().catch(() => null);
+  if (nav.alive()) {
+    const hide = simpleRedirect(location.hash, editorMode());
+    if (hide) { history.replaceState(null, '', hide.to); advancedNote = ADVANCED_NOTE; }
+  }
   // Settings, Setup (opens by itself the first time) and the Video Octopus assistant live in settings.js / setup.js.
   const page = await appPage(location.hash, {
     app, makeChat, loadStatus, nav, status: () => STATUS, railAgent: () => railAgent(),
@@ -185,11 +197,12 @@ window.addEventListener('hashchange', () => {
   router();
 });
 
+let advancedNote = ''; // the line Projects shows once after a hidden page's deep link (Simple mode)
 // ---------- home: the shell (rail + one page): Projects, Recordings, My styles, Library, Skills, Scheduled ----------
 const TAKE_ICON = '<svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="3" width="11" height="8" rx="1.5"/><circle cx="13.5" cy="12.5" r="3" class="hole"/></svg>';
 const takeWhat = (t) => t.files.map((f) => (/_screen\./.test(f) ? 'screen' : /_webcam\./.test(f) ? 'camera' : isSound(f) ? 'mic only' : 'video')).join(' + ').replace(/^./, (c) => c.toUpperCase());
 let pendingRecord = null; // a video made with Record (or the start screen's Record now) opens its record panel
-const PAGE_TITLES = { scheduled: 'Scheduled', recordings: 'Recordings', skills: 'Skills', library: 'Library', styles: TERMS.myStyles, style: TERMS.style, kit: TERMS.kit };
+const PAGE_TITLES = { scheduled: 'Scheduled', recordings: 'Recordings', skills: 'Skills', library: 'Library', styles: TERMS.myStyles, style: TERMS.style, kit: TERMS.kit, resources: 'Resources' };
 
 // The shell (web/shell.js): the sidebar and one page beside it. route: parseRoute(location.hash), nav: { signal,
 // alive } from the router (web/nav.js). Pages: projects, recordings, library, scheduled, skills, style, styles.
@@ -214,7 +227,16 @@ async function home(route, nav = null) {
   app.replaceChildren(el);
   const main = $('#homeMain', el);
   // New video from a style's page starts in that style (its format); a brand kit's page in that kit.
-  const startVideo = ({ profileId, format = null } = {}) => newVideo(format ? { formatId: format.id } : profileId !== undefined ? { profileId } : {});
+  // In Simple, New video is Projects' + New video ▾ menu: N (and any other way in) opens it there.
+  let simplePage = null;
+  const startVideo = ({ profileId, format = null } = {}) => {
+    if (!isAdvanced()) {
+      if (view === 'projects' && simplePage) return simplePage.openMenu();
+      location.hash = '#/?new';
+      return null;
+    }
+    return newVideo(format ? { formatId: format.id } : profileId !== undefined ? { profileId } : {});
+  };
   const here = () => {
     const r = parseRoute(location.hash);
     if (r.page === 'style' && r.id !== '_') return { format: { id: r.id } };
@@ -235,7 +257,20 @@ async function home(route, nav = null) {
   const onChannelsChange = () => router();
   const onFormatsChange = () => api('/api/app/counts').catch(() => null);
   let page = null;
-  if (view === 'projects') {
+  if (view === 'projects' && !isAdvanced()) {
+    // Simple's Projects (V1 spec §2): title, + New video ▾ top right, the grid. No filters, hero or chips.
+    const note = advancedNote;
+    advancedNote = '';
+    const openMenu = route.query?.has('new');
+    if (openMenu) history.replaceState(null, '', '#/');
+    page = simplePage = renderSimpleProjects(main, {
+      projects, note, notice: `<div class="sys-notes">${systemNotes()}</div>`, lastShape: STATUS.editor?.lastShape, openMenu,
+      startVideo: (shape) => newVideo({ shape, record: true }),
+      recover: async (u) => { try { await rec.recover(u.project, u.take); location.hash = `#/p/${encodeURIComponent(u.project)}`; } catch (e) { toast(e.message); } },
+    });
+    const paintNotes = () => { const box = $('.sys-notes', main); if (!box) return; box.innerHTML = systemNotes(); wireSystemNotes(box, paintNotes); };
+    wireSystemNotes($('.sys-notes', main), paintNotes);
+  } else if (view === 'projects') {
     setTypeNames(STATUS.formats);
     page = renderProjects(main, {
       projects, takes, counts, query: route.query, notice: `<div class="sys-notes">${systemNotes()}</div>`, newVideo,
@@ -246,6 +281,7 @@ async function home(route, nav = null) {
   }
   // Recordings also lists the files dropped or imported into videos, where they are (A17).
   if (view === 'recordings') renderRecordings(main, await api('/api/recordings').catch(() => takes));
+  if (view === 'resources') page = renderResourcesPlaceholder(main); // V1 spec §4: built by a later step
   if (view === 'scheduled') page = await renderSchedules(main, nav).catch((e) => { main.replaceChildren(h(`<div class="home-wrap"><div class="notice">${esc(e.message)}</div></div>`)); return null; });
   if (view === 'skills') page = await renderSkills(main, { counts });
   if (view === 'library') page = renderLibrary(main, $('#libSide', el));
@@ -380,7 +416,9 @@ async function newVideo(opts = {}) {
   creatingVideo = true;
   try {
     const b = { untitled: true };
-    if (opts.formatId) b.formatId = opts.formatId;
+    // Simple's New video ▾: youtube | reel | audio, the built-in style's format (server/profiles.mjs simpleVideoChoice).
+    if (opts.shape) b.shape = opts.shape;
+    else if (opts.formatId) b.formatId = opts.formatId;
     else if ('profileId' in opts) b.profileId = opts.profileId;
     if (opts.take) b.take = opts.take;
     const { id } = await api('/api/projects', b);
@@ -485,11 +523,17 @@ async function openProject(id) {
     };
     input.onblur = () => finish(true);
   };
-  const picker = makeStylePicker({ id, getP: () => P, formatInfo: STATUS.formatInfo || {}, onChanged: async (r) => {
+  // Simple mode (web/mode.js): the shape chip (YouTube 16:9 ⇄ Reel 9:16, web/shape-chip.js) instead of the style
+  // picker; Audio only has neither. Advanced: the style picker, as before.
+  const onContext = async (r) => {
     if (r.typeChanged) return router(); // another video setup: other steps, so the page starts again
     await refresh();
     paintLearned(); // the chat's "Brand & instructions" line names the new brand at once (A5)
-  } });
+  };
+  const picker = (isAdvanced()
+    ? makeStylePicker({ id, getP: () => P, formatInfo: STATUS.formatInfo || {}, onChanged: onContext })
+    : makeShapeChip({ id, getP: () => P, onChanged: onContext }))
+    || { el: document.createDocumentFragment(), update() {}, destroy() {} };
   crumbs.append(picker.el);
   const modes = [['manual', 'Ask before changes'], ['acceptEdits', 'File edits OK'], ['auto', 'Auto (safe steps)'], ['bypassPermissions', 'Full access']];
   $('#barActions').replaceChildren(
@@ -535,6 +579,7 @@ async function openProject(id) {
   paintSys();
   // Script & approved guide, and Brand & instructions: drawn again when the style (and so the brand) changes.
   function paintLearned() {
+    if (!isAdvanced()) return learnedPanel.replaceChildren(); // Simple: no styles, brand kits or instructions panel
     const box = h('<div></div>');
     learnedPanel.replaceChildren(box);
     projectLearningPanel(box, id, P, {send: text => api(`/api/projects/${encodeURIComponent(id)}/chat`,{text})}).catch(e => { box.textContent = e.message; });
@@ -915,7 +960,7 @@ async function openProject(id) {
     pick.hidden = Boolean(P.type);
     if (!P.type) {
       if (!pick.firstChild) {
-        pick.replaceChildren(h(`<div class="rail-pick"><span>What kind of video is this?</span>${Object.entries(STATUS.formats).map(([k, v]) => `<button class="btn small" data-k="${k}">${esc(v)}</button>`).join('')}</div>`));
+        pick.replaceChildren(h(`<div class="rail-pick"><span>What kind of video is this?</span>${Object.entries(STATUS.formats).filter(([k]) => !isAdvanced() || !STATUS.formatInfo?.[k]?.simple).map(([k, v]) => `<button class="btn small" data-k="${k}">${esc(v)}</button>`).join('')}</div>`));
         pick.querySelectorAll('[data-k]').forEach((b) => (b.onclick = async () => { await api(`/api/projects/${encodeURIComponent(id)}/type`, { type: b.dataset.k }); refresh(); }));
       }
       if (!host.querySelector('.stages') || host.__rail !== rail) { host.__rail = rail; rail.bar(host, null); }
@@ -1618,7 +1663,7 @@ function makeChat(root, id, ext = {}, opts = {}) {
     <div class="chat-sess">
       <button type="button" class="btn ghost small sess-pick" aria-haspopup="menu" aria-expanded="false" title="This session, and earlier ones you can continue"><span class="sp-t">This session</span><span aria-hidden="true">▾</span></button>
       <button type="button" class="btn ghost small" data-a="new" title="Start a fresh session; this one stays in the list">+ New session</button>
-      <button type="button" class="btn ghost small" data-a="lessons">Review lessons</button>
+      ${isAdvanced() ? '<button type="button" class="btn ghost small" data-a="lessons">Review lessons</button>' : ''}
       <span class="gap"></span>
       <span class="ctx" title="How full this chat's context is"><i><b></b></i><span class="ctx-n">–</span></span>
       <button type="button" class="btn ghost small" data-a="compact" title="Claude keeps a summary of the chat so far and frees room">Compact</button>
@@ -1638,7 +1683,7 @@ function makeChat(root, id, ext = {}, opts = {}) {
   const sessApi = (op, extra = {}) => api(sessUrl, { op, ...extra });
   sessApi('list').then((r) => { if (r.current?.messages) setTitle(r.current.title); if (r.current?.context) showContext(r.current.context); }).catch(() => {});
   $('[data-a=new]', sess).onclick = async () => { try { await sessApi('new'); } catch (e) { toast(e.message); } };
-  $('[data-a=lessons]', sess).onclick = () => reviewLessons(id, async text => { if (busy || sending || preparing) throw Error('Wait for this turn to finish.'); if (ext.beforeSend) await ext.beforeSend(text); const ok = await send(text, text, { memoryReview: true }); if (!ok) throw Error('The lesson request was not sent. Your text is in the composer.'); }).catch(e => toast(e.message));
+  if ($('[data-a=lessons]', sess)) $('[data-a=lessons]', sess).onclick = () => reviewLessons(id, async text => { if (busy || sending || preparing) throw Error('Wait for this turn to finish.'); if (ext.beforeSend) await ext.beforeSend(text); const ok = await send(text, text, { memoryReview: true }); if (!ok) throw Error('The lesson request was not sent. Your text is in the composer.'); }).catch(e => toast(e.message));
   $('[data-a=compact]', sess).onclick = async () => { try { await api(`${base}/chat-compact`, {}); } catch (e) { toast(e.message); } };
   let menu = null;
   const closeMenu = () => { menu?.remove(); menu = null; $('.sess-pick', sess).setAttribute('aria-expanded', 'false'); document.removeEventListener('pointerdown', outside, true); };
