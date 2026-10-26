@@ -19,6 +19,7 @@ import { isAdvanced, editorMode, setEditorMode } from './mode.js';
 import { ADVANCED_NOTE } from './simple.js';
 import { renderSimpleProjects } from './simple-home.js';
 import { renderResources } from './resources-page.js';
+import { renderProfilePage } from './simple-profiles.js';
 import { makeShapeChip } from './shape-chip.js';
 import { mountSimpleEditor } from './simple-editor.js';
 import { TERMS } from './terms.js';
@@ -204,7 +205,7 @@ let advancedNote = ''; // the line Projects shows once after a hidden page's dee
 const TAKE_ICON = '<svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="3" width="11" height="8" rx="1.5"/><circle cx="13.5" cy="12.5" r="3" class="hole"/></svg>';
 const takeWhat = (t) => t.files.map((f) => (/_screen\./.test(f) ? 'screen' : /_webcam\./.test(f) ? 'camera' : isSound(f) ? 'mic only' : 'video')).join(' + ').replace(/^./, (c) => c.toUpperCase());
 let pendingRecord = null; // a video made with Record (or the start screen's Record now) opens its record panel
-const PAGE_TITLES = { scheduled: 'Scheduled', recordings: 'Recordings', skills: 'Skills', library: 'Library', styles: TERMS.myStyles, style: TERMS.style, kit: TERMS.kit, resources: 'Resources' };
+const PAGE_TITLES = { scheduled: 'Scheduled', recordings: 'Recordings', skills: 'Skills', library: 'Library', styles: TERMS.myStyles, style: TERMS.style, kit: TERMS.kit, resources: 'Resources', profile: 'Profile' };
 
 // The shell (web/shell.js): the sidebar and one page beside it. route: parseRoute(location.hash), nav: { signal,
 // alive } from the router (web/nav.js). Pages: projects, recordings, library, scheduled, skills, style, styles.
@@ -284,6 +285,7 @@ async function home(route, nav = null) {
   // Recordings also lists the files dropped or imported into videos, where they are (A17).
   if (view === 'recordings') renderRecordings(main, await api('/api/recordings').catch(() => takes));
   if (view === 'resources') page = renderResources(main, { makeChat }); // V1 spec §4 (web/resources-page.js)
+  if (view === 'profile') page = renderProfilePage(main, { slug: route.id, projects }); // web/simple-profiles.js
   if (view === 'scheduled') page = await renderSchedules(main, nav).catch((e) => { main.replaceChildren(h(`<div class="home-wrap"><div class="notice">${esc(e.message)}</div></div>`)); return null; });
   if (view === 'skills') page = await renderSkills(main, { counts });
   if (view === 'library') page = renderLibrary(main, $('#libSide', el));

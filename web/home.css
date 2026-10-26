@@ -496,3 +496,41 @@
 }
 .res-look > div:empty { display: none; }
 @media (max-width: 640px) { .res-font b { font-size: 17px; } }
+
+/* ---------- Simple mode's profiles (web/simple-profiles.js): the row of cards on Projects and a profile's page ---------- */
+.pf-sec { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.pf-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+.pf-card { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 16px; border: 0; border-radius: var(--r-l); background: var(--surface-2); color: var(--text); font: inherit; text-align: left; box-shadow: inset 0 0 0 1px var(--line); }
+.pf-top { display: flex; align-items: baseline; gap: 8px; }
+.pf-name { flex: 1 1 auto; font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+.pf-open { font-size: 12.5px; color: var(--text-2); }
+.pf-line { margin-top: -6px; }
+.pf-in { height: 36px; padding: 0 12px; border: 0; border-radius: var(--r-m); background: var(--surface); color: var(--text); font: 400 13px var(--font); box-shadow: inset 0 0 0 1px var(--line); }
+.pf-act { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pf-stats { font-size: 12px; }
+.pf-drop { display: flex; flex-direction: column; gap: 4px; padding: 12px; border-radius: var(--r-m); background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); cursor: pointer; font-size: 12.5px; color: var(--text-2); }
+.pf-drop.on, .pf-drop:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); outline: none; }
+.pf-drop-t { display: inline-flex; align-items: center; gap: 6px; }
+.pf-chips { color: var(--text); overflow-wrap: anywhere; }
+.pf-chips:empty { display: none; }
+.pf-drop-big { padding: 22px; align-items: center; text-align: center; }
+.pf-add { cursor: pointer; justify-content: center; align-items: flex-start; box-shadow: inset 0 0 0 1px var(--line); background: transparent; }
+.pf-add:hover { background: var(--hover); }
+.pf-new-form .pf-f, .pf-set .pf-f { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; border: 0; font-size: 12px; font-weight: 500; color: var(--text-2); min-width: 0; }
+.pf-new-form select.field, .pf-set .field { height: 36px; }
+.pf-radio { display: flex; gap: 8px; align-items: flex-start; padding: 6px 0; font-weight: 400; color: var(--text); cursor: pointer; }
+.pf-radio span { display: flex; flex-direction: column; gap: 2px; }
+.pf-filter { display: flex; flex-wrap: wrap; gap: 6px; }
+.pf-chip { height: 30px; padding: 0 12px; border: 0; border-radius: 999px; background: var(--surface-2); color: var(--text-2); font: 500 12.5px var(--font); cursor: pointer; box-shadow: inset 0 0 0 1px var(--line); }
+.pf-chip[aria-pressed="true"] { background: var(--active); color: var(--text); }
+.pf-page > div { display: flex; flex-direction: column; gap: 28px; }
+.pf-set { flex-direction: row; flex-wrap: wrap; gap: 14px; }
+.pf-set .pf-f { flex: 1 1 180px; }
+.pf-text { width: 100%; min-height: 160px; padding: 12px; border: 0; border-radius: var(--r-m); background: var(--surface); color: var(--text); font: 400 13px/1.5 var(--mono, ui-monospace, monospace); box-shadow: inset 0 0 0 1px var(--line); resize: vertical; box-sizing: border-box; }
+.pf-files { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.pf-files li { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.pf-files li a { flex: 0 1 auto; overflow-wrap: anywhere; }
+.pf-page code { overflow-wrap: anywhere; }
+/* A batch's split in the Simple editor (web/simple-editor.js) */
+.sx-batch { display: flex; flex-direction: column; gap: 6px; padding: 12px; border-radius: 12px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
+.sx-batch-l { display: flex; flex-wrap: wrap; gap: 6px; font-size: 13px; }

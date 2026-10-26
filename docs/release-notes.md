@@ -1,3 +1,11 @@
+# Unreleased
+
+- **Profiles: one folder per kind of video.** Projects in Simple has a row of profiles above the grid ("Main channel", "Instagram", "Podcast": you name them). Each profile is a folder in the studio, `profiles/<name>/`, with its own `INSTRUCTIONS.md` (how its videos are made), `LEARNINGS.md` (what Claude learned from earlier ones), `resources/` (its own files) and `skills/` (skills of its own). The Resources page stays as the files every profile shares.
+- **Each profile starts its videos its own way.** **Topic → video:** type a topic and press Start; Claude researches it (`work/research.md`, with sources) and writes the script, either a **full script** (every word, for voiceover) or **talking points** (hook and ending written out, beats in between), then you're on Record. **Batch of shorts:** drop reference videos (and notes) and press Start batch; Claude breaks them down and writes several short scripts into one teleprompter script, you record them in one take, **Find the videos** marks where each one starts and ends, and **Split into videos** makes one video of the profile per script, each with its part of the take and its own script.
+- **Profiles learn.** When you correct Claude or say how you want something done, it saves the lesson; when its reply ends, Video Octopus adds it to that profile's `LEARNINGS.md` (once) and says so in the chat. Every new video of the profile reads its instructions, learnings, files and skills, and the editing steps read the topic's research.
+- **A profile's page** (Open on its card): name, how it starts, shape and script; Instructions and Learnings to edit; Files with drop to upload, Remove and Undo; its skills and its videos. Projects can show one profile's videos at a time.
+- **Simple lists Claude Code and Codex only.** Setup's agent list and Settings › Agent leave out pi and the local model servers (LM Studio, Ollama) in Simple; Advanced has them as before, and one already in use still shows.
+
 # v0.1.0-beta.24
 
 - **Simple is the default.** Settings › General has a new **Editor mode: Simple | Advanced**. Simple is on for everyone, existing studios included. Advanced shows the app exactly as before. Switching changes only that setting: no styles, kits, memories, skills, projects or files are deleted or moved, and you can switch back any time.

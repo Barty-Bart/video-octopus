@@ -96,7 +96,7 @@ export function simpleStageOf(p) {
 // Shell pages hidden in Simple (their code and routes stay; Advanced shows them). parseRoute's page names (web/nav.js).
 export const HIDDEN_PAGES = ['recordings', 'skills', 'scheduled', 'library', 'styles', 'style', 'kit'];
 // The shell pages Simple shows.
-export const SIMPLE_PAGES = ['projects', 'resources'];
+export const SIMPLE_PAGES = ['projects', 'resources', 'profile'];
 // Is this route's page hidden in this mode? route: parseRoute(hash) ({ page }).
 export const hiddenInSimple = (route, mode = DEFAULT_MODE) => mode !== 'advanced' && HIDDEN_PAGES.includes(route?.page);
 // The one quiet line a hidden deep link lands with on Projects.

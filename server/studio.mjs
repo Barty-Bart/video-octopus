@@ -213,6 +213,8 @@ export function listProjects() {
         name: meta?.name || id,
         nameSource: meta?.nameSource === 'auto' ? 'auto' : 'manual',
         type: formatId(meta?.type),
+        // Simple mode's profile (server/simple-profiles.mjs): the folder this video was started from, if any
+        profile: typeof meta?.simpleProfile === 'string' ? meta.simpleProfile : null,
         updated: Math.max(mtime(dir), mtime(join(dir, 'work')), mtime(join(dir, 'WORKLOG.md'))),
         next: next ? next.name : null,
         current: current ? current.name : null,

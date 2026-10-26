@@ -188,6 +188,8 @@ export function parseRoute(hash) {
     const tab = STYLES_TABS.includes(second) ? second : 'styles';
     return { page: 'styles', tab, query };
   }
+  // profile: Simple mode's profile page, #/profile/<slug> (web/simple-profiles.js).
+  if (first === 'profile' && second) return { page: 'profile', id: second, query };
   // resources: Simple mode's Resources page (V1 spec §4). Which pages Simple hides: web/simple.js HIDDEN_PAGES.
   if (['recordings', 'skills', 'scheduled', 'library', 'resources'].includes(first)) return { page: first, query };
   return { page: 'projects', query };

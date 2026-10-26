@@ -12,7 +12,7 @@ import { KIT_PALETTE, avatarInk } from './kit-colors.js';
 import { startResearch, researchActions } from './brand-research.js';
 import { SIMPLE_KINDS, PICTURE_KINDS, ACCEPT, guessKind, lookColors, IMAGE_FILE, FONT_FILE, VIDEO_FILE } from './resource-kinds.js';
 
-const LEAD = 'What Claude uses in every video: your look, your photos, your products.';
+const LEAD = 'What Claude uses in every video, for every profile: your look, your photos, your products. Files for one profile go on that profile’s page.';
 const fileUrl = (id) => `/api/simple-resources/${encodeURIComponent(id)}/file`;
 const firstLine = (t, n) => String(t || '').split(/\n/)[0].trim().slice(0, n);
 const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return u; } };

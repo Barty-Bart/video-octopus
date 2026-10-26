@@ -6,6 +6,7 @@ import { $, esc, h, api, ago, toast } from './ui.js';
 import { icon } from './icons.js';
 import { SHAPES, SHAPE_KEYS, shapeOfType, simpleStageOf, ADVANCED_NOTE } from './simple.js';
 import { thumbUrl, wireThumb } from './projects-home.js';
+import { profileCards } from './simple-profiles.js';
 
 const pic = (p) => `<img alt="" decoding="async" loading="lazy" src="${thumbUrl(p)}"><span class="pv-ph" aria-hidden="true">${icon('recordings', 22)}</span>`;
 
@@ -95,6 +96,8 @@ export function renderSimpleProjects(main, ctx) {
     ${note ? `<p class="pv-note" role="status">${esc(note)} <a href="#/settings/general/editor">Open Settings</a></p>` : ''}
     ${notice}
     <div class="take-banners" id="unsaved"></div>
+    <section class="pf-sec" aria-labelledby="pfH"><h2 class="res-h" id="pfH">Profiles</h2><div id="pfHost"></div></section>
+    <div class="pf-filter" id="pfFilter" role="group" aria-label="Show videos from"></div>
     <div id="grid" class="pv-grid"></div>
   </div>`));
   const menu = newVideoButton({ lastShape, onStart: startVideo });
@@ -102,7 +105,8 @@ export function renderSimpleProjects(main, ctx) {
   const grid = $('#grid', main);
   const tile = (p) => {
     const kind = p.type ? SHAPES[shapeOfType(p.type)].kind : '';
-    const meta = [kind, simpleStageOf(p), ago(p.updated)].filter(Boolean).join(' · ');
+    const pf = p.profile && profiles.find((x) => x.slug === p.profile);
+    const meta = [pf ? pf.name : kind, simpleStageOf(p), ago(p.updated)].filter(Boolean).join(' · ');
     const el = h(`<a class="pv-tile" href="#/p/${encodeURIComponent(p.id)}">
       <span class="pv-thumb">${pic(p)}${p.type === 'audio' ? `<span class="pv-audio" aria-hidden="true">${GLYPH.audio}</span>` : ''}</span>
       <span class="pv-tile-t"><b>${esc(p.name)}</b><span class="pv-meta">${esc(meta)}</span></span>
@@ -110,12 +114,32 @@ export function renderSimpleProjects(main, ctx) {
     wireThumb($('.pv-thumb', el));
     return el;
   };
-  const list = projects.slice().sort((a, b) => (b.updated || 0) - (a.updated || 0));
-  if (list.length) grid.replaceChildren(...list.map(tile));
-  else {
-    grid.className = 'pv-first-simple';
-    grid.replaceChildren(h(`<div class="empty"><b>Make your first video</b><span class="sub">Press + New video, pick YouTube, Reel or Audio only, and record.</span></div>`));
-  }
+  const all = projects.slice().sort((a, b) => (b.updated || 0) - (a.updated || 0));
+  // Profiles (web/simple-profiles.js): one card each with its own way in; the chips under them show one profile's videos.
+  let profiles = [], only = '';
+  const paintGrid = () => {
+    const list = only ? all.filter((p) => p.profile === only) : all;
+    grid.className = list.length ? 'pv-grid' : 'pv-first-simple';
+    if (list.length) grid.replaceChildren(...list.map(tile));
+    else grid.replaceChildren(h(only
+      ? `<div class="empty"><b>No videos from this profile yet</b><span class="sub">Start one from its card above.</span></div>`
+      : `<div class="empty"><b>Make your first video</b><span class="sub">Start one from a profile above, or press + New video and record.</span></div>`));
+    const f = $('#pfFilter', main);
+    f.hidden = !profiles.length;
+    f.innerHTML = profiles.length ? ['', ...profiles.map((p) => p.slug)].map((k) => {
+      const name = k ? profiles.find((p) => p.slug === k).name : 'All videos';
+      return `<button type="button" class="pf-chip" data-k="${esc(k)}" aria-pressed="${k === only}">${esc(name)}</button>`;
+    }).join('') : '';
+  };
+  $('#pfFilter', main).addEventListener('click', (e) => { const b = e.target.closest('[data-k]'); if (b) { only = b.dataset.k; paintGrid(); } });
+  const loadProfiles = () => api('/api/simple-profiles').then((r) => {
+    profiles = r.profiles || [];
+    if (!$('#pfHost', main)) return;
+    profileCards($('#pfHost', main), { profiles, open: (vid) => { location.hash = `#/p/${encodeURIComponent(vid)}`; }, changed: loadProfiles });
+    paintGrid();
+  }).catch(() => {});
+  paintGrid();
+  loadProfiles();
   // A take the page closed on before it was saved: finish it into its video (the recorder's recovery), as in Advanced.
   if (recover) api('/api/rec-unfinished').then(({ takes: open }) => {
     const box = $('#unsaved', main);

@@ -438,14 +438,15 @@ const DRAW = {
     // The agent: Claude Code (your Claude plan) or Codex (your ChatGPT plan, or a local model in LM Studio or Ollama).
     // Switching starts fresh chats; earlier conversations stay in each chat's session list.
     const codex = v.engine === 'codex';
-    const engine = seg(Object.entries(ENGINES), v.engine || 'claude', (e) => save('claude', { engine: e }).then(redraw));
+    // Simple mode offers Claude Code and Codex; pi stays in Advanced (shown while it's the agent, to switch away).
+    const engine = seg(Object.entries(ENGINES).filter(([k]) => isAdvanced() || k !== 'pi' || v.engine === 'pi'), v.engine || 'claude', (e) => save('claude', { engine: e }).then(redraw));
     const cxCard = h(`<div class="found"><span class="sub">Looking for Codex…</span></div>`);
     if (codex) api('/api/app/engines').then((E) => {
       const x = E.codex;
       cxCard.innerHTML = !x.installed ? `<span class="dot bad"></span><b>Codex isn't installed</b><span class="sub">Install it in a terminal: <code>${esc(x.install)}</code>, then run <code>codex login</code> once.</span>`
         : `<span class="dot ${x.signedIn || v.codexProvider !== 'chatgpt' ? 'ok' : 'bad'}"></span><b>Codex ${esc(x.version)}</b><span class="sub">${x.signedIn ? `Signed in ✓${x.plan ? ` · ${esc(x.plan)}` : ''}` : 'Not signed in: run codex login in a terminal.'} · ${esc(tilde(x.bin))}</span>`;
     }).catch(() => { cxCard.innerHTML = '<span class="sub">Couldn\'t check Codex.</span>'; });
-    const source = seg([['chatgpt', 'ChatGPT plan'], ['lmstudio', 'LM Studio (local)'], ['ollama', 'Ollama (local)']], v.codexProvider || 'chatgpt', (x) => save('claude', { codexProvider: x }).then(redraw));
+    const source = seg([['chatgpt', 'ChatGPT plan'], ['lmstudio', 'LM Studio (local)'], ['ollama', 'Ollama (local)']].filter(([k]) => isAdvanced() || k === 'chatgpt' || k === v.codexProvider), v.codexProvider || 'chatgpt', (x) => save('claude', { codexProvider: x }).then(redraw));
     const cxModel = text(v.codexModel || '', (m) => save('claude', { codexModel: m.trim() }), { placeholder: v.codexProvider === 'chatgpt' ? "Codex's default" : 'gpt-oss:20b', mono: true });
     const engineGroup = group('', row('Agent', codex
       ? 'Codex, signed in with your ChatGPT plan, or running a local model. Your studio\'s skills, notes and permission mode apply the same way. New chats start on it; earlier ones stay in each chat\'s list.'

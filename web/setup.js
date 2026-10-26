@@ -1,4 +1,5 @@
 import { environmentPicker } from './setup-environments.js';
+import { isAdvanced } from './mode.js';
 import { TERMS } from './terms.js';
 // First-time setup checks local tools, then offers skippable database-backed brand profiles.
 import { $, esc, h, api, toast, confirmBox } from './ui.js';
@@ -203,7 +204,10 @@ export async function setupPage(ctx, { back = '#/', assistantPanel, focus = '' }
     const ol = $('#agents', el);
     try { scan = await api('/api/app/scan/agents'); }
     catch (e) { ol.replaceChildren(h(`<li class="su-item fail"><div class="su-i">${MARK.fail}</div><div class="su-b"><b>The scan didn't finish</b><span class="sub">${esc(e.message)}</span></div></li>`)); return; }
-    ol.replaceChildren(...scan.agents.map(agentRow));
+    // Simple mode lists Claude Code and Codex only; local model servers and pi stay in Advanced (one already
+    // connected still shows, so it can be switched away from).
+    const shown = isAdvanced() ? scan.agents : scan.agents.filter((a) => ['claude', 'codex'].includes(a.id) || isConnected(a));
+    ol.replaceChildren(...shown.map(agentRow));
   }
   const isConnected = (a) => scan?.connected?.id === a.id;
   function agentRow(a) {

@@ -123,6 +123,12 @@ export function mountSimpleEditor(ctx) {
     for (const s of c.say) out.push(`<p class="sx-say">${esc(s)}</p>`);
     const btns = c.buttons.map((b) => `<button type="button" class="btn ${b.kind === 'primary' ? 'primary' : ''}" data-a="${b.a}"${b.disabled ? ' disabled' : ''}>${esc(b.label)}</button>`).join('');
     let extra = '';
+    // A profile's batch (server/simple-profiles.mjs): once Claude has marked where each video starts and ends, one
+    // button makes them; afterwards, links to the videos it made.
+    const sp = st.split;
+    if (sp?.split?.length) extra += `<div class="sx-batch"><b>Split into ${sp.split.length} videos</b><span class="sub">Each one goes on from Rough cut on its own.</span><span class="sx-batch-l">${sp.split.map((v, i) => `<a href="#/p/${encodeURIComponent(v)}">${i + 1}</a>`).join(' · ')}</span></div>`;
+    else if (sp?.take && !sp.ready) extra += `<div class="sx-batch"><b>This take holds several videos</b><span class="sub">${esc(who())} finds where each script starts and ends, then you split it.</span><div class="sx-btns"><button type="button" class="btn primary" data-a="find-split"${P.busy ? ' disabled' : ''}>Find the videos</button></div></div>`;
+    else if (sp?.ready) extra += `<div class="sx-batch"><b>${sp.count} videos are marked in this take</b><span class="sub">Each gets its part of the take and its script.</span><div class="sx-btns"><button type="button" class="btn primary" data-a="split"${st.splitting ? ' disabled' : ''}>${st.splitting ? 'Splitting…' : 'Split into videos'}</button></div></div>`;
     if (c.extra === 'takes' && st.takes.length > 1) {
       extra += `<p class="sx-takes">Takes: ${st.takes.map((t) => `<button type="button" class="sx-take${t.canvas ? ' on' : ''}" data-take="${esc(t.id)}" aria-pressed="${t.canvas}" title="Take ${t.n}${t.duration ? ` · ${mmss(t.duration)}` : ''}">${t.n}</button>`).join(' · ')}</p>`;
     }
@@ -433,6 +439,16 @@ export function mountSimpleEditor(ctx) {
     if (a === 'mp3') { b.disabled = true; try { await api(`${base}/export-audio`, { format: 'mp3', contents: 'mix' }); st.job = { id: 'export', progress: 0 }; } catch (err) { toast(err.message); } update(); }
     if (a === 'post') { try { await api(`${base}/post-write`, {}); st.posting = true; } catch (err) { toast(err.message); } update(); }
     if (a === 'no-post') { st.postDone = true; update(); }
+    if (a === 'find-split') {
+      try { await api(`${base}/chat`, { text: 'The take is in. Transcribe it, find where each script of script.md starts and ends in the take (the last take of each, without the restarts and the pauses between), and write work/batch-split.json. Then tell me how many videos you found.' }); }
+      catch (err) { toast(err.message); }
+    }
+    if (a === 'split' && !st.splitting) {
+      st.splitting = true; update();
+      try { const r = await api(`/api/simple-profiles/split/${encodeURIComponent(id)}`, {}); toast(`Made ${r.videos.length} videos. Open each one from Projects.`); await loadSplit(); }
+      catch (err) { toast(err.message); }
+      finally { st.splitting = false; update(); }
+    }
     if (a === 'retry') { try { await api(`${base}/chat`, { retry: true }); } catch (err) { toast(err.message); } ctx.softRefresh(); }
   });
   const buildIds = (P) => simpleSteps(P.pipeline?.steps || []).find((s) => s.id === 'build')?.run || [];
@@ -628,9 +644,16 @@ export function mountSimpleEditor(ctx) {
       } else st.job = ev;
       update();
     }
-    if (ev.t === 'files' || ev.t === 'busy') { recPage.reload(); if (getP().pipeline) loadScenes(); }
+    if (ev.t === 'files' || ev.t === 'busy') { recPage.reload(); if (getP().pipeline) loadScenes(); loadSplit(); }
+  }
+  // A batch's split: is there a plan, and was it split? (null for every other video)
+  async function loadSplit() {
+    const r = await api(`/api/simple-profiles/split-state/${encodeURIComponent(id)}`).catch(() => null);
+    const next = r && 'ready' in r ? r : null;
+    if (JSON.stringify(next) !== JSON.stringify(st.split)) { st.split = next; update(); }
   }
   st.takes = [];
+  loadSplit();
   listTakes(id).then((t) => { st.takes = t; update(); });
   update();
 

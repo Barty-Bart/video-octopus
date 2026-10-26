@@ -48,6 +48,7 @@ import { mediaRoute, importedRecordings } from './media.mjs';
 import { playSource, playbackView, playbackMode, PLAYBACK_MODES, copiesSummary, deleteCopies, allCopies, deleteAllCopies } from './playback.mjs';
 import { trashRoute, binEntry } from './trash.mjs';
 import { simpleResourcesRoute, resourcesForNewVideo } from './simple-resources.mjs';
+import { simpleProfilesRoute, profileContext, harvestLearnings } from './simple-profiles.mjs';
 import { makeBed } from './simple-music.mjs';
 import { agentChoice, setAgentChoice, choiceView, codexModels } from './agent-choices.mjs';
 import { ccSource } from './claude-source.mjs';
@@ -123,6 +124,12 @@ function chatFor(id) {
     chat.agentChoice = () => agentChoice(id, chat.engine);
     chat.listeners.add((ev) => broadcast(id, ev));
     chat.listeners.add((ev) => { if (ev.t === 'busy' && !ev.busy) { stepRuns.delete(id); endBuildRun(id); } });
+    // A profile's video: lessons Claude saved this reply go into the profile's LEARNINGS.md, with one line in the chat.
+    chat.listeners.add((ev) => {
+      if (ev.t !== 'busy' || ev.busy || ev.replay) return;
+      try { for (const l of harvestLearnings(id)) logEvent(id, { t: 'note', text: `Learned for ${l.profile}: ${l.text}` }); }
+      catch (e) { console.error(`Learnings for ${id}:`, e.message); }
+    });
     // Save changes → Claude (B6): when the turn after the Save ends, count what came of the items it sent, for the
     // Scenes panel and one line in the chat ("Claude finished · 2 notes done, 1 still open").
     chat.listeners.add((ev) => {
@@ -204,6 +211,7 @@ function projectContext(id) {
     ...(meta.doneByImport?.length ? ['This video was imported as already edited (the creator\'s own edit): the whole file is the cut (work/edl_manual.json), and Clean up and Lock the cut are done by import. Don\'t rough-cut it or check its joins unless the creator asks ("Clean it up anyway" in the Cut stage undoes this); transcribe it, and Split into sections and Plan the scenes work on it as the locked cut.'] : []),
     ...(dir ? kitContext(dir, meta) : []),
     ...learningProjectContext({...meta, learning: projectLearning(id,meta)}),
+    ...profileContext(meta),
     blocksContext(),
     shotsContext(),
     `Everything in this project's window is a file you can change, and the window follows within a second: the layout and frame (project.json layout), the blocks (work/blocks.json), sound cues (work/sfx.json), notes and Look changes (work/notes.json), keyframes and moves (work/overrides.json), the post kit (work/post.json). So when the creator asks for a change anywhere in the window, make it in the file rather than describing where to click. Read the file first and change only the keys you mean to (keep the rest exactly). Changes you make yourself don't go into the change package; the creator's do. Your changes (in a reply or a step) apply directly: the creator sees them in the chat and can undo your last reply or step there.`,
@@ -618,6 +626,11 @@ async function route(req, res) {
   if ((p === '/api/resources' || p.startsWith('/api/resources/')) && await resourcesRoute(req, res, url, { send, body })) return;
   // Simple mode's Resources page: the built-in brand's look and its files (server/simple-resources.mjs).
   if ((p === '/api/simple-resources' || p.startsWith('/api/simple-resources/')) && await simpleResourcesRoute(req, res, url, { send, body })) return;
+  // Simple mode's profiles (server/simple-profiles.mjs): a profile's new video gets its first message in its chat.
+  if ((p === '/api/simple-profiles' || p.startsWith('/api/simple-profiles/')) && await simpleProfilesRoute(req, res, url, {
+    send, body,
+    started: (id, text) => chatFor(id).send(text, { brief: { name: 'Research and script' } }),
+  })) return;
   if (await learningRoute(req, res, url, { send, body, serveFile })) return;
   // Which agent runs the chats (Settings → Claude): Claude Code or Codex, and what each install reports.
   if (p === '/api/app/engines' && req.method === 'GET') return send(res, 200, await enginesView(url.searchParams.has('refresh'), { models: url.searchParams.has('models'), source: url.searchParams.has('source') }));
