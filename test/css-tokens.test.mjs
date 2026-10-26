@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const FILES = ['web/style.css', 'web/shell.css', 'web/memory.css', 'web/learning.css', 'web/packaging.css', 'web/onboarding.css', 'web/home.css', 'web/recorder.css', 'web/media.css'];
+const FILES = ['web/style.css', 'web/shell.css', 'web/memory.css', 'web/learning.css', 'web/packaging.css', 'web/onboarding.css', 'web/home.css', 'web/recorder.css', 'web/media.css', 'web/simple.css'];
 
 const THEME_SELECTOR = /^:root(\[data-(theme|accent)="[a-z]+"\])*$/;
 
