@@ -828,24 +828,95 @@ export async function recordPanel({ id, P, choices, opts = {}, settingsLink }) {
 // The take goes in as the video's take (target replace: an earlier take stays in source/, reachable from Takes).
 // Pause/Resume work as with the panel (one file). Resolves true once recording, false when cancelled; throws with why.
 export const SOURCES = { 'camera-screen': { screen: true, camera: true }, camera: { screen: false, camera: true }, screen: { screen: true, camera: false }, audio: { screen: false, camera: false } };
-export async function quickRecord({ id, P, sources = 'camera' }) {
+
+// ---------- Simple's Record page: the live preview before the take (V1 follow-ups, item 8) ----------
+// The page shows exactly what a take will record, so the streams open before Record: the camera and mic (one
+// permission prompt, the picks in the page's own camera and mic menus) and, for a screen, the browser's picker behind
+// the preview's "Choose what to share…". quickRecord then records these same streams: no second picker. The preview's
+// streams are `dev` while they're open (so liveStreams() sees them); previewClose() lets them go.
+let pv = null; // { screen, cam, mic, camera, micId }
+const pvSubs = new Set();
+const pvTell = () => { for (const fn of pvSubs) { try { fn(pv); } catch (e) { console.error(e); } } };
+export const previewStreams = () => pv;
+export const onPreview = (fn) => { pvSubs.add(fn); return () => pvSubs.delete(fn); };
+// Open (or keep) the camera and mic the page picked; 'none' lets one go. Resolves the preview's streams.
+export async function previewOpen({ camera = 'default', mic = 'default' } = {}) {
+  if (S.phase !== 'idle' || panelOpen) return pv;
+  if (!pv) pv = { screen: null, cam: null, mic: null, camera: null, micId: null };
+  const me = pv;
+  dev = me;
+  if (camera === 'none') { stopStream(me.cam); me.cam = null; me.camera = 'none'; }
+  if (mic === 'none') { stopStream(me.mic); me.mic = null; me.micId = 'none'; }
+  const cam = camera !== 'none' && (!me.cam || me.camera !== camera), mc = mic !== 'none' && (!me.mic || me.micId !== mic);
+  if (cam || mc) {
+    const r = await openUser(cam ? camera : 'none', mc ? mic : 'none');
+    if (pv !== me) { stopStream(r.cam); stopStream(r.mic); return pv; } // closed while the browser asked
+    if (cam) { stopStream(me.cam); me.cam = r.cam; me.camera = camera; }
+    if (mc) { stopStream(me.mic); me.mic = r.mic; me.micId = mic; }
+  }
+  pvTell();
+  return me;
+}
+// The browser's screen picker, for the preview ("Choose what to share…", then "Change").
+export async function previewScreen() {
+  if (S.phase !== 'idle') return null;
+  if (!pv) pv = { screen: null, cam: null, mic: null, camera: null, micId: null };
+  const me = pv;
+  dev = me;
+  let s;
+  try { s = await pickScreen(); }
+  catch (e) { if (e?.name === 'NotAllowedError' && !/system/i.test(e.message)) return null; throw new Error(permText(e, 'screen')); }
+  if (pv !== me) { stopStream(s); return null; }
+  stopStream(me.screen);
+  me.screen = s;
+  s.getVideoTracks()[0]?.addEventListener('ended', () => { if (pv === me && me.screen === s) { me.screen = null; pvTell(); } });
+  pvTell();
+  return s;
+}
+// Let the preview's streams go (the page closed, or a take took them over).
+export function previewClose() {
+  const me = pv;
+  pv = null;
+  if (me && run?.d !== me) closeDevices(me);
+  pvTell();
+}
+// The cameras and microphones this browser lists (names only once allowed): { cameras, mics } of { id, label }.
+export async function deviceLists() {
+  let all = [];
+  try { all = await navigator.mediaDevices.enumerateDevices(); } catch {}
+  const clean = (x, i, kind) => ({ id: x.deviceId || 'default', label: (x.label || `${kind} ${i + 1}`).replace(/\s*\([0-9a-f]{4}:[0-9a-f]{4}\)$/i, '') });
+  const of = (kind, word) => all.filter((x) => x.kind === kind && x.deviceId !== 'communications').map((x, i) => clean(x, i, word));
+  return { cameras: of('videoinput', 'Camera'), mics: of('audioinput', 'Microphone') };
+}
+
+// camera, mic: the Record page's picks (else the style's last ones). The preview's open streams are used as they are.
+export async function quickRecord({ id, P, sources = 'camera', camera = null, mic = null }) {
   if (S.phase !== 'idle') { toast('A take is still recording or saving.'); return false; }
   if (panelOpen) panelOpen.close();
   const sup = support();
   if (!sup.ok) throw new Error(`${browserName()} can't record here (${sup.missing.join(', ') || 'no video format'}). Use Chrome or Edge on Windows or Mac.`);
   const want = SOURCES[sources] || SOURCES.camera, ch = P?.recorder || {};
+  const pickCam = camera || (ch.camera && ch.camera !== 'none' ? ch.camera : 'default'), pickMic = mic && mic !== 'none' ? mic : ch.mic && ch.mic !== 'none' ? ch.mic : 'default';
   const sel = {
     display: want.screen ? 'screen' : 'none',
-    camera: want.camera ? (ch.camera && ch.camera !== 'none' ? ch.camera : 'default') : 'none',
-    mic: ch.mic && ch.mic !== 'none' ? ch.mic : 'default',
+    camera: want.camera ? (pickCam === 'none' ? 'default' : pickCam) : 'none',
+    mic: pickMic,
     target: 'replace', countdown: [0, 3, 5].includes(ch.countdown) ? ch.countdown : 3,
   };
-  const d = { screen: null, cam: null, mic: null };
+  // The preview's streams, when it has them: what isn't needed goes, what's missing opens below.
+  const pre = pv && dev === pv ? pv : null;
+  if (pre) { pv = null; pvTell(); }
+  const d = pre || { screen: null, cam: null, mic: null };
+  if (!want.screen) { stopStream(d.screen); d.screen = null; }
+  if (!want.camera) { stopStream(d.cam); d.cam = null; }
+  if (pre && d.cam && pre.camera !== sel.camera) { stopStream(d.cam); d.cam = null; }
+  if (pre && d.mic && pre.micId !== sel.mic) { stopStream(d.mic); d.mic = null; }
   dev = d;
   try {
-    if (want.screen) d.screen = await pickScreen();
-    const u = await openUser(sel.camera, sel.mic);
-    d.cam = u.cam; d.mic = u.mic;
+    if (want.screen && !d.screen) d.screen = await pickScreen();
+    const u = await openUser(want.camera && !d.cam ? sel.camera : 'none', d.mic ? 'none' : sel.mic);
+    if (u.cam) d.cam = u.cam;
+    if (u.mic) d.mic = u.mic;
   } catch (e) {
     closeDevices(d);
     if (e?.name === 'NotAllowedError' && want.screen && !d.screen && !/system/i.test(e.message)) return false; // no screen picked

@@ -48,6 +48,47 @@ export function exportOptions(P) {
   return { captions: t.captions.on ? { ...SUBTITLE_DEFAULTS, look: t.captions.look } : null, effects: { ...t.effects } };
 }
 
+// ---- the Record page: a live preview of what the take records (V1 follow-ups, item 8) ----
+// What each source records (web/recorder.js SOURCES says the same for the recorder).
+export const SOURCE_NEEDS = { 'camera-screen': { screen: true, camera: true }, camera: { screen: false, camera: true }, screen: { screen: true, camera: false }, audio: { screen: false, camera: false } };
+// The camera's box over the screen: the style's picture-in-picture box (project.json layout.webcam {x, y, w}, fractions
+// of the frame), else the bottom-right corner. → { x, y, w } in fractions.
+export function cameraCorner(layout) {
+  const w = layout?.webcam;
+  const ok = (v, lo, hi) => Number.isFinite(Number(v)) && Number(v) >= lo && Number(v) <= hi;
+  if (w && ok(w.x, 0, 1) && ok(w.y, 0, 1) && ok(w.w, 0.05, 1)) return { x: Number(w.x), y: Number(w.y), w: Number(w.w) };
+  return { x: 0.75, y: 0.68, w: 0.22 };
+}
+// The preview for a source pick: the frame (the video's shape), what shows (view: camera-screen | camera | screen |
+// mic), whether the screen still needs the browser's picker ("Choose what to share…") or can be changed, the camera's
+// corner over the screen, and which pickers the controls row offers. streams: { screen, cam, mic } (truthy when open).
+export function recordPreview(sources, { aspect = '16:9', streams = {}, layout = null } = {}) {
+  const key = SOURCE_NEEDS[sources] ? sources : 'camera', need = SOURCE_NEEDS[key];
+  const view = key === 'audio' ? 'mic' : key;
+  return {
+    sources: key, view, frame: aspect === '9:16' ? '9:16' : '16:9',
+    screen: need.screen, camera: need.camera,
+    pickScreen: need.screen && !streams.screen, changeScreen: need.screen && Boolean(streams.screen),
+    corner: need.screen && need.camera ? cameraCorner(layout) : null,
+    cameraFills: need.camera && !need.screen,
+    bigMeter: key === 'audio',
+    cameraPicker: need.camera, micPicker: true,
+    ready: (!need.screen || Boolean(streams.screen)) && (!need.camera || Boolean(streams.cam)) && Boolean(streams.mic),
+  };
+}
+// The script panel: "Script (optional)", secondary to the preview. Collapsed to one line while there's no script
+// (unless the creator opened it); with a script it starts open. Wide (1280 px and up): open, it sits to the right of the
+// preview; narrower, it goes under the controls (CSS: .sx-rec[data-script]). → { open, place, line }.
+export const SCRIPT_SIDE_MIN = 1280;
+const countWords = (t) => (String(t || '').replace(/\[[^\]]*\]/g, ' ').match(/[\p{L}\p{N}'’-]+/gu) || []).length;
+export function scriptPanel({ text = '', open = null, width = 1440 } = {}) {
+  const n = countWords(text);
+  const isOpen = open == null ? n > 0 : Boolean(open);
+  const mins = n / 150;
+  return { open: isOpen, place: width >= SCRIPT_SIDE_MIN ? 'side' : 'below', words: n,
+    line: n ? `${n.toLocaleString('en')} word${n === 1 ? '' : 's'} · ${mins < 1 ? 'under a minute' : `about ${Math.round(mins)} min`}` : 'Paste or write one, or ask Claude. It scrolls as a teleprompter while you record.' };
+}
+
 // ---- small words ----
 export const mmss = (s) => { const t = Math.max(0, Math.round(Number(s) || 0)); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; };
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -132,7 +173,7 @@ export function stepCard(P, ctx = {}) {
   if (ctx.exportError && step === 'download') return { ...card, error: true, title: ctx.exportError, buttons: [{ a: 'export', label: 'Try again', kind: 'primary' }] };
   if (step === 'record') {
     if (!hasTake(P)) {
-      return { ...card, say: [`Paste your script, or ask me to write one. When you press Record, it fills the window as a teleprompter.`], extra: 'record-page' };
+      return { ...card, say: [`Check the picture, then press Record. A script is optional: paste one, or ask me to write it, and it scrolls as a teleprompter while you record.`], extra: 'record-page' };
     }
     // A new take is still being saved (Record again): no Keep on the old one meanwhile.
     if (ctx.saving) return { ...card, title: 'Saving your take…', lines: ['A moment: it lands here, then you can keep it.'], busy: true };
