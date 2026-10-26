@@ -10,24 +10,25 @@
 //   banner (one, over the messages) and the B10 badge stay as they are.
 // - Right: the Record page while there's no take; then the video with captions (the canvas), the clickable transcript
 //   and the editable waveform (web/simple-wave.js), which stays on every step.
-// - Tools (right edge): Captions · Music · Text · Effects, each a tiny panel with "or ask Claude".
+// - No tool buttons (V1 follow-ups, item 9: agent-first): captions, music, titles and zooms are asked for in the chat
+//   (the chat's brief tells Claude it can make them). Under the step card, Media (collapsed): the video's media, each
+//   with Delete and Undo (web/simple-media.js, on Media's own routes).
+// - The centre is always the video (V1 follow-ups): the live preview before the first take, then the video with
+//   captions; the scene list sits below it in the transcript's place, thumbnails go in the step card.
 import { $, esc, h, api, toast } from './ui.js';
 import * as rec from './recorder.js';
 import { stepCard, roughCutState, simpleStepNow, progressLine, downloadTarget, exportOptions, toolsOf, isAudio, mmss,
-  CAPTION_LOOKS, INTENSITY, MUSIC_BEDS, BED_GAIN } from './simple-flow.js';
-import { simpleSteps } from './simple.js';
+  cameraCorner } from './simple-flow.js';
+import { simpleSteps, shapeOfType } from './simple.js';
 import { cutoutNotesHTML } from './cutout.js';
-import { dropKind, dropAsks, SIMPLE_KINDS, AUDIO_ACCEPT } from './resource-kinds.js';
+import { dropKind, dropAsks, SIMPLE_KINDS } from './resource-kinds.js';
+import { makeSimpleMedia } from './simple-media.js';
 import { makeCutModel, makeWave, makeTranscript, cutRange, restoreRange, isKept } from './simple-wave.js';
 import { askKind } from './resources-page.js';
 import { makeRecordPage, openTeleprompter, listTakes, deleteTake, restoreTake, useTake, sourcesFor } from './simple-record.js';
 
 const TAKE_FILE = /\.(mov|mp4|m4v|mkv|webm|wav|m4a|mp3|aif|aiff|caf|flac)$/i;
 const ICON = {
-  captions: '<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="4.5" width="15" height="11" rx="2"/><path d="M6 10.5h3M11 10.5h3M6 13h5"/></svg>',
-  music: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M8 15V5l8-1.5v10"/><circle cx="6" cy="15" r="2"/><circle cx="14" cy="13.5" r="2"/></svg>',
-  text: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 5h12M10 5v11M7.5 16h5"/></svg>',
-  effects: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 7V3h4M13 3h4v4M17 13v4h-4M7 17H3v-4"/><rect x="7" y="7" width="6" height="6" rx="1"/></svg>',
   drop: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3v10M6 9l4 4 4-4M4 16h12"/></svg>',
 };
 const ss = {
@@ -64,6 +65,9 @@ export function mountSimpleEditor(ctx) {
   const chatCol = $('.col.chat', el);
   const cardHost = h('<div class="sx-lead" aria-live="polite"></div>');
   $('.chat-head', chatCol)?.after(cardHost);
+  // Media (item 9): collapsed under the step card; the video's takes, dropped files and music, each with Delete.
+  const media = makeSimpleMedia({ id, getP, refresh: () => ctx.refresh(), prefs: () => ctx.mediaPrefs?.() || {}, remember: (c) => ctx.rememberDelete?.(c) });
+  cardHost.after(media.el);
   const drop = h(`<div class="sx-drop" tabindex="0" role="button" aria-label="Drop anything for Claude, or click to pick files">${ICON.drop}<b>Drop anything for Claude</b>
     <span class="sub">Clips, screenshots, product photos, a logo, notes. ${esc(who())} decides where they go and tells you.</span><span class="sx-drop-last" hidden></span>
     <input type="file" multiple hidden></div>`);
@@ -78,8 +82,6 @@ export function mountSimpleEditor(ctx) {
   const main = h('<div class="sx-main"></div>');
   const below = h('<div class="sx-below"><div class="sx-side"></div></div>');
   center.append(main, below);
-  const over = h('<div class="sx-over" hidden></div>'); // thumbnails over the video
-  $('.tab-body', center).append(over);
   const side = $('.sx-side', below);
   const model = makeCutModel({ id, onChange: () => { transcript?.update(); wave?.update(); }, onUnlock: async () => { await api(`${base}/rail`, { op: 'unfinished-ok' }).catch(() => {}); ctx.refresh(); } });
   const player = {
@@ -101,15 +103,6 @@ export function mountSimpleEditor(ctx) {
   const recPage = makeRecordPage({ id, getP,
     onRecord: (sources, text) => record(sources, text), onAskScript: () => askScript(), onFile: (f) => takeFile(f) });
   main.append(recPage.el);
-
-  // ---- tools ----
-  const tools = h(`<aside class="sx-tools" aria-label="Tools">${['captions', 'music', 'text', 'effects'].map((k) => `<button type="button" class="sx-tool" data-tool="${k}" aria-expanded="false">${ICON[k]}<span>${k[0].toUpperCase() + k.slice(1)}</span></button>`).join('')}
-    <div class="sx-panel" role="dialog" aria-modal="false" hidden></div></aside>`);
-  el.append(tools);
-  const panel = $('.sx-panel', tools);
-  let toolOpen = null, sounds = null, mine = null;
-  // The creator's own music: Resources' music files (web/resource-kinds.js), listed in the Music tool as beds.
-  const loadMine = async () => { try { mine = ((await api('/api/simple-resources')).files || []).filter((f) => f.kind === 'music'); } catch { mine = []; } };
 
   // ================= the card =================
   function card() {
@@ -143,6 +136,7 @@ export function mountSimpleEditor(ctx) {
       if (post && st.postDone) extra += `<p class="sx-say">The title and description are written: ask ${esc(who())} to show them, or to change anything.</p>`;
       if (c.post === 'writing') extra += `<p class="sx-say">${esc(who())} is writing the title and description in the chat below.</p>`;
     }
+    if (c.extra === 'thumbs') extra += thumbsHTML();
     // Scenes built without their cutout (roto inside Build): "Scene 2: Built without the cutout · Set up".
     if (c.notes?.length) extra += `<div class="sx-notes">${cutoutNotesHTML(c.notes, esc)}</div>`;
     const lines = c.extra === 'download' ? [] : c.lines;
@@ -180,6 +174,7 @@ export function mountSimpleEditor(ctx) {
     el.classList.toggle('sx-recording-page', page);
     recPage.el.hidden = !page;
     main.hidden = !page;
+    recPage.show(page && rec.session().phase === 'idle');
     // the video's captions and the locked-cut playback
     const play = $('[data-pane=canvas] #cutPlay', el);
     if (play && !play.checked && P.export?.cut) { play.checked = true; play.dispatchEvent(new Event('change')); }
@@ -190,8 +185,6 @@ export function mountSimpleEditor(ctx) {
     sceneList.hidden = !showScenes;
     transcript.el.hidden = showScenes;
     if (showScenes || c.step === 'build') loadScenes();
-    over.hidden = c.extra !== 'thumbs';
-    if (c.extra === 'thumbs') paintThumbs();
   }
 
   // ---- captions on the video ----
@@ -256,14 +249,11 @@ export function mountSimpleEditor(ctx) {
     const go = async () => { await loadThumbs(); update(); if (st.thumbs.state === 'running') thumbPoll = setTimeout(go, 2500); };
     thumbPoll = setTimeout(go, 1500);
   }
-  function paintThumbs() {
+  // The six thumbnails sit in the step card (the centre stays the video): a small grid to pick from.
+  function thumbsHTML() {
     const items = st.thumbs.items || [];
-    const sig = JSON.stringify([items.map((x) => x.id), st.thumbs.picked]);
-    if (over.dataset.sig === sig) return;
-    over.dataset.sig = sig;
-    over.innerHTML = `<h3 class="sx-h">${isAudio(getP()) ? 'Covers' : 'Thumbnails'}</h3><div class="sx-thumbs" role="radiogroup" aria-label="Pick one">${items.map((x, i) => `<button type="button" role="radio" class="sx-thumb${x.id === st.thumbs.picked ? ' on' : ''}" aria-checked="${x.id === st.thumbs.picked}" data-thumb="${esc(x.id)}"><img alt="${esc(x.name || `Idea ${i + 1}`)}" src="/api/packaging/${encodeURIComponent(id)}/item/${encodeURIComponent(x.id)}"><span>${esc(x.name || `Idea ${i + 1}`)}</span></button>`).join('')}</div>`;
+    return `<div class="sx-thumbs" role="radiogroup" aria-label="${isAudio(getP()) ? 'Covers' : 'Thumbnails'}: pick one">${items.map((x, i) => `<button type="button" role="radio" class="sx-thumb${x.id === st.thumbs.picked ? ' on' : ''}" aria-checked="${x.id === st.thumbs.picked}" data-thumb="${esc(x.id)}"><img alt="${esc(x.name || `Idea ${i + 1}`)}" src="/api/packaging/${encodeURIComponent(id)}/item/${encodeURIComponent(x.id)}"></button>`).join('')}</div>`;
   }
-  over.addEventListener('click', (e) => { const b = e.target.closest('[data-thumb]'); if (!b) return; st.thumbs.picked = b.dataset.thumb; update(); });
 
   // ================= actions =================
   async function run(stepId) {
@@ -273,10 +263,10 @@ export function mountSimpleEditor(ctx) {
     catch (e) { st.lastRun = null; toast(e.message); }
     ctx.softRefresh();
   }
-  async function record(sources, text) {
+  async function record(sources, text, devices = recPage.devices()) {
     st.recError = null; st.deleted = null;
     try {
-      const ok = await rec.quickRecord({ id, P: getP(), sources });
+      const ok = await rec.quickRecord({ id, P: getP(), sources, ...devices });
       if (!ok) return;
     } catch (e) { st.recError = e.message; update(); }
   }
@@ -285,7 +275,9 @@ export function mountSimpleEditor(ctx) {
   const offRec = rec.onSession((S) => {
     if (S.project !== id) return;
     if (['starting', 'recording'].includes(S.phase) && !document.querySelector('.vt')) {
-      openTeleprompter({ id, text: recPage.text() || lastText, sources: S.sources || recPage.sources() });
+      const P = getP();
+      openTeleprompter({ id, text: recPage.text() || lastText, sources: S.sources || recPage.sources(),
+        frame: shapeOfType(P?.type) === 'reel' ? '9:16' : '16:9', corner: cameraCorner(P?.layout) });
     }
     if (S.phase === 'idle' && S.landed) { setFlag('kept', false); setFlag('chain', false); setFlag('listened', false); loadTakesSoon(); }
     update();
@@ -376,6 +368,8 @@ export function mountSimpleEditor(ctx) {
   }
 
   cardHost.addEventListener('click', async (e) => {
+    const th = e.target.closest('[data-thumb]');
+    if (th) { st.thumbs.picked = th.dataset.thumb; return update(); }
     const b = e.target.closest('[data-a],[data-take]');
     if (!b) return;
     const a = b.dataset.a, P = getP();
@@ -512,127 +506,6 @@ export function mountSimpleEditor(ctx) {
   document.addEventListener('dragleave', onDragLeave);
   document.addEventListener('drop', onDrop);
 
-  // ================= tools =================
-  tools.addEventListener('click', (e) => {
-    const t = e.target.closest('[data-tool]')?.dataset.tool;
-    if (!t) return;
-    toolOpen = toolOpen === t ? null : t;
-    paintTool();
-  });
-  const saveTools = async (patch) => {
-    try { const r = await api(`${base}/simple-tools`, patch); getP().simpleTools = r.simpleTools; } catch (e) { toast(e.message); }
-    paintTool();
-  };
-  const askLine = (text) => `<p class="sub sx-askc">or ask ${esc(who())}: <button type="button" class="linkish" data-ask="${esc(text)}">“${esc(text)}”</button></p>`;
-  async function paintTool() {
-    tools.querySelectorAll('[data-tool]').forEach((b) => b.setAttribute('aria-expanded', String(b.dataset.tool === toolOpen)));
-    panel.hidden = !toolOpen;
-    if (!toolOpen) return;
-    const P = getP(), t = toolsOf(P);
-    if (toolOpen === 'captions') {
-      panel.innerHTML = `<h3 class="sx-h">Captions</h3>
-        <label class="sx-row"><span>Captions</span><input type="checkbox" role="switch" data-k="cap-on"${t.captions.on ? ' checked' : ''}></label>
-        <div class="seg wide" role="radiogroup" aria-label="Caption look">${Object.entries(CAPTION_LOOKS).map(([k, v]) => `<button type="button" role="radio" data-look="${k}" class="${t.captions.look === k ? 'on' : ''}" aria-checked="${t.captions.look === k}">${v}</button>`).join('')}</div>
-        <p class="sub">Burned into the downloaded video.</p>${askLine('Make the captions bigger')}`;
-    } else if (toolOpen === 'music') {
-      panel.innerHTML = '<h3 class="sx-h">Music</h3><p class="sub">Loading your sound library…</p>';
-      if (!sounds) { try { sounds = (await api(`${base}/sound`)).sounds || []; } catch { sounds = []; } }
-      if (!mine) await loadMine();
-      if (toolOpen !== 'music') return;
-      const cur = t.music, on = (f) => cur?.file === f;
-      // The three beds made here (no library needed), the creator's own music from Resources, then the library's
-      // approved sounds, if any.
-      const opts = [...Object.entries(MUSIC_BEDS).map(([k, v]) => ({ bed: k, name: v, on: Boolean(cur && cur.bed === k) })),
-        ...mine.map((x) => ({ res: x.id, name: x.name.replace(/\.[a-z0-9]+$/i, ''), on: Boolean(cur && cur.resource === x.id) })),
-        ...sounds.slice(0, 9).map((x) => ({ file: x.file, name: x.name, on: on(x.file) && !cur?.bed && !cur?.resource }))];
-      panel.innerHTML = `<h3 class="sx-h">Music</h3><div class="sx-list" role="radiogroup" aria-label="Music bed">
-        <button type="button" role="radio" data-bed="" class="${cur ? '' : 'on'}" aria-checked="${!cur}">None</button>
-        ${opts.map((o) => `<button type="button" role="radio" ${o.bed ? `data-gen="${o.bed}"` : o.res ? `data-mine="${esc(o.res)}"` : `data-bed="${esc(o.file)}"`} data-name="${esc(o.name)}" class="${o.on ? 'on' : ''}" aria-checked="${o.on}">${esc(o.name)}</button>`).join('')}</div>
-        <p class="sub sx-own">or <label class="linkish" tabindex="0">add your own<input type="file" accept="${AUDIO_ACCEPT}" hidden data-k="own-music"></label> · a sound file, kept in Resources for every video</p>
-        <label class="sx-row"><span>Volume</span><input type="range" min="-24" max="12" step="1" value="${cur?.gain ?? BED_GAIN}" data-k="gain" aria-label="Music volume"${cur ? '' : ' disabled'}></label>
-        <p class="sub">Plays under your voice for the whole video. The three above are made on this computer, free to use.</p>${askLine('Add calm music under my voice')}`;
-    } else if (toolOpen === 'text') {
-      const at = model.ready ? mmss(cutTime(player.time())) : mmss(player.time());
-      panel.innerHTML = `<h3 class="sx-h">Text</h3><label class="vh" for="sxTitle">Title text</label><input class="field" id="sxTitle" maxlength="80" placeholder="A title, e.g. “Three steps”">
-        <button type="button" class="btn small primary" data-k="add-title">Add at ${at}</button>
-        <p class="sub">${esc(who())} adds it to the scene there.</p>${askLine('Add a title at the start')}`;
-    } else if (toolOpen === 'effects') {
-      panel.innerHTML = `<h3 class="sx-h">Effects</h3>
-        <label class="sx-row"><span>Zooms</span><input type="checkbox" role="switch" data-k="zooms"${t.effects.zooms ? ' checked' : ''}></label>
-        <div class="seg wide" role="radiogroup" aria-label="Zoom intensity">${Object.entries(INTENSITY).map(([k, v]) => `<button type="button" role="radio" data-int="${k}" class="${Math.abs(t.effects.intensity - Number(k)) < 0.01 ? 'on' : ''}" aria-checked="${Math.abs(t.effects.intensity - Number(k)) < 0.01}"${t.effects.zooms ? '' : ' disabled'}>${v}</button>`).join('')}</div>
-        ${askLine('Zoom in on what I click')}`;
-    }
-  }
-  const cutTime = (t) => { let d = 0; for (const [a, b] of model.segs) { if (t < a) return d; if (t <= b) return d + t - a; d += b - a; } return d; };
-  panel.addEventListener('change', async (e) => {
-    const k = e.target.dataset.k, t = toolsOf(getP());
-    if (k === 'cap-on') await saveTools({ captions: { ...t.captions, on: e.target.checked } });
-    if (k === 'zooms') await saveTools({ effects: { ...t.effects, zooms: e.target.checked } });
-    if (k === 'own-music' && e.target.files?.[0]) {
-      // "or add your own": Resources' Upload with the kind set to music, right here; then it plays as this video's bed.
-      const f = e.target.files[0];
-      e.target.value = '';
-      const say = $('.sx-own', panel);
-      if (say) say.textContent = `Adding ${f.name}…`;
-      try {
-        const r = await fetch(`/api/simple-resources/upload?${new URLSearchParams({ name: f.name, kind: 'music' })}`, { method: 'POST', headers: { 'X-Studio': '1' }, body: f });
-        const j = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(j.error || `Could not add ${f.name}.`);
-        await loadMine();
-        toast(`${f.name} is in Resources, with your music.`);
-        await paintTool();
-        $(`[data-mine="${CSS.escape(j.id)}"]`, panel)?.click();
-      } catch (err) { toast(err.message); paintTool(); }
-      return;
-    }
-    if (k === 'gain' && t.music) {
-      const gain = Number(e.target.value);
-      try { await api(`${base}/sfx`, { op: 'update', id: t.music.cue, gain }); } catch {}
-      await saveTools({ music: { ...t.music, gain } });
-    }
-  });
-  panel.addEventListener('keydown', (e) => {
-    const l = e.target.closest?.('label.linkish');
-    if (l && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); l.querySelector('input[type=file]')?.click(); }
-  });
-  panel.addEventListener('click', async (e) => {
-    const b = e.target.closest('button');
-    if (!b) return;
-    const t = toolsOf(getP());
-    if (b.dataset.ask) { if (input) { input.value = b.dataset.ask; input.focus(); input.dispatchEvent(new Event('input')); } return; }
-    if (b.dataset.look) await saveTools({ captions: { ...t.captions, look: b.dataset.look } });
-    if (b.dataset.int) await saveTools({ effects: { ...t.effects, intensity: Number(b.dataset.int) } });
-    if ('bed' in b.dataset || b.dataset.gen || b.dataset.mine) {
-      if (b.classList.contains('on')) return;
-      panel.querySelectorAll('[role=radio]').forEach((x) => { x.disabled = true; });
-      const gain = t.music?.gain ?? BED_GAIN;
-      try {
-        // A made bed: ffmpeg synthesises it for this video's length first (a few seconds for a long take).
-        let file = b.dataset.bed, from = 'library';
-        if (b.dataset.gen) {
-          b.textContent = `${b.dataset.name} · making it…`;
-          file = (await api(`${base}/simple-music`, { bed: b.dataset.gen, seconds: Math.ceil(player.duration() || getP().export?.duration || 60) })).file;
-          from = 'project';
-        }
-        // The creator's own music: its Resources file is copied under this video first (once per file).
-        if (b.dataset.mine) { b.textContent = `${b.dataset.name} · adding it…`; file = (await api(`${base}/simple-music`, { resource: b.dataset.mine })).file; from = 'project'; }
-        if (t.music?.cue) { try { await api(`${base}/sfx`, { op: 'remove', id: t.music.cue }); } catch {} }
-        if (!file) return saveTools({ music: null });
-        const at = model.ready && model.segs.length ? model.segs[0][0] : 0;
-        const r = await api(`${base}/sfx`, { op: 'add', file, from, t: at, gain, label: `Music: ${b.dataset.name}` });
-        await saveTools({ music: { cue: r.id, file, label: b.dataset.name, gain, ...(b.dataset.gen ? { bed: b.dataset.gen } : b.dataset.mine ? { resource: b.dataset.mine } : {}) } });
-      } catch (err) { toast(err.message); paintTool(); }
-    }
-    if (b.dataset.k === 'add-title') {
-      const text = $('#sxTitle', panel)?.value.trim();
-      if (!text) return toast('Type the title first.');
-      const at = mmss(model.ready ? cutTime(player.time()) : player.time());
-      try { await ctx.chat.send(`Add the title "${text}" on screen at ${at} of the video.`); toast(`Asked ${who()} to add it at ${at}.`); toolOpen = null; paintTool(); } catch (err) { toast(err.message); }
-    }
-  });
-  const onDocDown = (e) => { if (toolOpen && !tools.contains(e.target)) { toolOpen = null; paintTool(); } };
-  document.addEventListener('pointerdown', onDocDown, true);
-
   // ================= update =================
   let cutSig = '';
   function update() {
@@ -668,7 +541,7 @@ export function mountSimpleEditor(ctx) {
       } else st.job = ev;
       update();
     }
-    if (ev.t === 'files' || ev.t === 'busy') { recPage.reload(); if (getP().pipeline) loadScenes(); }
+    if (ev.t === 'files' || ev.t === 'busy') { recPage.reload(); media.reload(); if (getP().pipeline) loadScenes(); }
   }
   st.takes = [];
   listTakes(id).then((t) => { st.takes = t; update(); });
@@ -680,8 +553,8 @@ export function mountSimpleEditor(ctx) {
     destroy() {
       offRec(); cancelAnimationFrame(capRaf); clearTimeout(thumbPoll); clearTimeout(takesT);
       document.removeEventListener('dragover', onDragOver); document.removeEventListener('dragleave', onDragLeave); document.removeEventListener('drop', onDrop);
-      document.removeEventListener('pointerdown', onDocDown, true); document.removeEventListener('keydown', onRecKey);
-      wave.destroy(); transcript.destroy(); recPage.destroy(); prog.remove(); dl.remove();
+      document.removeEventListener('keydown', onRecKey);
+      wave.destroy(); transcript.destroy(); recPage.destroy(); media.destroy(); prog.remove(); dl.remove();
       document.body.classList.remove('simple-editor', 'sx-dragging');
     },
   };

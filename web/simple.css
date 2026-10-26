@@ -33,8 +33,8 @@ html[data-mode=simple] #usage { display: none !important; }
 .project.simple.sx-recording-page .sx-below { display: none; }
 
 /* ---- the layout: Claude 440 · video, transcript, waveform · tools 72 ---- */
-.project.simple { grid-template-columns: minmax(340px, 440px) minmax(0, 1fr) 72px; }
-.project.simple.folded { grid-template-columns: minmax(340px, 440px) minmax(0, 1fr) 72px; }
+.project.simple { grid-template-columns: minmax(340px, 440px) minmax(0, 1fr); }
+.project.simple.folded { grid-template-columns: minmax(340px, 440px) minmax(0, 1fr); }
 .project.simple.folded .chat > :not(.chat-rail) { display: flex; }
 .project.simple .center { display: flex; flex-direction: column; min-height: 0; gap: 10px; }
 .project.simple .tab-body { flex: 1 1 52%; min-height: 200px; display: flex; flex-direction: column; }
@@ -96,14 +96,52 @@ body.sx-dragging .sx-drop { border-color: var(--accent); background: var(--accen
 .sx-drop:focus-visible { outline: 2px solid var(--focus-ring, var(--accent)); }
 
 /* ---- the Record page ---- */
-.sx-rec { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 14px; padding: 20px 24px; background: var(--surface); border-radius: var(--panel-radius, 14px); }
-.sx-rec-h { display: flex; align-items: center; gap: 10px; }
-.sx-rec-h h2 { margin: 0; font-size: 16px; font-weight: 600; }
-.sx-script { flex: 1; min-height: 160px; resize: none; border: 0; border-radius: 12px; background: var(--surface-2); color: var(--text); padding: 18px 20px; font: inherit; font-size: 16px; line-height: 1.8; }
+/* ---- Record: the live preview in the centre, its controls under it, the script beside or under (item 8) ---- */
+.sx-rec { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto auto auto;
+  grid-template-areas: "pv" "ctl" "scr" "foot"; gap: 12px; padding: 16px 20px; background: var(--surface); border-radius: var(--panel-radius, 14px); }
+.sx-pv { grid-area: pv; min-height: 240px; position: relative; display: flex; border-radius: 12px; background: var(--stage); padding: 12px; }
+.sx-pv .rl-stage { flex: 1; min-height: 0; }
+.sx-pv[data-frame="9:16"] .rl-frame, .vt-live[data-frame="9:16"] .rl-frame { width: min(100cqw, 100cqh * 9 / 16); aspect-ratio: 9 / 16; }
+.sx-pv .rl-frame { display: flex; }
+.sx-pv[data-view=camera] .rl-screen, .sx-pv[data-view=mic] .rl-screen, .sx-pv[data-view=mic] .rl-cam, .sx-pv[data-view=screen] .rl-cam { display: none; }
+.sx-pv-mic { display: none; position: absolute; inset: 0; flex-direction: column; align-items: center; justify-content: center; gap: 16px; color: var(--stage-dim); }
+.sx-pv[data-view=mic] .sx-pv-mic { display: flex; }
+.sx-pv-time { font-size: clamp(40px, 9cqw, 96px); font-weight: 600; color: var(--white); font-variant-numeric: tabular-nums; line-height: 1; }
+.sx-pv-big { width: min(80%, 420px); flex: none; }
+.sx-pv-big i { height: 26px; }
+.sx-pv-micw { font-size: 13px; }
+.sx-pv-pick, .sx-pv-wait, .sx-pv-err { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; text-align: center; padding: 16px; color: var(--stage-dim); font-size: 13px; }
+.sx-pv-pick[hidden], .sx-pv-wait[hidden], .sx-pv-err[hidden], .sx-pv-change[hidden] { display: none; }
+.sx-pv-err { background: color-mix(in srgb, var(--stage) 88%, transparent); color: var(--white); }
+.sx-pv-change { position: absolute; top: 10px; right: 10px; z-index: 2; }
+.sx-rec-ctl { grid-area: ctl; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; row-gap: 8px; }
+.sx-dev { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.sx-dev[hidden] { display: none; }
+.sx-dev select { max-width: 170px; height: 34px; }
+.sx-dev .sx-pv-mini { width: 56px; min-width: 0; flex: none; }
+.sx-pv-mini i { height: 14px; }
+.sx-recbtn { gap: 8px; padding: 0 26px; margin-left: auto; }
+.sx-scr { grid-area: scr; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.sx-scr-h { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.sx-scr-t { border: 0; background: none; padding: 4px 0; font: inherit; font-weight: 600; color: var(--text); display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.sx-chev { width: 7px; height: 7px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); transition: transform 0.15s; }
+.sx-rec[data-script=open] .sx-chev { transform: rotate(45deg); }
+.sx-count { font-size: 12.5px; }
+.sx-script { min-height: 140px; height: 160px; resize: vertical; border: 0; border-radius: 12px; background: var(--surface-2); color: var(--text); padding: 14px 16px; font: inherit; font-size: 15px; line-height: 1.7; }
+.sx-script[hidden] { display: none; }
 .sx-script:focus { outline: 2px solid var(--focus-ring, var(--accent)); outline-offset: 0; }
-.sx-rec-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.sx-recbtn { gap: 8px; padding: 0 22px; }
-.sx-rec-foot { margin: 0; }
+.sx-rec-foot { grid-area: foot; margin: 0; }
+/* Wide and open: the script is a panel to the right of the preview, as tall as it (web/simple-flow.js SCRIPT_SIDE_MIN). */
+@media (min-width: 1280px) {
+  .sx-rec[data-script=open] { grid-template-columns: minmax(0, 1fr) minmax(240px, 26%); grid-template-rows: minmax(0, 1fr) auto auto; grid-template-areas: "pv scr" "ctl scr" "foot scr"; }
+  .sx-rec[data-script=open] .sx-script { flex: 1; height: auto; resize: none; }
+  .sx-rec[data-script=open] .sx-dev select { max-width: 104px; }
+  .sx-rec[data-script=open] .sx-src button { padding: 0 8px; }
+  .sx-rec[data-script=open] .sx-dev .sx-pv-mini { display: none; }
+}
+/* While recording with no script: the live picture fills the window under the bar. */
+.vt-live { position: absolute; inset: 0 4% 4%; display: flex; }
+.vt-live .rl-stage { flex: 1; }
 
 /* ---- the video's captions ---- */
 .sx-cap { position: absolute; left: 8%; right: 8%; bottom: 7%; display: flex; justify-content: center; pointer-events: none; }
@@ -112,14 +150,27 @@ body.sx-dragging .sx-drop { border-color: var(--accent); background: var(--accen
 .sx-cap[data-look=bold] span { text-transform: uppercase; font-weight: 700; -webkit-text-stroke: 1px var(--black); }
 .sx-cap[data-look=boxed] span { background: color-mix(in srgb, var(--black) 72%, transparent); text-shadow: none; padding: 4px 10px; border-radius: 6px; }
 
-/* ---- thumbnails over the video ---- */
-.sx-over { position: absolute; inset: 0; background: var(--surface); border-radius: var(--stage-radius, 14px); padding: 16px; overflow: auto; z-index: 2; }
-.sx-over[hidden] { display: none; }
+/* ---- thumbnails, in the step card (the centre stays the video) ---- */
 .sx-h { margin: 0 0 10px; font-size: 13px; font-weight: 600; }
-.sx-thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
-.sx-thumb { border: 0; background: var(--surface-2); border-radius: 12px; padding: 8px; display: flex; flex-direction: column; gap: 6px; cursor: pointer; font: inherit; color: var(--text-2); text-align: left; }
-.sx-thumb img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 8px; background: var(--stage); }
-.sx-thumb.on { box-shadow: 0 0 0 2px var(--text); color: var(--text); }
+.sx-thumbs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.sx-thumb { border: 0; background: var(--surface); border-radius: 8px; padding: 3px; cursor: pointer; }
+.sx-thumb img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 6px; background: var(--stage); }
+.sx-thumb.on { box-shadow: 0 0 0 2px var(--text); }
+
+/* ---- Media, collapsed under the step card (item 9) ---- */
+.sx-media { margin: 0 16px 8px; border-radius: 12px; background: var(--surface-2); flex: none; }
+.sx-media summary { cursor: pointer; padding: 8px 12px; font-size: 13px; list-style-position: inside; }
+.sx-media summary b { font-weight: 600; }
+.sx-media-list { list-style: none; margin: 0; padding: 0 8px 8px; display: flex; flex-direction: column; gap: 4px; max-height: 260px; overflow: auto; }
+.sx-mi { display: flex; align-items: center; gap: 10px; padding: 4px; border-radius: 8px; }
+.sx-mi:hover { background: var(--surface); }
+.sx-mi-pv { flex: none; width: 48px; height: 30px; border-radius: 6px; overflow: hidden; background: var(--stage); display: grid; place-items: center; color: var(--stage-dim); font-style: normal; }
+.sx-mi-pv img, .sx-mi-pv video { width: 100%; height: 100%; object-fit: cover; }
+.sx-mi-pv i { font-style: normal; font-size: 13px; }
+.sx-mi-t { flex: 1; min-width: 0; display: flex; flex-direction: column; font-size: 12.5px; }
+.sx-mi-t b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sx-mi-t .sub { font-size: 11.5px; }
+.sx-mi-none { padding: 4px 6px; font-size: 12px; }
 
 /* ---- scenes list, transcript ---- */
 .sx-scenes { max-height: 220px; overflow: auto; padding: 4px 2px; }
@@ -160,20 +211,6 @@ body.sx-dragging .sx-drop { border-color: var(--accent); background: var(--accen
 .sw-hint { margin: 0; font-size: 11.5px; color: var(--text-3); }
 .sw-wave.readonly .sw-cv-wrap { cursor: pointer; }
 
-/* ---- tools ---- */
-.sx-tools { position: relative; display: flex; flex-direction: column; gap: 6px; padding: 8px 4px; background: var(--panel); border-left: 1px solid var(--line); }
-.sx-tool { border: 0; background: none; border-radius: 10px; padding: 8px 2px; display: flex; flex-direction: column; align-items: center; gap: 4px; font: inherit; font-size: 11px; color: var(--text-2); cursor: pointer; }
-.sx-tool svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-.sx-tool:hover, .sx-tool[aria-expanded=true] { background: var(--active); color: var(--text); }
-.sx-panel { position: absolute; right: calc(100% + 8px); top: 8px; width: 260px; background: var(--surface); border-radius: 14px; box-shadow: var(--shadow-pop, var(--pop)); padding: 14px; display: flex; flex-direction: column; gap: 10px; z-index: 12; }
-.sx-panel[hidden] { display: none; }
-.sx-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px; }
-.sx-list { display: flex; flex-direction: column; gap: 4px; max-height: 200px; overflow: auto; }
-.sx-list button { border: 0; background: var(--surface-2); border-radius: 8px; padding: 6px 10px; text-align: left; font: inherit; color: var(--text-2); cursor: pointer; }
-.sx-list button.on { background: var(--text); color: var(--inverse); }
-.sx-askc { margin: 0; font-size: 12px; }
-.sx-panel .seg button.on { background: var(--surface); color: var(--text); }
-
 /* ---- the full-window teleprompter ---- */
 .vt { position: fixed; inset: 0; z-index: 35; background: var(--black); color: var(--white); display: flex; flex-direction: column; }
 body.vt-open { overflow: hidden; }
@@ -208,10 +245,11 @@ body.vt-open { overflow: hidden; }
 .vt-sub { color: var(--stage-dim); font-size: 15px; }
 .vt-bottom { display: flex; justify-content: center; gap: 10px; padding: 18px; flex-wrap: wrap; }
 
-/* ---- narrow: one column, Claude first, the tools in a row ---- */
+/* ---- narrow: one column, Claude first ---- */
 @media (max-width: 980px) {
   .project.simple, .project.simple.folded { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto; height: auto; overflow: visible; }
   .project.simple .chat { height: auto; max-height: none; border-right: 0; }
+  .project.simple .center { order: -1; } /* the video (or the Record preview) first, then Claude */
   .project.simple .msgs { max-height: 240px; min-height: 80px; }
   .sx-lead { max-height: none; }
   .project.simple .tab-body { flex: none; height: min(56vw, 420px); }
@@ -223,11 +261,15 @@ body.vt-open { overflow: hidden; }
 }
 @media (max-width: 760px) {
   .project.simple .tab-body { min-height: 220px; }
-  .sx-tools { flex-direction: row; justify-content: space-around; border-left: 0; border-top: 1px solid var(--line); }
-  .sx-panel { right: auto; left: 8px; top: auto; bottom: calc(100% + 8px); width: calc(100vw - 48px); }
   .sx-prog .sx-st:not(.current) { font-size: 0; gap: 0; }
   .sx-prog .sx-sp { width: 6px; }
-  .sx-rec { padding: 14px; }
+  .sx-rec { padding: 12px; }
+  .sx-pv { min-height: 0; height: min(60vw, 360px); padding: 8px; }
+  .sx-rec[data-frame="9:16"] .sx-pv { height: min(120vw, 520px); }
+  .sx-dev select { max-width: 140px; }
+  .sx-recbtn { width: 100%; margin-left: 0; justify-content: center; }
+  .sx-src { width: 100%; display: flex; }
+  .sx-src button { flex: 1; padding: 0 4px; font-size: 11.5px; white-space: nowrap; }
   .vt-host { inset: 0 6%; }
   .vt-hint { display: none; }
 }

@@ -35,7 +35,7 @@ import { existsSync, readdirSync, readFileSync, statSync, rmSync, mkdirSync } fr
 import { join, basename } from 'node:path';
 import { readJSON, writeJSON, mtime, settings } from './util.mjs';
 import { projectMeta, saveProjectMeta, projectMedia, roles, takeKey, isAudio, isTakeFile, probe, proxyName, proxyRunning,
-  makeProxies, appendWorklog, projectsRoot, IMPORT_NOTE } from './studio.mjs';
+  makeProxies, appendWorklog, projectsRoot, IMPORT_NOTE, MEDIA, probeFile } from './studio.mjs';
 import { normalize, newLayers } from '../web/layout.js';
 import { trashRoot, moveAside, newTrashEntry, TRASH_NAME, takeFolder, takeBusy, projectsUsing } from './browser-recorder.mjs';
 
@@ -87,7 +87,46 @@ export function mediaItems(dir) {
   });
   const rank = (x) => (x.canvas ? 0 : x.layers.length ? 1 : 2);
   items.sort((a, b) => rank(a) - rank(b) || b.at - a.at);
-  return { items, work: canvasWork(dir, items.find((x) => x.canvas)), removed: removedEntries(basename(dir)) };
+  return { items, work: canvasWork(dir, items.find((x) => x.canvas)), removed: removedEntries(basename(dir)), dropped: droppedFiles(dir), music: musicCues(dir) };
+}
+
+// Simple's Media list (V1 follow-ups, item 9) also shows what isn't a take: the other files dropped into source/
+// (pictures, notes, fonts: Drop for Claude, or Claude's own pictures there), and the music under the video (sound cues
+// from work/music/: Simple's beds and the creator's own music). Advanced's Media section doesn't use these fields.
+const PICTURE = /\.(png|jpe?g|webp|gif|svg)$/i;
+export function droppedFiles(dir) {
+  let names = [];
+  try { names = readdirSync(join(dir, 'source'), { withFileTypes: true }).filter((e) => e.isFile() && !e.name.startsWith('.') && !MEDIA.test(e.name)).map((e) => e.name); } catch {}
+  return names.map((name) => {
+    let bytes = 0, at = 0;
+    try { const st = statSync(join(dir, 'source', name)); bytes = st.size; at = st.mtimeMs; } catch {}
+    return { file: `source/${name}`, name, bytes, at, picture: PICTURE.test(name) };
+  }).sort((a, b) => b.at - a.at);
+}
+export function musicCues(dir) {
+  const j = readJSON(join(dir, 'work', 'sfx.json'), null);
+  const list = Array.isArray(j) ? j : Array.isArray(j?.cues) ? j.cues : [];
+  return list.filter((c) => c && typeof c.file === 'string' && c.from === 'project' && c.file.startsWith('work/music/') && !c.file.includes('..'))
+    .map((c) => ({ id: String(c.id || ''), file: c.file, label: String(c.label || '').replace(/^Music:\s*/, '') || c.file.split('/').pop(), gain: Number(c.gain) || 0, t: Number(c.t) || 0,
+      duration: probeFile(join(dir, c.file))?.duration || null }));
+}
+
+// Remove a dropped file (not a take) from the video: it goes to the studio's trash like removed media, and the same
+// Undo (/media-restore) brings it back.
+export function removeDropped(dir, file, { busy = null } = {}) {
+  if (busy) throw refuse(busy);
+  const name = String(file || '').replace(/^source\//, '');
+  if (!name || name.includes('/') || name.includes('\\') || name.startsWith('.') || MEDIA.test(name)) throw new Error('That isn’t a dropped file of this video.');
+  const from = join(dir, 'source', name);
+  if (!existsSync(from) || !statSync(from).isFile()) throw new Error('That file isn’t in the video any more.');
+  const meta = projectMeta(dir) || {};
+  const entry = newTrashEntry(name.replace(/[^\w .()-]/g, '_').slice(0, 100) || 'file');
+  const root = join(trashRoot(), entry);
+  moveAside(from, join(root, 'project', 'source', name));
+  writeJSON(join(root, 'manifest.json'), { v: 1, kind: KIND, at: Date.now(), project: basename(dir), item: name, files: [name], proxies: [],
+    before: { takes: meta.takes || [], canvas: false, activeTake: meta.activeTake ?? null, activeSince: meta.activeSince ?? null, layers: [] }, after: { activeTake: meta.activeTake ?? null } });
+  appendWorklog(dir, `Removed ${name} from the video (Media): moved to the studio's trash (${entry})`);
+  return { ok: true, item: name, trash: entry, files: [name], canvas: false };
 }
 
 // source/'s media by item (studio.mjs takeKey): key -> files.
@@ -439,6 +478,7 @@ export async function mediaRoute(req, res, { dir, action, send, body, emit, busy
       if (cam && frame) Promise.resolve().then(() => frame(cam)).catch((e) => console.error(`Auto-frame of the new layer failed: ${e.message}`));
       return changed(r, true);
     }
+    if (action === '/media-drop-remove') return changed(removeDropped(dir, String(b.file || ''), { busy: busy() }));
     if (action === '/media-remove') return changed(removeMedia(dir, key, { confirm: b.confirm === true, busy: busy() }));
     if (action === '/media-delete') return changed(await deleteRecording(dir, key, { confirm: b.confirm === true, busy: busy(), toBin }));
     if (action === '/media-restore') return changed(restoreMedia(dir, String(b.trash || ''), { busy: busy() }), true);

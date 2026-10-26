@@ -20,6 +20,9 @@ const HELP = `octopus: act on the running Video Octopus (${BASE})
   octopus projects archive <id>            move it aside into <projects>/_archive/ (hidden from Home, nothing deleted)
   octopus projects archived                the archived projects
   octopus projects restore <id>            bring an archived project back
+  octopus music <project> calm|bright|warm [--gain dB]   a music bed made on this computer, under the whole video
+  octopus music <project> --resource <id> [--gain dB]    the creator's own music from Resources, under the whole video
+  octopus music <project> off              take the music away
   octopus settings [section]               show settings (all sections, or one)
   octopus settings set <section>.<key> <value>   e.g. octopus settings set editing.trimLens on
   octopus schedules                        list scheduled runs
@@ -76,6 +79,28 @@ const schedFields = () => Object.fromEntries([['name', opt.name], ['cron', opt.c
 
 const [area = 'help', verb, ...rest] = pos;
 const cmds = {
+  // Simple mode's music (no Music button: the project's chat does it): the bed or the creator's file is made or copied
+  // under the video (POST /simple-music), placed as one project sound cue at the cut's start, replacing the last one.
+  async music() {
+    const pid = verb, what = rest[0];
+    if (!pid || (!what && typeof opt.resource !== 'string')) throw new Error('octopus music <project> calm|bright|warm|off  (or --resource <id>)');
+    const base = `/api/projects/${encodeURIComponent(pid)}`;
+    const P = await api(base);
+    const cur = P.simpleTools?.music;
+    if (cur?.cue) await api(`${base}/sfx`, { op: 'remove', id: cur.cue }).catch(() => {});
+    if (what === 'off') { await api(`${base}/simple-tools`, { music: null }); return out({ ok: true }, () => 'No music under the video now.'); }
+    const BEDS = { calm: 'Calm pad', bright: 'Bright pulse', warm: 'Warm drone' };
+    const gain = Number.isFinite(Number(opt.gain)) ? Number(opt.gain) : -6;
+    let made;
+    if (typeof opt.resource === 'string') made = await api(`${base}/simple-music`, { resource: opt.resource });
+    else if (BEDS[what]) made = { ...(await api(`${base}/simple-music`, { bed: what, seconds: Math.ceil(P.export?.duration || 60) })), label: BEDS[what] };
+    else throw new Error('Pick calm, bright or warm, or --resource <id>.');
+    const take = await api(`${base}/cut-take`).catch(() => null);
+    const at = take?.segments?.[0]?.[0] || 0, label = made.label || made.file.split('/').pop();
+    const cue = await api(`${base}/sfx`, { op: 'add', file: made.file, from: 'project', t: at, gain, label: `Music: ${label}` });
+    await api(`${base}/simple-tools`, { music: { cue: cue.id, file: made.file, label, gain, ...(BEDS[what] ? { bed: what } : made.resource ? { resource: made.resource } : {}) } });
+    return out({ ...made, cue: cue.id }, () => `Music under the video: ${label} (${gain} dB), from ${made.file}.`);
+  },
   async memory() {
     if (verb !== 'search' || !rest[0] || typeof opt.chat !== 'string') throw Error('octopus memory search "<query>" --chat <id>');
     const r = await api(`/api/memory/recall?chat=${encodeURIComponent(opt.chat)}&q=${encodeURIComponent(rest.join(' '))}`);

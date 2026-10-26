@@ -1425,6 +1425,7 @@ async function openProject(id) {
   if (!isAdvanced()) {
     pendingRecord = pendingRecord === id ? null : pendingRecord;
     simple = mountSimpleEditor({ el, id, getP: () => P, refresh, softRefresh, chat, canvas, importTakeFile: (f) => importTakeFile(id, f, { askEdited: false }),
+      mediaPrefs: () => STATUS.storage || {}, rememberDelete,
       showCanvas: () => { if (tab !== 'canvas') showPane('canvas'); },
       exportVideo: async (opts) => {
         if (!canvas.ready()) throw new Error('The video is still loading. Try again in a moment.');

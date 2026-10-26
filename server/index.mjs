@@ -36,7 +36,7 @@ import { startBuildRun, endBuildRun, buildProgress, noteBuildFiles } from './bui
 import { prepareRoto, cutoutSummary } from './roto.mjs';
 import { learningRoute, learningProjectContext, projectLearning, guardLearnedStep, learningBusy, killLearning, approveLearnedPlan, unapproveLearnedPlan } from './learning.mjs';
 import { assistantRoute, killAssistant, assistantBusy } from './assistant.mjs';
-import { onSettingsChange, restartWhenIdle, section, transcribeHow } from './settings.mjs';
+import { onSettingsChange, restartWhenIdle, section, transcribeHow, isAdvanced } from './settings.mjs';
 import { listBackgrounds, useLibraryBackground, saveUpload, saveToLibrary, generateBrief, libraryFile, bgJobRoute, backgroundsBusy } from './backgrounds.mjs';
 import { kitRoute, libraryRoute, kitContext, kitSummary, KIT_ACTIONS } from './kit.mjs';
 import { saveToLibrary as addToLibrary } from './library.mjs';
@@ -206,6 +206,7 @@ function projectContext(id) {
     ...learningProjectContext({...meta, learning: projectLearning(id,meta)}),
     blocksContext(),
     shotsContext(),
+    ...(isAdvanced() ? [] : [simpleChatContext(id)]),
     `Everything in this project's window is a file you can change, and the window follows within a second: the layout and frame (project.json layout), the blocks (work/blocks.json), sound cues (work/sfx.json), notes and Look changes (work/notes.json), keyframes and moves (work/overrides.json), the post kit (work/post.json). So when the creator asks for a change anywhere in the window, make it in the file rather than describing where to click. Read the file first and change only the keys you mean to (keep the rest exactly). Changes you make yourself don't go into the change package; the creator's do. Your changes (in a reply or a step) apply directly: the creator sees them in the chat and can undo your last reply or step there.`,
     `The cut is work/edl_manual.json {segments_sec: [[start, end], …]}: the kept parts of the canvas take, in take seconds (the Cut tab and Scenes edit the same file). Change it only when asked; the Cut tab follows, and graphics are re-timed when the creator presses Save changes → Claude. Once the cut is locked (Lock the cut wrote "Cut locked" in WORKLOG.md) the Cut tab is read-only for the creator until they press Unlock to edit (WORKLOG then says "Cut unlocked"); only you write "Cut locked", when you lock it.`,
     `Saved layouts are in ${join(settings().studio || '<studio>', '.studio', 'layouts.json')} ({layouts: [{id, name, layout}]}, made with "+ Save layout"): to use one, copy its layout keys into project.json layout (keep aspect and layers). Library backgrounds (${join(settings().studio || '<studio>', 'library', 'backgrounds')}) are copied into the project's assets/ and used as bg {kind "image"|"video"|"code", file "assets/…", name}.`,
@@ -453,6 +454,17 @@ function allowed(req) {
 // name, or its setup when it has no style.
 function styleOf(id, ctx = withProjectChannels([{ id }])[0]) {
   return ctx?.formatId ? { key: `style:${String(ctx.formatId).replace(/[^\w.-]/g, '_').slice(0, 80)}`, name: ctx.formatName || null } : null;
+}
+
+// Simple mode is agent-first (V1 follow-ups, item 9): no tool buttons, so the project's chat is told what it can offer
+// and do itself: captions, music, titles and zooms. The app's own routes stay (the octopus command line reaches them).
+function simpleChatContext(id) {
+  const cli = `node ${JSON.stringify(join(APP_DIR, 'bin', 'octopus.mjs').split(sep).join('/'))}`;
+  return [`Simple mode: the creator edits by talking to you; there are no Captions, Music, Text or Effects buttons. When it helps, offer (in one short line) and then do:`,
+    `captions (on by default, burned into the Download; project.json simpleTools.captions {on, look "clean"|"bold"|"boxed"}),`,
+    `music under the voice (\`${cli} music ${id} calm|bright|warm\` makes one of three beds on this computer and puts it under the whole video; \`${cli} music ${id} --resource <id>\` uses the creator's own music, listed as Music in packaging/RESOURCES.md; \`--gain <dB>\` sets its level, -6 by default; \`${cli} music ${id} off\` takes it away),`,
+    `titles (on-screen text: part of the scene graphics you build) and zooms (project.json simpleTools.effects {zooms true|false, intensity 0.6|1|1.4}, and work/zooms.json).`,
+    `The creator sees the video's media in a Media list and can delete items there.`].join(' ');
 }
 
 // Simple mode's tools, cleaned (web/simple-flow.js cleanTools has the same rules) and merged into project.json.
