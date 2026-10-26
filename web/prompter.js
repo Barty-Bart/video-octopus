@@ -28,7 +28,7 @@ export async function loadScript(id) {
   scripts.set(id, text);
   return text;
 }
-async function saveScript(id, text) {
+export async function saveScript(id, text) {
   await api(`/api/projects/${encodeURIComponent(id)}/script`, { text });
   scripts.set(id, text.trim() ? text : '');
   chan?.postMessage({ t: 'script', project: id, text });
@@ -51,7 +51,9 @@ const openWindow = (id) => window.open(`/prompter.html?p=${encodeURIComponent(id
 
 // ---------- the prompter itself (the in-Video Octopus view and the window use the same one) ----------
 // fullscreen: what F (and the Full screen button) makes full screen; the prompter itself unless its overlay is given.
-export function mountPrompter(root, text, { onEscape, hint = '', fullscreen: fullTarget = root } = {}) {
+// paragraphs: the current paragraph (the one on the reading line) bright and the rest dimmed (Simple mode's full-window
+// teleprompter); onSpace: what Space does instead of playing or pausing the script (there, it pauses the recording).
+export function mountPrompter(root, text, { onEscape, hint = '', fullscreen: fullTarget = root, paragraphs = false, onSpace = null } = {}) {
   root.classList.add('pp');
   root.innerHTML = '<div class="pp-stage"><div class="pp-text"></div><div class="pp-line"></div></div><div class="pp-hud" aria-live="polite"></div>';
   const stage = $('.pp-stage', root), el = $('.pp-text', root), hudEl = $('.pp-hud', root);
@@ -62,13 +64,30 @@ export function mountPrompter(root, text, { onEscape, hint = '', fullscreen: ful
     stage.classList.toggle('flipH', o.mirror); stage.classList.toggle('flipV', o.flip);
     $('.pp-line', root).style.top = `${root.clientHeight * READ_LINE}px`;
   };
-  const draw = () => { el.style.transform = `translateY(${root.clientHeight * READ_LINE - y}px)`; };
+  let pars = [], parOn = -1;
+  const draw = () => {
+    el.style.transform = `translateY(${root.clientHeight * READ_LINE - y}px)`;
+    if (!pars.length) return;
+    // The paragraph under the reading line (its top above it, the next one's below), lit.
+    let k = 0;
+    for (let i = 0; i < pars.length; i++) if (pars[i].offsetTop <= y + 4) k = i;
+    if (k !== parOn) { pars[parOn]?.classList.remove('on'); pars[k]?.classList.add('on'); parOn = k; }
+  };
   const hud = (msg) => {
     hudEl.textContent = msg || `speed ${o.speed} · size ${o.size}${o.mirror ? ' · mirrored' : ''}${playing ? '' : ' · paused'}`;
     hudEl.style.opacity = 1; clearTimeout(hudT); hudT = setTimeout(() => { hudEl.style.opacity = 0; }, 1600);
   };
   const setText = (t) => {
     el.textContent = '';
+    pars = []; parOn = -1;
+    if (paragraphs) {
+      for (const para of String(t || '').trim().split(/\n\s*\n|\n/).map((x) => x.trim()).filter(Boolean)) {
+        const p = Object.assign(document.createElement('p'), { className: 'pp-par' });
+        para.split(/(\[[^\]\n]+\])/).forEach((part, i) => p.append(i % 2 ? Object.assign(document.createElement('span'), { className: 'pp-cue', textContent: part }) : part));
+        el.append(p); pars.push(p);
+      }
+      return;
+    }
     String(t || '').trim().split(/(\[[^\]\n]+\])/).forEach((part, i) => {
       if (i % 2) el.append(Object.assign(document.createElement('span'), { className: 'pp-cue', textContent: part }));
       else el.append(part);
@@ -106,7 +125,7 @@ export function mountPrompter(root, text, { onEscape, hint = '', fullscreen: ful
   const onKey = (e) => {
     if (e.metaKey || e.ctrlKey || e.altKey || /TEXTAREA|INPUT|SELECT/.test(document.activeElement?.tagName || '')) return;
     const k = e.key;
-    if (k === ' ') act.toggle();
+    if (k === ' ') (onSpace || act.toggle)();
     else if (k === 'ArrowUp') act.faster();
     else if (k === 'ArrowDown') act.slower();
     else if (k === '+' || k === '=') act.bigger();

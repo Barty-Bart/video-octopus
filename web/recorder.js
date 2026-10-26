@@ -56,6 +56,8 @@ export const onSession = (fn) => { subs.add(fn); return () => subs.delete(fn); }
 const set = (patch) => { Object.assign(S, patch); for (const fn of subs) { try { fn(S); } catch (e) { console.error(e); } } };
 syncWithRecorder(onSession); // a script in its own window follows the take
 let run = null;  // the running take: recorders, uploaders, streams
+// Simple mode's Record (quickRecord) shows its own after-Stop card, so the bar's "Take saved · Delete take" stays away.
+let quietAfter = false;
 let dev = null;  // the open streams: { screen, cam, mic } (MediaStream or null)
 // The take for the editor's canvas while it records (B7, web/rec-live.js): the session (phase, paused, startedAt,
 // target, landed) and the streams it records, or is about to (the countdown), or null.
@@ -282,7 +284,7 @@ function watchSave(id, take) {
     if (S.take !== take) return;
     if (st?.done) {
       if (!st.ok) toast(st.error || 'Couldn’t save the take.');
-      else afterTake(id, take);
+      else if (!quietAfter) afterTake(id, take);
       // landed: the canvas keeps saying "Saving the take…" until the project shows it (web/rec-live.js).
       return set({ phase: 'idle', progress: 0, take: null, landed: st.ok ? { take, at: Date.now() } : null });
     }
@@ -804,6 +806,7 @@ export async function recordPanel({ id, P, choices, opts = {}, settingsLink }) {
     if (k !== 'mic' && sel.camera !== 'none' && !d.cam) return perm(permText({ name: 'NotFoundError' }, 'camera'), () => openDevs('cam'));
     if (sel.mic !== 'none' && !d.mic) return perm(permText({ name: 'NotFoundError' }, 'microphone'), () => openDevs('mic'));
     close(true);
+    quietAfter = false;
     // The script, if there is one, scrolls once the take starts; the recording controls sit in its bar meanwhile.
     prompterForTake(id, { onSession, stop, dock: dockControls, undock: undockControls });
     set({ phase: 'starting', project: id, target: sel.target, landed: null });
@@ -816,6 +819,44 @@ export async function recordPanel({ id, P, choices, opts = {}, settingsLink }) {
   show();
   if (!sup.ok) return;
   await openDevs();
+}
+
+// ---------- Simple mode's Record: no panel ----------
+// The Record page (web/simple-record.js) picks one of four sources (V1 spec §6): 'camera-screen', 'camera', 'screen'
+// or 'audio' (the mic only). The camera and mic are the ones last used with this video's style (P.recorder, as the
+// record panel starts with them), the screen comes from the browser's own picker, and the countdown is the setting.
+// The take goes in as the video's take (target replace: an earlier take stays in source/, reachable from Takes).
+// Pause/Resume work as with the panel (one file). Resolves true once recording, false when cancelled; throws with why.
+export const SOURCES = { 'camera-screen': { screen: true, camera: true }, camera: { screen: false, camera: true }, screen: { screen: true, camera: false }, audio: { screen: false, camera: false } };
+export async function quickRecord({ id, P, sources = 'camera' }) {
+  if (S.phase !== 'idle') { toast('A take is still recording or saving.'); return false; }
+  if (panelOpen) panelOpen.close();
+  const sup = support();
+  if (!sup.ok) throw new Error(`${browserName()} can't record here (${sup.missing.join(', ') || 'no video format'}). Use Chrome or Edge on Windows or Mac.`);
+  const want = SOURCES[sources] || SOURCES.camera, ch = P?.recorder || {};
+  const sel = {
+    display: want.screen ? 'screen' : 'none',
+    camera: want.camera ? (ch.camera && ch.camera !== 'none' ? ch.camera : 'default') : 'none',
+    mic: ch.mic && ch.mic !== 'none' ? ch.mic : 'default',
+    target: 'replace', countdown: [0, 3, 5].includes(ch.countdown) ? ch.countdown : 3,
+  };
+  const d = { screen: null, cam: null, mic: null };
+  dev = d;
+  try {
+    if (want.screen) d.screen = await pickScreen();
+    const u = await openUser(sel.camera, sel.mic);
+    d.cam = u.cam; d.mic = u.mic;
+  } catch (e) {
+    closeDevices(d);
+    if (e?.name === 'NotAllowedError' && want.screen && !d.screen && !/system/i.test(e.message)) return false; // no screen picked
+    throw new Error(permText(e, want.screen && !d.screen ? 'screen' : want.camera ? 'camera and microphone' : 'microphone'));
+  }
+  if (!d.mic) { closeDevices(d); throw new Error(permText({ name: 'NotFoundError' }, 'microphone')); }
+  quietAfter = true;
+  set({ phase: 'starting', project: id, target: 'replace', landed: null, sources });
+  if (sel.countdown && !(await countdown(sel.countdown, sources === 'audio' ? 'Recording starts… the script fills the window.' : undefined))) { closeDevices(d); set({ phase: 'idle' }); return false; }
+  try { await startTake(id, d, sel); return true; }
+  catch (e) { closeDevices(d); set({ phase: 'idle' }); throw e; }
 }
 
 // "Set up for Faceless explainer: screen and voice, no camera." over the sources (or what was last used with the style).
