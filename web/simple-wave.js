@@ -1,6 +1,8 @@
 // Simple mode's editable waveform and transcript (V1 spec §6, one-editor §0.2): the take's waveform at the bottom of
 // the editor with the cut on it (kept parts bright, cut parts greyed), play and time, drag across to select, Cut, Split,
-// Undo, the two end handles to trim the start and end, and a click on a greyed part to bring it back. The transcript
+// Undo, the two end handles to trim the start and end. A click anywhere moves the playhead, greyed parts too (V1
+// follow-ups: a click that restored a cut part was too easy to hit while seeking); a greyed part comes back with Restore
+// (the selection, or the greyed part under the playhead) or an ⌥/Alt-click on it. The transcript
 // above it crosses out the cut words; a click on a word cuts it or brings it back.
 //
 // Every edit writes the one cut the pipeline reads: work/edl_manual.json through POST /cut-save (the route Scenes and
@@ -9,7 +11,7 @@
 // Unlock to edit (POST /cut-review { op: 'unlock' }, the Cut tab's own Unlock), after which Lock is the next step again.
 //
 // The cut operations are pure and exported for the tests; segments are [[start, end], …] in take seconds.
-import { esc, h, api, toast } from './ui.js';
+import { esc, h, api, toast, isMac } from './ui.js';
 
 export const r3 = (x) => Math.round(x * 1000) / 1000;
 const MIN = 0.02;
@@ -71,6 +73,26 @@ export function takeToCut(segs, t) {
   return d;
 }
 export const isKept = (segs, t) => segs.some(([a, b]) => t >= a && t < b);
+// What Restore brings back: the selection when it covers some of a greyed part, else the greyed part under the
+// playhead; null when there's nothing cut there. → [a, b] in take seconds.
+export function restoreTarget(segs, duration, sel, t) {
+  const gaps = gapsOf(segs, duration);
+  if (sel && Math.abs(sel[1] - sel[0]) > 0.05) {
+    const lo = Math.min(...sel), hi = Math.max(...sel);
+    return gaps.some(([a, b]) => b > lo + 1e-3 && a < hi - 1e-3) ? [r3(lo), r3(hi)] : null;
+  }
+  return gaps.find(([a, b]) => t >= a && t < b) || null;
+}
+// What a plain click on the waveform does: always seek; an ⌥/Alt-click on a greyed part brings that part back.
+//   → { seek: t } | { restore: [a, b] }
+export function clickAction(segs, duration, t, { alt = false, editable = true } = {}) {
+  const gap = alt && editable ? gapsOf(segs, duration).find(([a, b]) => t >= a && t < b) : null;
+  return gap ? { restore: gap } : { seek: t };
+}
+export const ALT_KEY = isMac ? '⌥' : 'Alt';
+export const waveHint = ({ ready, locked }) => (locked ? 'The cut is locked after the rough cut. Unlock to edit, or just tell Claude.'
+  : ready ? `Click to move the playhead · drag across to select, then Cut, or Restore a greyed part · ${ALT_KEY}-click a greyed part to bring it back · drag the ends to trim · or just tell Claude.`
+    : 'Editing on the waveform opens after the rough cut. Or just tell Claude.');
 // A word is cut when its middle is outside the kept parts.
 export const wordCut = (segs, w) => !isKept(segs, (w[0] + w[1]) / 2);
 
@@ -125,6 +147,7 @@ export function makeWave({ host, model, player, peaksUrl, blocks = () => [], fal
       <span class="sw-lock" hidden><span>The cut is locked.</span><button type="button" class="btn small" data-a="unlock">Unlock to edit</button></span>
       <span class="sw-tools" role="group" aria-label="Edit the cut">
         <button type="button" class="btn small" data-a="cut" disabled title="Cut the selected part out (Delete)">Cut</button>
+        <button type="button" class="btn small" data-a="restore" disabled title="Bring back the greyed part you selected, or the one under the playhead (or ${ALT_KEY}-click it)">Restore</button>
         <button type="button" class="btn small" data-a="split" title="Split the part under the playhead (S)">Split</button>
         <button type="button" class="btn small" data-a="undo" title="Undo the last edit here (⌘Z)">Undo</button>
       </span>
@@ -132,7 +155,7 @@ export function makeWave({ host, model, player, peaksUrl, blocks = () => [], fal
     <div class="sw-lanes"><div class="sw-blocks" aria-hidden="true"></div>
       <div class="sw-cv-wrap"><canvas class="sw-cv" role="img" aria-label="The take's waveform: bright parts play, greyed parts are cut"></canvas>
         <button type="button" class="sw-h start" aria-label="Trim the start: drag"></button><button type="button" class="sw-h end" aria-label="Trim the end: drag"></button></div></div>
-    <p class="sw-hint">Drag the ends to trim · drag across to select · Cut removes it · click a greyed part to bring it back · or just tell Claude.</p>
+    <p class="sw-hint"></p>
   </section>`);
   host.append(el);
   const cv = el.querySelector('.sw-cv'), wrap = el.querySelector('.sw-cv-wrap');
@@ -199,13 +222,13 @@ export function makeWave({ host, model, player, peaksUrl, blocks = () => [], fal
     if (sel) s.textContent = `Selected ${fmt(segs ? takeToCut(segs, sel[0]) : sel[0])}–${fmt(segs ? takeToCut(segs, sel[1]) : sel[1])}`;
     const edit = model.ready && !model.locked;
     el.querySelector('[data-a=cut]').disabled = !edit || !sel;
+    el.querySelector('[data-a=restore]').disabled = !edit || !restoreTarget(model.segs, dur(), model.sel, t);
     el.querySelector('[data-a=split]').disabled = !edit;
     el.querySelector('[data-a=undo]').disabled = !edit || !model.undo.length;
     el.querySelector('.sw-lock').hidden = !model.locked;
     el.classList.toggle('readonly', !model.ready);
-    el.querySelector('.sw-hint').textContent = model.locked ? 'The cut is locked after the rough cut. Unlock to edit, or just tell Claude.'
-      : model.ready ? 'Drag the ends to trim · drag across to select · Cut removes it · click a greyed part to bring it back · or just tell Claude.'
-        : 'Editing on the waveform opens after the rough cut. Or just tell Claude.';
+    const hint = waveHint(model);
+    if (el.querySelector('.sw-hint').textContent !== hint) el.querySelector('.sw-hint').textContent = hint;
   }
   const loop = () => { if (!alive) return; paintTop(); draw(); raf = requestAnimationFrame(loop); };
   raf = requestAnimationFrame(loop);
@@ -214,7 +237,7 @@ export function makeWave({ host, model, player, peaksUrl, blocks = () => [], fal
   wrap.addEventListener('pointerdown', (e) => {
     if (e.target.closest('.sw-h')) return;
     const box = wrap.getBoundingClientRect(), t = tOf(e.clientX - box.left);
-    drag = { kind: 'sel', t0: t, x0: e.clientX, moved: false };
+    drag = { kind: 'sel', t0: t, x0: e.clientX, moved: false, alt: e.altKey };
     wrap.setPointerCapture(e.pointerId);
   });
   wrap.addEventListener('pointermove', (e) => {
@@ -234,19 +257,27 @@ export function makeWave({ host, model, player, peaksUrl, blocks = () => [], fal
       return draw();
     }
     if (d0.moved) return;
-    // a click: on a greyed part, bring it back; anywhere, move the playhead there
+    // a click moves the playhead there, on a greyed part too; an ⌥/Alt-click on a greyed part brings it back
     model.sel = null; onSelect(null);
-    const gap = model.ready && !model.locked ? gapsOf(model.segs, dur()).find(([a, b]) => d0.t0 >= a && d0.t0 < b) : null;
-    if (gap) { if (await model.edit(restoreRange(model.segs, gap[0], gap[1]))) toast(`Brought back ${fmt(gap[1] - gap[0])} s.`); }
-    else player.seek(d0.t0);
+    const act = model.ready ? clickAction(model.segs, dur(), d0.t0, { alt: d0.alt, editable: !model.locked }) : { seek: d0.t0 };
+    if (act.restore) await bringBack(act.restore);
+    else player.seek(act.seek);
   });
   for (const k of ['start', 'end']) {
     el.querySelector(`.sw-h.${k}`).addEventListener('pointerdown', (e) => { e.stopPropagation(); drag = { kind: k }; wrap.setPointerCapture(e.pointerId); });
   }
   el.querySelector('.sw-play').onclick = () => (player.playing() ? player.pause() : player.play());
+  async function bringBack([a, b]) {
+    const before = lengthOf(model.segs);
+    if (await model.edit(restoreRange(model.segs, a, b))) toast(`Brought back ${(lengthOf(model.segs) - before).toFixed(1)} s.`);
+  }
   el.addEventListener('click', async (e) => {
     const a = e.target.closest('[data-a]')?.dataset.a;
     if (a === 'cut' && model.sel) { const [x, y] = model.sel; model.sel = null; onSelect(null); await model.edit(cutRange(model.segs, x, y)); }
+    if (a === 'restore' && model.ready && !model.locked) {
+      const target = restoreTarget(model.segs, dur(), model.sel, player.time());
+      if (target) { model.sel = null; onSelect(null); await bringBack(target); }
+    }
     if (a === 'split') await model.edit(splitAt(model.segs, player.time()));
     if (a === 'undo') await model.undoLast();
     if (a === 'unlock') await model.unlock();
