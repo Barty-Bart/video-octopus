@@ -2,6 +2,7 @@
 // optional non-skill starter files, and Open Video Octopus when I log in. settings.js draws the
 // page's frame and passes its row/group/toggle helpers; markUpdateBadge puts "New" on the Updates entry.
 import { esc, h, api, toast, ago, plural, confirmBox } from './ui.js';
+import { isAdvanced } from './mode.js';
 
 const S = {}; // what the page last heard, so a redraw (the toggle's save) doesn't lose an update's or a sync's result
 
@@ -247,13 +248,15 @@ export function updatesSection(V, save, { row, group, toggle, advanced = null })
     });
     const login = group('Start', row('Open Video Octopus when I log in', L.on && !L.here ? `${hint} <b>It starts another copy of Video Octopus now</b>: switch it off and on to point it at this one.` : hint, sw));
 
+    // Simple mode (web/mode.js): no skill updates or skill preferences here (they stay in Advanced, untouched).
+    const skillParts = isAdvanced() ? [preferences, skillGroup] : [];
     if (advanced) {
       advanced.querySelector('[data-starter]')?.remove();
       starter.dataset.starter = '';
       advanced.prepend(starter);
-      wrap.replaceChildren(group('Video Octopus', ...parts), preferences, skillGroup, login);
+      wrap.replaceChildren(group('Video Octopus', ...parts), ...skillParts, login);
     } else {
-      wrap.replaceChildren(group('Video Octopus', ...parts), preferences, skillGroup, starter, login);
+      wrap.replaceChildren(group('Video Octopus', ...parts), ...skillParts, starter, login);
     }
   };
   load();

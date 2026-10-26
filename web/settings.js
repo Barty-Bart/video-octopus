@@ -53,6 +53,7 @@ let backTo = '#/';       // where Setup's "Back" goes: the last page that wasn't
 document.addEventListener('click', (e) => { if (e.target.closest?.('[data-open-assistant]')) { e.preventDefault(); openDrawer(); } });
 document.addEventListener('keydown', (e) => {
   if (!askAvailable || !(e.metaKey || e.ctrlKey) || (e.key !== 'j' && e.key !== 'J')) return;
+  if (!isAdvanced()) return; // Simple mode: no assistant drawer (V1 spec §5; the project's own chat is the one Claude)
   e.preventDefault();
   if (drawer) closeDrawer(); else openDrawer();
 });

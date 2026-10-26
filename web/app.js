@@ -19,6 +19,7 @@ import { isAdvanced, editorMode, setEditorMode } from './mode.js';
 import { ADVANCED_NOTE } from './simple.js';
 import { renderSimpleProjects, renderResourcesPlaceholder } from './simple-home.js';
 import { makeShapeChip } from './shape-chip.js';
+import { mountSimpleEditor } from './simple-editor.js';
 import { TERMS } from './terms.js';
 import { renderProjects, setTypeNames } from './projects-home.js';
 import { makeStartScreen } from './start-screen.js';
@@ -436,7 +437,7 @@ async function newVideo(opts = {}) {
 
 // A video or sound file from this computer becomes the project's take: it streams into source/ (server: importUpload).
 const TAKE_FILE = /\.(mov|mp4|m4v|mkv|webm|wav|m4a|mp3|aif|aiff|caf|flac)$/i;
-async function importTakeFile(id, file) {
+async function importTakeFile(id, file, { askEdited = true } = {}) {
   if (!TAKE_FILE.test(file.name)) { toast('Pick a video (.mov, .mp4…) or a sound file (.wav, .m4a, .mp3…).'); return false; }
   toast(`Copying ${file.name}…`);
   try {
@@ -444,7 +445,7 @@ async function importTakeFile(id, file) {
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || `copying failed (${r.status})`);
     toast(`${file.name} is the take.`);
-    await askAlreadyEdited(id); // B9: "Is this video already edited?" (web/edited-import.js)
+    if (askEdited) await askAlreadyEdited(id); // B9: "Is this video already edited?" (web/edited-import.js); Simple doesn't ask
     return true;
   } catch (err) {
     toast(`The file didn't come in: ${err.message}`);
@@ -741,7 +742,7 @@ async function openProject(id) {
   function setFold(f) { try { localStorage.setItem(foldKey(), f ? '1' : '0'); } catch {} applyFold(); if (!f) setTimeout(() => $('#input', el)?.focus(), 50); }
   $('#chatFold', el).onclick = () => setFold(true);
   $('#chatOpen', el).onclick = () => setFold(false);
-  const foldKeys = (e) => { if ((e.metaKey || e.ctrlKey) && (e.key === 'j' || e.key === 'J')) { e.preventDefault(); setFold(!isFolded()); } };
+  const foldKeys = (e) => { if (!isAdvanced()) return; if ((e.metaKey || e.ctrlKey) && (e.key === 'j' || e.key === 'J')) { e.preventDefault(); setFold(!isFolded()); } };
   document.addEventListener('keydown', foldKeys);
   $('#reveal', el).onclick = () => api(`/api/projects/${encodeURIComponent(id)}/reveal`, {});
   $('#mode', el).onchange = async (e) => { await api('/api/settings', { permissionMode: e.target.value }); toast('Applies from your next message.'); };
@@ -926,6 +927,7 @@ async function openProject(id) {
   const exBuilt = makeExportBuilt(id); // built blocks (the Intro Claude rendered) in Export → Video (web/exportbuilt.js)
 
   // steps
+  let simple = null; // Simple mode's editor (web/simple-editor.js), mounted at the end of this page's setup
   async function refresh() {
     P = await api(`/api/projects/${encodeURIComponent(id)}`);
     paintName();
@@ -945,6 +947,7 @@ async function openProject(id) {
     if (tab === 'cut') renderCut();
     if (tab === 'publish') renderRenders();
     renderOtherInspector();
+    simple?.update();
   }
   let refreshTimer;
   const softRefresh = () => { clearTimeout(refreshTimer); refreshTimer = setTimeout(refresh, 400); };
@@ -1345,6 +1348,7 @@ async function openProject(id) {
   const es = new EventSource(`/api/projects/${encodeURIComponent(id)}/events`);
   es.onmessage = (m) => {
     const ev = JSON.parse(m.data);
+    simple?.onEvent(ev); // Simple mode's card follows exports and file changes (web/simple-editor.js)
     if (ev.t === 'files') return softRefresh();
     // Named automatically (the agent's proposal, or the Packaging working title): the bar shows it at once.
     if (ev.t === 'renamed') {
@@ -1415,7 +1419,19 @@ async function openProject(id) {
   const oldTab = parseProjectHash(location.hash)?.query.get('tab');
   goStage(landing);
   if (oldTab === 'post' && landing === 'Publish') setTab('post');
-  if (pendingRecord === id) { pendingRecord = null; setTimeout(() => $('#recBtn')?.click(), 250); }
+  // Simple mode (web/mode.js): the Simple editor over this one (web/simple-editor.js); it opens on its Record page, not
+  // the record panel. Advanced: as before.
+  if (!isAdvanced()) {
+    pendingRecord = pendingRecord === id ? null : pendingRecord;
+    simple = mountSimpleEditor({ el, id, getP: () => P, refresh, softRefresh, chat, canvas, importTakeFile: (f) => importTakeFile(id, f, { askEdited: false }),
+      showCanvas: () => { if (tab !== 'canvas') showPane('canvas'); },
+      exportVideo: async (opts) => {
+        if (!canvas.ready()) throw new Error('The video is still loading. Try again in a moment.');
+        if (STATUS?.ffmpeg === false) throw new Error('ffmpeg is missing: Setup › Tools installs it.');
+        return api(`/api/projects/${encodeURIComponent(id)}/export`, { layout: canvas.layout(), useCut: Boolean(P.export.cut), pngs: { ...canvas.exportLayers(), looks: canvas.lookPngs(canvas.layout()) },
+          captions: opts.captions, effects: opts.effects, built: exBuilt.choice(P.export.built) });
+      } });
+  } else if (pendingRecord === id) { pendingRecord = null; setTimeout(() => $('#recBtn')?.click(), 250); }
   else setTimeout(() => rail.maybeHelp(), 300); // once, on the first project page after this shipped (settings help.stepsIntro)
   projectPage = {
     id,
@@ -1428,7 +1444,7 @@ async function openProject(id) {
       return true;
     },
   };
-  return { teardown: () => { if (projectPage?.id === id) projectPage = null; es.close(); picker.destroy(); chat.destroy(); offBadge(); offRecDock(); waitBadge.remove(); pickers.destroy(); railRO.disconnect(); rail.destroy(); waveStop?.(); rdCmp?.destroy(); canvas.destroy(); scenes.destroy(); sound.destroy(); post.destroy(); packaging.destroy(); recorder.destroy(); live.destroy(); blocks.destroy(); document.removeEventListener('click', closeMenus); document.removeEventListener('keydown', foldKeys); removeEventListener('message', onCutMessage); cutPanel.destroy(); clearBar(); } };
+  return { teardown: () => { if (projectPage?.id === id) projectPage = null; simple?.destroy(); simple = null; es.close(); picker.destroy(); chat.destroy(); offBadge(); offRecDock(); waitBadge.remove(); pickers.destroy(); railRO.disconnect(); rail.destroy(); waveStop?.(); rdCmp?.destroy(); canvas.destroy(); scenes.destroy(); sound.destroy(); post.destroy(); packaging.destroy(); recorder.destroy(); live.destroy(); blocks.destroy(); document.removeEventListener('click', closeMenus); document.removeEventListener('keydown', foldKeys); removeEventListener('message', onCutMessage); cutPanel.destroy(); clearBar(); } };
 }
 
 // ---------- export receipt: prints out of a slot when an export finishes ----------
@@ -1873,7 +1889,7 @@ function makeChat(root, id, ext = {}, opts = {}) {
         if ($('.sp-t', sess).textContent === 'This session' && !ev.text.startsWith('/')) setTitle(ev.text.replace(/\s+/g, ' ').slice(0, 60));
         break;
       }
-      case 'text': { lastText = ev.text; turnText = ev.text; const display = ev.text.replace(/```octopus-name[ \t]*\r?\n([\s\S]*?)```/g, (m, n) => `\n*Name for this video: ${n.trim().split('\n')[0]}*\n`).replace(/```octopus-memory[\s\S]*?```/g, `\n[Proposed lessons → Review in Memories](#/style/_/memories?chat=${encodeURIComponent(id)})\n`); const n = add(h(`<div class="msg-ai">${md(display)}</div>`), ev); n.dataset.ts = ev.ts || ''; break; }
+      case 'text': { lastText = ev.text; turnText = ev.text; const display = ev.text.replace(/```octopus-name[ \t]*\r?\n([\s\S]*?)```/g, (m, n) => `\n*Name for this video: ${n.trim().split('\n')[0]}*\n`).replace(/```octopus-memory[\s\S]*?```/g, isAdvanced() ? `\n[Proposed lessons → Review in Memories](#/style/_/memories?chat=${encodeURIComponent(id)})\n` : ''); const n = add(h(`<div class="msg-ai">${md(display)}</div>`), ev); n.dataset.ts = ev.ts || ''; break; }
       case 'undo-offer': undoOffer = ev; if (turnOver && !busy) showChips(); break;
       case 'proposals': {
         // Claude's turn left proposed shots or zooms: "Claude proposed 3 shots and 6 zooms · Show me · Keep all · No
@@ -3318,6 +3334,7 @@ function makeCanvas(pane, { inspector, tools }, id, getP, hooks = {}) {
     const mark = markColor ||= tokens()('--sel', '#2563eb');
     const px = scene.W / Math.max(1, stage.clientWidth); // export pixels per screen pixel: marks keep their screen size
     if (cropping && cropView) { drawCrop(g, mark, px); return; }
+    if (!isAdvanced()) return; // Simple mode: no layout editing on the picture, so no marks
     for (const ref of new Set([selected, hover, tlHover].filter(Boolean))) {
       const it = vItemOf(ref);
       if (!it || !(ref === selected || it.movable || ref === hover || ref === tlHover || drag)) continue;
@@ -3993,7 +4010,7 @@ function makeRecordButton(root, id, getP) {
     const S = rec.session();
     if (S.phase === 'recording') rec.stop();
     else if (rec.panelIsOpen()) rec.startFromPanel();
-    else if (S.phase === 'idle' && !btn.disabled) open();
+    else if (S.phase === 'idle' && !btn.disabled && isAdvanced()) open(); // Simple: the Record page's button starts a take
   };
   document.addEventListener('keydown', onKey);
   btn.onclick = () => open();
