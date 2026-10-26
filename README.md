@@ -35,7 +35,7 @@ First launch publishes these as managed defaults in your studio's `.claude/skill
 | `join-check` | Find potentially clipped words at edit joins and propose repaired cut boundaries. | Python/NumPy and FFmpeg; optional Whisper rechecking. |
 | `production-sheet` | Plan the video scene by scene and write the files shown in the Scenes tab. | Agent; source transcript and locked cut. |
 | `talking-head-zoom` | Plan timed camera punch-ins and zoom-outs as editable proposals. | Agent and timed words; the app previews and exports the accepted zooms. |
-| `object-separation` | Select and track a person or object with SAM 2.1, producing masks for graphics behind or around it. | Python/PyTorch, torchvision, Transformers, NumPy, Pillow, FFmpeg and a SAM 2.1 model. GPU support affects speed. |
+| `object-separation` | Select and track a person or object with SAM 2.1, producing masks for graphics behind or around it. Build runs it only for scenes the plan marks with a cutout; without it they build plainly with a Set up link. | Python/PyTorch, torchvision, Transformers, NumPy, Pillow, FFmpeg and a SAM 2.1 model. GPU support affects speed. |
 
 These are general editing skills distributed with the app. Personal creator styles, campaign notes and private project libraries are not part of this starter.
 
