@@ -105,7 +105,7 @@ export function startExport(id, dir, body, emit) {
   // shot by shot, each in its look, joined with cuts and crossfades (server/export-shots.mjs). Without them, the exports
   // below run as they always did.
   if (info.duration) {
-    const sp = shotsPlan(dir, { layout, info, useCut: body.useCut !== false, seq });
+    const sp = shotsPlan(dir, { layout, info, useCut: body.useCut !== false, seq, effects: body.effects });
     if (sp.changes || use.length) return exportShots(id, dir, body, emit, { jobs, pngFrom, nextName, quote, seq, layout, info, sp, built: use });
   }
   if (seq) return exportSequence(id, dir, body, emit, seq);

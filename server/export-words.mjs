@@ -197,19 +197,26 @@ const assTime = (t) => {
 };
 const assText = (s) => s.replace(/\\/g, '/').replace(/[{}]/g, (c) => (c === '{' ? '(' : ')'));
 
-export function assFile(cues, W, H, from = 0, to = Infinity) {
-  const fr = captionFrame(W, H);
+// look (Simple mode's Captions tool, web/simple-flow.js CAPTION_LOOKS): 'clean' (the default: white with a soft
+// shadow), 'bold' (bigger, capitals, a dark outline) or 'boxed' (white on a dark box).
+export const CAPTION_LOOK_KEYS = ['clean', 'bold', 'boxed'];
+export function assFile(cues, W, H, from = 0, to = Infinity, look = 'clean') {
+  const fr0 = captionFrame(W, H), bold = look === 'bold', boxed = look === 'boxed';
+  const fr = bold ? { ...fr0, size: Math.round(fr0.size * 1.15) } : fr0;
   const shadow = Math.max(2, Math.round(fr.size * 0.06));
   const rows = cues.filter((c) => c.end > from + 0.01 && c.start < to - 0.01).map((c) => {
     const a = Math.max(0, c.start - from), b = Math.min(to, c.end) - from;
     // Layer 0: a soft shadow (the text, dark and blurred, a little lower); layer 1: the crisp white text.
-    const text = c.lines.map(assText).join('\\N');
+    const text = c.lines.map((l) => assText(bold ? l.toUpperCase() : l)).join('\\N');
+    if (bold || boxed) return `Dialogue: 1,${assTime(a)},${assTime(b)},Caption,,0,0,0,,${text}`;
     return `Dialogue: 0,${assTime(a)},${assTime(b)},Shadow,,0,0,0,,{\\blur${Math.round(fr.size * 0.14)}}${text}\n` +
       `Dialogue: 1,${assTime(a)},${assTime(b)},Caption,,0,0,0,,${text}`;
   });
   return `[Script Info]\nScriptType: v4.00+\nPlayResX: ${W}\nPlayResY: ${H}\nWrapStyle: 0\nScaledBorderAndShadow: yes\nYCbCr Matrix: TV.709\n\n` +
     `[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n` +
-    `Style: Caption,Geist SemiBold,${fr.size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,2,${fr.left},${fr.right},${fr.bottom},1\n` +
+    (bold ? `Style: Caption,Geist SemiBold,${fr.size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,${Math.max(2, Math.round(fr.size * 0.08))},0,2,${fr.left},${fr.right},${fr.bottom},1\n`
+      : boxed ? `Style: Caption,Geist SemiBold,${fr.size},&H00FFFFFF,&H00FFFFFF,&H40000000,&H40000000,0,0,0,0,100,100,0,0,3,${Math.max(4, Math.round(fr.size * 0.22))},0,2,${fr.left},${fr.right},${fr.bottom},1\n`
+      : `Style: Caption,Geist SemiBold,${fr.size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,2,${fr.left},${fr.right},${fr.bottom},1\n`) +
     `Style: Shadow,Geist SemiBold,${fr.size},&H50000000,&H50000000,&H50000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,2,${fr.left},${fr.right},${fr.bottom - shadow},1\n\n` +
     `[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n${rows.join('\n')}\n`;
 }
@@ -237,7 +244,7 @@ export function burnCaptions(dir, { f, cur, jobRel, W, H, captions, parts, doc, 
   mkdirSync(join(dir, fonts), { recursive: true });
   if (!existsSync(join(dir, fonts, basename(CAPTION_FONT)))) copyFileSync(CAPTION_FONT, join(dir, fonts, basename(CAPTION_FONT)));
   const file = `${jobRel}/captions${tag ? `_${tag}` : ''}.ass`;
-  writeFileSync(join(dir, file), assFile(cues, W, H, from, to));
+  writeFileSync(join(dir, file), assFile(cues, W, H, from, to, CAPTION_LOOK_KEYS.includes(captions.look) ? captions.look : 'clean'));
   const label = `[cap${tag}]`;
   f.push(`${cur}ass=filename=${file}:fontsdir=${fonts}${label}`);
   return label;

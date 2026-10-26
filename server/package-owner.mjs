@@ -16,7 +16,7 @@
 import { markPackageBase, syncDocItems } from './cutsync.mjs';
 
 // POST routes of a project that save something the creator changed in the window (index.mjs stamps them).
-export const UI_ROUTES = ['/layout', '/blocks', '/shots', '/zooms', '/upload', '/final', '/type', '/rename', '/import', '/take-upload',
+export const UI_ROUTES = ['/layout', '/blocks', '/shots', '/zooms', '/upload', '/drop', '/final', '/type', '/rename', '/import', '/take-upload',
   '/media-use', '/media-layer', '/media-remove', '/media-restore'];
 export const UI_QUIET_MS = 3000;   // the window saved within this long: the change is the creator's
 export const TURN_TAIL_MS = 2000;  // a write this soon after Claude's turn ended is still Claude's (watcher debounce 0.7 s)

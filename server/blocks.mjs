@@ -284,6 +284,23 @@ async function upload(req, dir, name) {
   appendWorklog(dir, `Added ${n} to source/ (dropped into Video Octopus for a block)`);
   return `source/${n}`;
 }
+// Simple mode's "Drop anything for Claude" (V1 spec §6): clips, screenshots, product photos, logos, fonts and notes
+// stay with the project, in source/ next to the takes (originals live there; projectMedia lists only the media). A
+// dropped recording that should be the take goes through /take-upload instead (web/simple-editor.js decides).
+export const DROP_FILE = /\.(mov|mp4|m4v|mkv|webm|wav|m4a|mp3|aif|aiff|caf|flac|png|jpe?g|gif|webp|svg|heic|pdf|txt|md|markdown|csv|json|ttf|otf|woff2?)$/i;
+export const DROP_MAX = 2e9;
+async function dropFile(req, dir, name) {
+  if (!DROP_FILE.test(String(name || ''))) throw new Error('Drop a video, a sound, a picture, a PDF, a text file or a font.');
+  mkdirSync(join(dir, 'source'), { recursive: true });
+  const n = freeName(dir, safeName(name));
+  const part = join(dir, 'source', `.${n}.part`);
+  try { await pipeline(req, createWriteStream(part)); } catch (e) { rmSync(part, { force: true }); throw e; }
+  const size = statSync(part).size;
+  if (!size || size > DROP_MAX) { rmSync(part, { force: true }); throw new Error(size ? 'That file is too big to drop here.' : 'The file was empty.'); }
+  renameSync(part, join(dir, 'source', n));
+  appendWorklog(dir, `Added ${n} to source/ (dropped for Claude)`);
+  return `source/${n}`;
+}
 // Clone a recorder take into source/ without touching the canvas take (APFS clone: instant, no extra space).
 // An imported file waiting in Recordings moves in instead (studio.mjs takeIntoSource), as one of the video's imports.
 function cloneTake(dir, takeDir) {
@@ -437,7 +454,15 @@ export async function blocksRoute(req, res, { dir, action, url, send, body, chat
   if (action === '/blocks' && req.method === 'GET') return send(res, 200, blocksView(dir)), true;
   if (action === '/block-sources') return send(res, 200, blockSources(dir)), true;
   if (action === '/mentions') return send(res, 200, mentionables(dir)), true;
-  if (req.method !== 'POST' || !['/upload', '/blocks', '/block-ask'].includes(action)) return false;
+  if (req.method !== 'POST' || !['/upload', '/drop', '/blocks', '/block-ask'].includes(action)) return false;
+  if (action === '/drop') {
+    try {
+      const file = await dropFile(req, dir, url.searchParams.get('name') || '');
+      if (MEDIA.test(file)) makeProxies(dir, broadcast);
+      broadcast({ t: 'files' });
+      return send(res, 200, { file }), true;
+    } catch (e) { return send(res, 400, { error: e.message }), true; }
+  }
   if (action === '/upload') {
     try {
       const file = await upload(req, dir, url.searchParams.get('name') || 'file.mp4');

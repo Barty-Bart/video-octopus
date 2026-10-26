@@ -43,10 +43,14 @@ const PARALLEL = Math.max(2, Math.min(6, Math.floor(cpus().length / 3)));
 // layout: the video's look (normalized); info: server/export.mjs exportInfo; seq: sequenceForExport (null: no blocks).
 // changes: some stretch of the take doesn't look like the video's look, or a kept zoom moves a card, so the export has to
 // go shot by shot. zooms: the kept zooms.
-export function shotsPlan(dir, { layout, info, useCut = true, seq = null }) {
+// effects (Simple mode's Effects tool, web/simple-flow.js): { zooms: false } leaves the zooms out; intensity scales how
+// far each kept zoom goes in (1 = as made). Without effects the kept zooms export as they are.
+export function shotsPlan(dir, { layout, info, useCut = true, seq = null, effects = null }) {
   let shots = [], zooms = [];
   try { shots = keptShots(readShots(dir)); } catch (e) { console.error('shots:', e.message); }
   try { zooms = keptZooms(readZooms(dir)); } catch (e) { console.error('zooms:', e.message); }
+  if (effects?.zooms === false) zooms = [];
+  else if (Number.isFinite(Number(effects?.intensity)) && Number(effects.intensity) !== 1) zooms = zooms.map((z) => scaleZoom(z, Number(effects.intensity)));
   const cut = useCut && info.cut ? info.cut.segments : null;
   const list = seq ? seq.parts : [{ kind: 'take', segs: cut || [[0, Math.floor(info.duration * FPS) / FPS]], blocks: null, plain: true }];
   const parts = list.map((p) => (p.kind !== 'take' || !shots.length ? { part: p, plan: null }
@@ -55,6 +59,20 @@ export function shotsPlan(dir, { layout, info, useCut = true, seq = null }) {
   const zoomed = zooms.length > 0 && parts.some((x) => x.plan);
   return { shots, zooms, cut, parts, changes: parts.some((x) => x.plan?.changes) || zoomed,
     looks: new Set(runs.map((r) => r.key)).size, fades: parts.reduce((t, x) => t + (x.plan?.pieces.filter((p) => p.kind === 'fade').length || 0), 0) };
+}
+
+// A zoom k times as strong: a punch-in's amount (1.1 → 1.2 at k = 2), or a box grown or shrunk around its centre (the
+// whole picture is a box of 1 × 1). k is kept between 0.25 and 2.
+export function scaleZoom(z, k) {
+  const f = Math.min(2, Math.max(0.25, Number(k) || 1));
+  if (z.box) {
+    const s = (v) => Math.min(1, Math.max(0.15, 1 - (1 - v) * f));
+    const w = s(z.box.w), h = s(z.box.h), cx = z.box.x + z.box.w / 2, cy = z.box.y + z.box.h / 2;
+    const x = Math.min(1 - w, Math.max(0, cx - w / 2)), y = Math.min(1 - h, Math.max(0, cy - h / 2));
+    return { ...z, box: { x, y, w, h } };
+  }
+  if (Number.isFinite(Number(z.amount))) return { ...z, amount: 1 + (Number(z.amount) - 1) * f };
+  return z;
 }
 
 // A one-line summary for the worklog: "4 shots · 3 looks · 2 transitions · 2 zooms", or null when the shots change nothing.

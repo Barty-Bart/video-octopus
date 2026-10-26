@@ -19,6 +19,7 @@ import { layersRoute, cancelLayers, stopAllLayers, layersRunning, listLayerExpor
 import { audioRoute, cancelAudio, stopAllAudio, audioRunning, audioBusy } from './export-audio.mjs';
 import { textRoute, listTextExports } from './export-text.mjs';
 import { normalize, defaultLayout, newLayers } from '../web/layout.js';
+import { cleanTools } from '../web/simple-flow.js';
 import { thumbFor } from './thumbs.mjs';
 import { timelineData, filePeaks, joinFlags } from './timeline.mjs';
 import { layoutsRoute } from './saved-layouts.mjs';
@@ -448,6 +449,12 @@ function styleOf(id, ctx = withProjectChannels([{ id }])[0]) {
   return ctx?.formatId ? { key: `style:${String(ctx.formatId).replace(/[^\w.-]/g, '_').slice(0, 80)}`, name: ctx.formatName || null } : null;
 }
 
+// Simple mode's tools, cleaned (web/simple-flow.js cleanTools has the same rules) and merged into project.json.
+function saveSimpleTools(dir, b) {
+  const tools = cleanTools({ ...(projectMeta(dir)?.simpleTools || {}), ...(b && typeof b === 'object' ? b : {}) });
+  saveProjectMeta(dir, { simpleTools: tools });
+  return tools;
+}
 function projectView(id, dir) {
   const meta = projectMeta(dir) || {};
   const pinned = withProjectChannels([{ id }])[0];
@@ -477,6 +484,8 @@ function projectView(id, dir) {
     textExports: listTextExports(dir, probeFile), // Audio, Transcript and Subtitles exports (server/export-text.mjs)
     joins: cutReadOnly(dir) ? [] : joinFlags(dir), // the join check's flags on the canvas timeline (server/timeline.mjs); none while the cut is locked (B3)
     finalRender: meta.finalRender || null, // the render marked Final on the Renders tab
+    // Simple mode's tools (web/simple-flow.js simpleTools): captions, music, effects; null until one is changed.
+    simpleTools: meta.simpleTools || null,
     // Shots and zooms (server/shots.mjs, web/shots.js): work/shots.json { v: 1, shots } and work/zooms.json { v: 2, items },
     // settled (sections, re-cuts, block layouts moved in) and on the take's own seconds; the page refreshes on any change.
     ...shotsView(dir),
@@ -1135,6 +1144,11 @@ async function route(req, res) {
     catch (e) { return send(res, 400, { error: e.message }); }
   }
   // Renders tab: mark one render as the final version (or unmark it).
+  // Simple mode's tools (Captions, Music, Effects): kept in project.json, sent with Simple's Download export.
+  if (action === '/simple-tools') {
+    try { return send(res, 200, { simpleTools: saveSimpleTools(dir, b) }); }
+    catch (e) { return send(res, 400, { error: e.message }); }
+  }
   if (action === '/final') {
     const f = b.file == null ? null : String(b.file);
     if (f && !(/^renders\/[^/\\]+\.(mp4|mov|m4v)$/i.test(f) && existsSync(join(dir, f)))) return send(res, 400, { error: 'That render is gone.' });
