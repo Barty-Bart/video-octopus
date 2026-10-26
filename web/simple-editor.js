@@ -111,8 +111,10 @@ export function mountSimpleEditor(ctx) {
   // ================= the card =================
   function card() {
     const P = getP();
-    const recording = ['starting', 'recording', 'stopping', 'saving'].includes(rec.session().phase) && rec.session().project === id;
-    return stepCard(P, { ...st, recording, agent: who(), take: { duration: st.takes.find((t) => t.canvas)?.duration },
+    const S = rec.session(), mine = S.project === id;
+    const recording = ['starting', 'recording', 'stopping', 'saving'].includes(S.phase) && mine;
+    const saving = ['stopping', 'saving'].includes(S.phase) && mine;
+    return stepCard(P, { ...st, recording, saving, agent: who(), take: { duration: st.takes.find((t) => t.canvas)?.duration },
       exporting: st.job ? { progress: st.job.progress } : P.export?.running ? { progress: P.export.running.progress } : null });
   }
   function paintCard() {
@@ -132,7 +134,8 @@ export function mountSimpleEditor(ctx) {
     if (c.extra === 'download') {
       const tgt = downloadTarget(P), post = P.kit?.post?.exists ? P.kit.post : null;
       extra += `<div class="sx-dlbox"><b>Download</b><span class="sub">${esc(c.lines[0] || '')}</span>${tgt.files.map((f, i) => `<a class="btn ${i ? '' : 'primary'}" href="${esc(fileUrl(f.file))}" download="${esc(f.file.split('/').pop())}" data-a="dl">${esc(i ? f.label : `Download ${tgt.kind}`)}</a>`).join('')}
-        ${isAudio(P) && !tgt.files.some((f) => /MP3/.test(f.label)) ? '<button type="button" class="btn" data-a="mp3">Make an MP3 too</button>' : ''}</div>`;
+        ${isAudio(P) && !tgt.files.some((f) => /MP3/.test(f.label)) ? '<button type="button" class="btn" data-a="mp3">Make an MP3 too</button>' : ''}
+        ${st.mainThumb ? `<a class="btn" href="/api/packaging/${encodeURIComponent(id)}/item/${encodeURIComponent(st.mainThumb.id)}" download="${esc(`${P.name || id} ${isAudio(P) ? 'cover' : 'thumbnail'}.${st.mainThumb.ext || 'png'}`)}" data-a="dl">${isAudio(P) ? 'Download the cover' : 'Download the thumbnail'}</a>` : ''}</div>`;
       if (c.post === 'offer') extra += `<div class="sx-post"><span>Want a title and description for YouTube too?</span><div class="sx-btns"><button type="button" class="btn" data-a="post">Write them</button><button type="button" class="btn ghost" data-a="no-post">No thanks</button></div></div>`;
       if (post && st.postDone) extra += `<p class="sx-say">The title and description are written: ask ${esc(who())} to show them, or to change anything.</p>`;
       if (c.post === 'writing') extra += `<p class="sx-say">${esc(who())} is writing the title and description in the chat below.</p>`;
@@ -418,7 +421,7 @@ export function mountSimpleEditor(ctx) {
       update();
     }
     if (a === 'use-thumb' && st.thumbs.picked) {
-      try { await api(`/api/packaging/${encodeURIComponent(id)}/items/${encodeURIComponent(st.thumbs.picked)}`, { main: true }); toast('That’s your thumbnail.'); } catch (err) { toast(err.message); }
+      try { await api(`/api/packaging/${encodeURIComponent(id)}/items/${encodeURIComponent(st.thumbs.picked)}`, { main: true }); st.mainChecked = false; toast('That’s your thumbnail.'); } catch (err) { toast(err.message); }
       await ctx.refresh();
     }
     if (a === 'skip-thumb') {
@@ -606,6 +609,11 @@ export function mountSimpleEditor(ctx) {
     paintMain(c);
     wave.update();
     chainOn(P, c);
+    // Download gives the chosen thumbnail (Packaging's main picture) next to the video.
+    if (c.step === 'download' && !st.mainChecked) {
+      st.mainChecked = true;
+      api(`/api/packaging/${encodeURIComponent(id)}`).then((v) => { const m = (v.board?.items || []).find((x) => x.id === v.board?.main); st.mainThumb = m ? { id: m.id, ext: String(m.ext || 'png').replace(/^\./, '') } : null; update(); }).catch(() => {});
+    }
     if (c.step === 'thumbnail' && st.thumbs.state === 'none' && !st.thumbsChecked) { st.thumbsChecked = true; loadThumbs().then(() => { if (st.thumbs.state === 'running') pollThumbs(); update(); }); }
     // Write them: done when the post kit lands, or when Claude's turn ends without it (the chat says why).
     if (st.posting && P.busy) st.postBusy = true;

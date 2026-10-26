@@ -22,7 +22,7 @@ export const INTENSITY = { 0.6: 'Subtle', 1: 'Normal', 1.4: 'Strong' };
 // Music beds ffmpeg makes on this computer (server/simple-music.mjs): synthesised tones, no downloads, no licence.
 // They sit lower under the voice than an effect does (a cue's default level is an effect's).
 export const MUSIC_BEDS = { calm: 'Calm pad', bright: 'Bright pulse', warm: 'Warm drone' };
-export const BED_GAIN = -12;
+export const BED_GAIN = -6;
 export const DEFAULT_TOOLS = { captions: { on: true, look: 'clean' }, effects: { zooms: true, intensity: 1 }, music: null };
 const clampN = (v, lo, hi, d) => (Number.isFinite(Number(v)) ? Math.min(hi, Math.max(lo, Number(v))) : d);
 // The tools as saved (project.json simpleTools), with every field checked; unknown fields are dropped.
@@ -133,6 +133,8 @@ export function stepCard(P, ctx = {}) {
     if (!hasTake(P)) {
       return { ...card, say: [`Paste your script, or ask me to write one. When you press Record, it fills the window as a teleprompter.`], extra: 'record-page' };
     }
+    // A new take is still being saved (Record again): no Keep on the old one meanwhile.
+    if (ctx.saving) return { ...card, title: 'Saving your take…', lines: ['A moment: it lands here, then you can keep it.'], busy: true };
     const d = ctx.take?.duration ?? P.export?.duration ?? 0;
     return { ...card, title: `Got it, ${mmss(d)} recorded.`, lines: [audio ? 'Keep it and I’ll clean it up: pauses, ums and retakes.' : 'Keep it and I’ll make the rough cut: pauses, ums and retakes out.'],
       buttons: [{ a: 'keep', label: 'Keep · Rough cut next', kind: 'primary' }, { a: 'again', label: 'Record again' }, { a: 'delete', label: 'Delete take' }], extra: 'takes' };

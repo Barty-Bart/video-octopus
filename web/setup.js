@@ -112,7 +112,16 @@ export async function setupPage(ctx, { back = '#/', assistantPanel, focus = '' }
     r.li.className = `su-item ${s}${id === 'ffmpeg' ? ' su-rec' : ''}${id === focus ? ' su-focus' : ''}`;
     r.li.hidden = Boolean(c.hidden);
     // Set up from a scene (focus): the row comes into view once its check has an answer.
-    if (id === focus && s !== 'checking' && !focusShown) { focusShown = true; requestAnimationFrame(() => r.li.scrollIntoView({ block: 'center' })); }
+    // Rows above it still finish their checks and grow, so it is brought back into view twice more unless the creator
+    // has scrolled by then.
+    if (id === focus && s !== 'checking' && !focusShown) {
+      focusShown = true;
+      let moved = false;
+      const mark = () => { moved = true; };
+      for (const ev of ['wheel', 'touchmove', 'keydown']) window.addEventListener(ev, mark, { once: true, passive: true });
+      const show = () => { if (!moved && r.li.isConnected) r.li.scrollIntoView({ block: 'center' }); };
+      requestAnimationFrame(show); setTimeout(show, 1200); setTimeout(show, 3500);
+    }
     // A model row says its own few words (drawModels); the check's longer line only for a failure or cloud transcription.
     const short = MODEL_ROWS[id] && c[MODEL_ROWS[id].key] && s !== 'fail' && !c[MODEL_ROWS[id].key].cloud;
     r.li.replaceChildren(h(`<div class="su-i">${icon}</div>`), h(`<div class="su-b"><b>${esc(c.title)}${id === 'ffmpeg' ? ' <span class="badge ob-rec">Recommended</span>' : ''}</b><span class="sub">${esc(s === 'fixing' ? 'The Video Octopus assistant is on it. Answer its questions on the right.' : short ? '' : c.detail || '')}</span>

@@ -525,7 +525,7 @@ export function makeRail({ root, id, getP, hooks }) {
         : bt ? buildProg(P.build)
         : P.runningAt ? `<span class="dk-time" aria-hidden="true" title="How long it has been running">${elapsed()}</span>` : '';
       html = `<div class="dk-strip run${sheetOpen ? ' open' : ''}"><span class="dk-pill run"><span class="spin" aria-hidden="true"></span><span class="dk-pt">Running</span></span>
-        <span class="dk-name${two ? ' two' : ''}"><span class="vh">Running: </span><b>${esc(rs.name)}</b>${sub ? `<span class="dk-sub">${two ? '<span class="vh"> · </span>' : ' · '}${esc(sub)}</span>` : ''}</span>
+        <span class="dk-name${two ? ' dk-two' : ''}"><span class="vh">Running: </span><b>${esc(rs.name)}</b>${sub ? `<span class="dk-sub">${two ? '<span class="vh"> · </span>' : ' · '}${esc(sub)}</span>` : ''}</span>
         ${prog}${infoBtn(rs.name)}${sheetOpen ? sheet(rs) : ''}</div>`;
     } else if (mode === 'next') {
       const pre = !cur.optional ? before(cur) : null;

@@ -205,6 +205,11 @@ body.vt-open { overflow: hidden; }
   .sx-lead { max-height: none; }
   .project.simple .tab-body { flex: none; height: min(56vw, 420px); }
 }
+/* Narrow desktop (1100): the six names don't fit beside the name and the shape chip; done and later steps are dots. */
+@media (max-width: 1279px) {
+  .sx-prog .sx-st:not(.current) { font-size: 0; gap: 0; }
+  .sx-prog .sx-sp { width: 8px; }
+}
 @media (max-width: 760px) {
   .project.simple .tab-body { min-height: 220px; }
   .sx-tools { flex-direction: row; justify-content: space-around; border-left: 0; border-top: 1px solid var(--line); }
