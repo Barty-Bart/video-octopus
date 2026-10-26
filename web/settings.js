@@ -17,6 +17,7 @@ import { support, browserName } from './recorder.js';
 import { usageView } from './plan-usage.js';
 import { trashSection } from './trash.js';
 import { isAdvanced, setEditorMode } from './mode.js';
+import { editorModeText, SIMPLE_UPDATES } from './simple.js';
 
 let CTX = null;          // { app, makeChat, loadStatus, status, railAgent, newVideo } from app.js
 let askAvailable = false; // the Ask Claude drawer and ⌘J: every page but a project's (it has its own chat) and Setup
@@ -96,6 +97,9 @@ const SECTIONS = {
   trash: ['Trash', 'Deleted takes and media removed from videos wait here. Nothing is emptied automatically: put an item back, or empty the trash yourself.'],
   usage: ['Usage', 'What you’ve made with Video Octopus, counted from your own folders and a usage log that stays on this computer.'],
 };
+// Simple mode's words for a section where Advanced's name things Simple doesn't show (My styles, skills): V1 follow-ups.
+const SIMPLE_SECTIONS = { updates: ['Updates', SIMPLE_UPDATES.section] };
+const sectionOf = (k) => (!isAdvanced() && SIMPLE_SECTIONS[k]) || SECTIONS[k];
 // More words the settings search finds a section by: its rows' labels and what people call them.
 const FIND = {
   editor: 'editor mode simple advanced styles brand kits skills library schedules recordings everything',
@@ -132,7 +136,7 @@ async function settingsPage(hash) {
     CTX.status?.() ? null : CTX.loadStatus?.().catch(() => null),
   ]);
   let V = V0;
-  const findText = (g) => [g[1], g[2], ...g[3].flatMap((k) => [...(SECTIONS[k] || []), FIND[k] || ''])].join(' ').toLowerCase();
+  const findText = (g) => [g[1], g[2], ...g[3].flatMap((k) => [...(sectionOf(k) || []), FIND[k] || ''])].join(' ').toLowerCase();
   const el = h(`<div class="home shell settings-shell">
     ${topBarMarkup('Settings')}
     ${sidebarMarkup({ active: { page: 'settings' }, counts, takes, agent: CTX.railAgent?.(), forceIcons: true })}
@@ -202,7 +206,7 @@ async function settingsPage(hash) {
       const node = DRAW[k](V, save, draw, { advanced: advanced && $('.set-adv-body', advanced) });
       if (!node) continue;
       parts.push(node);
-      const [title, about] = SECTIONS[k];
+      const [title, about] = sectionOf(k);
       const sec = h(`<section class="set-sec" id="set-${k}" data-section="${k}" aria-labelledby="set-${k}-h"><h3 class="set-sec-h" id="set-${k}-h">${esc(title)}</h3>${about ? `<p class="set-about sub">${esc(about)}</p>` : ''}</section>`);
       sec.append(node);
       // A group titled like its section ("Recorder" in Recorder) needs no second heading.
@@ -690,8 +694,7 @@ const DRAW = {
         dispatchEvent(new HashChangeEvent('hashchange')); // the router draws Settings again, with the new sidebar
       } catch (e) { toast(e.message); }
     };
-    return group('', row('Simple or Advanced', 'Simple shows Projects and Resources and makes every video in a few steps. Advanced brings back My styles, brand kits, skills, the library, schedules and recordings. Nothing is lost when you switch.',
-      seg([['simple', 'Simple'], ['advanced', 'Advanced']], mode, pick)));
+    return group('', row('Simple or Advanced', editorModeText(mode), seg([['simple', 'Simple'], ['advanced', 'Advanced']], mode, pick)));
   },
   appearance(V, save, redraw) {
     const a = { ...currentAppearance(), ...(V.values.appearance || {}) };

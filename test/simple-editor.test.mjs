@@ -297,7 +297,7 @@ test('Simple hides the Advanced surfaces (CSS and gates); Advanced keeps beta.23
   for (const h of SIMPLE_HIDDEN) assert.ok(hidden.includes(h.sel.startsWith('#') && ['#rail', '#recBtn', '#exportBtn'].includes(h.sel) ? `body.simple-editor ${h.sel}` : `.project.simple ${h.sel}`), `${h.what} (${h.sel}) is hidden`);
   // every Simple rule is scoped: nothing here restyles Advanced
   const rules = css.replace(/\/\*[\s\S]*?\*\//g, '').replace(/@media[^{]+\{|@keyframes[^{]+\{[^}]*\}\s*\}?/g, '').match(/[^{}]+(?=\{)/g).map((x) => x.trim()).filter(Boolean);
-  for (const sel of rules.flatMap((r) => r.split(','))) assert.match(sel.trim(), /^(\.project\.simple|body\.simple-editor|body\.sx-dragging|body\.vt-open|\.sx-|\.sw-|\.vt|\.linkish|to$)/, `scoped: ${sel}`);
+  for (const sel of rules.flatMap((r) => r.split(','))) assert.match(sel.trim(), /^(\.project\.simple|body\.simple-editor|body\.sx-dragging|body\.vt-open|html\[data-mode=simple\]|\.sx-|\.sw-|\.vt|\.linkish|to$)/, `scoped: ${sel}`);
   assert.match(src('web/index.html'), /<link rel="stylesheet" href="\/simple.css">/);
   const app = src('web/app.js');
   assert.match(app, /if \(!isAdvanced\(\)\) \{\n\s+pendingRecord = [^\n]+\n\s+simple = mountSimpleEditor\(/, 'the Simple editor mounts only in Simple');

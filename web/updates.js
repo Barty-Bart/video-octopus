@@ -3,6 +3,7 @@
 // page's frame and passes its row/group/toggle helpers; markUpdateBadge puts "New" on the Updates entry.
 import { esc, h, api, toast, ago, plural, confirmBox } from './ui.js';
 import { isAdvanced } from './mode.js';
+import { SIMPLE_UPDATES } from './simple.js';
 
 const S = {}; // what the page last heard, so a redraw (the toggle's save) doesn't lose an update's or a sync's result
 
@@ -56,12 +57,14 @@ export function updatesSection(V, save, { row, group, toggle, advanced = null })
 
   const draw = () => {
     const u = S.u, a = u.app;
+    // Simple mode's words (web/simple.js SIMPLE_UPDATES): nothing about skills; Advanced keeps its own.
+    const W = isAdvanced() ? null : SIMPLE_UPDATES;
     setUpdateBadge(document, a.behind || 0);
     // ---- this copy and its version ----
     const ver = `<b>Video Octopus ${esc(a.version || '')}</b>${a.clone ? `<span class="sub">${[a.commit && `<code>${esc(a.commit)}</code>`, a.date && esc(a.date), a.branch && (a.upstream ? `${esc(a.branch)}, follows ${esc(a.upstream)}` : esc(a.branch))].filter(Boolean).join(' · ')}</span>` : '<span class="sub">Not a git clone</span>'}`;
     const running = u.restart.needed ? `<span class="sub">Running ${esc(u.restart.running.commit || 'the old version')} until Video Octopus restarts.</span>` : '';
     const activity = u.activity || {}, unavailable = Boolean(activity.busy || S.skillWorking || S.updating);
-    const parts = [row('This copy', 'App updates include the matching bundled skills. Your projects and personal skill versions are preserved.', h(`<div class="found"><span class="dot ok"></span>${ver}${running}</div>`))];
+    const parts = [row('This copy', W?.copy ?? 'App updates include the matching bundled skills. Your projects and personal skill versions are preserved.', h(`<div class="found"><span class="dot ok"></span>${ver}${running}</div>`))];
     // The Node.js running Video Octopus: updated by the creator, outside the app; a warning only, never a block.
     const rt = u.runtime;
     if (rt) parts.push(row('Node.js', 'Runs Video Octopus. Install updates from nodejs.org, then restart Video Octopus.',
@@ -71,11 +74,11 @@ export function updatesSection(V, save, { row, group, toggle, advanced = null })
     const card = h('<div class="found"></div>');
     const acts = h('<div class="upd-acts"></div>');
     const checkBtn = h('<button type="button" class="btn small">Check for updates</button>');
-    const pullBtn = h('<button type="button" class="btn small dark">Update app and skills</button>');
+    const pullBtn = h(`<button type="button" class="btn small dark">${esc(W?.update ?? 'Update app and skills')}</button>`);
     const blocked = a.reason && !a.behind;
     if (a.reason === 'not-clone') card.append(h(`<b>Updates by hand</b>`), h(`<span class="sub">${esc(a.text)} ${esc(a.how)}</span>`));
     else {
-      if (S.pulled) card.append(h(`<span class="dot ok"></span>`), h(`<b>${esc(S.pulled.text)}</b>`), h(`<span class="sub">${u.restart.needed ? (u.restart.supervised ? 'Restart to finish activating the app and its bundled skills.' : 'Restart using your original launch method to finish activating the app and its bundled skills.') : 'The app and bundled skills are ready. Customized versions stay yours.'}</span>`));
+      if (S.pulled) card.append(h(`<span class="dot ok"></span>`), h(`<b>${esc(S.pulled.text)}</b>`), h(`<span class="sub">${u.restart.needed ? (u.restart.supervised ? (W?.restart ?? 'Restart to finish activating the app and its bundled skills.') : (W?.restartByHand ?? 'Restart using your original launch method to finish activating the app and its bundled skills.')) : (W?.ready ?? 'The app and bundled skills are ready. Customized versions stay yours.')}</span>`));
       else if (S.offline) card.append(h(`<b>Couldn't reach ${esc((a.upstream || 'GitHub').split('/')[0])}</b>`), h(`<span class="sub">You may be offline${S.offline !== true ? ` (${esc(S.offline)})` : ''}. Nothing changed.</span>`));
       else if (blocked) card.append(h(`<b>${esc(a.text)}</b>`), h(`<span class="sub">${esc(a.how)}</span>`));
       else if (a.behind) {
@@ -89,7 +92,7 @@ export function updatesSection(V, save, { row, group, toggle, advanced = null })
       card.append(acts);
     }
     checkBtn.disabled = S.skillWorking || S.updating;
-    if (activity.busy) card.append(h(`<span class="sub" role="status">Finish the current work before updating or changing skills: ${esc((activity.reasons || []).join('; ') || 'the app is busy')}.</span>`));
+    if (activity.busy) card.append(h(`<span class="sub" role="status">${W?.busy ?? 'Finish the current work before updating or changing skills'}: ${esc((activity.reasons || []).join('; ') || 'the app is busy')}.</span>`));
     checkBtn.onclick = async () => {
       checkBtn.disabled = true; checkBtn.textContent = 'Checking…';
       try {
@@ -112,14 +115,14 @@ export function updatesSection(V, save, { row, group, toggle, advanced = null })
         if (r.updated) { S.pulled = r; S.note = null; toast(r.text); } else S.note = { text: r.text, how: r.how };
         S.offline = r.offline ? (r.fetchError || true) : false;
         if (r.restarting) {
-          await waitForRestart(pullBtn, r.bootId || u.bootId, 'Update app and skills');
+          await waitForRestart(pullBtn, r.bootId || u.bootId, W?.update ?? 'Update app and skills');
           return;
         }
         S.u = await api('/api/app/updates'); // where the folder stands now (no fetch)
       } catch (e) { S.note = { text: e.message }; toast(e.message); }
       finally { S.updating = false; draw(); }
     };
-    parts.push(row('New version', 'Fetch the app and its bundled skills together. When launched with start.sh or start.cmd, the app restarts to finish the update after current work is idle.', card));
+    parts.push(row('New version', W?.fetch ?? 'Fetch the app and its bundled skills together. When launched with start.sh or start.cmd, the app restarts to finish the update after current work is idle.', card));
 
     // ---- restart ----
     if (u.restart.needed || S.pulled) {
@@ -158,7 +161,7 @@ export function updatesSection(V, save, { row, group, toggle, advanced = null })
       }
       if (st.waiting?.length) sc.append(h(`<div class="sub">Waiting in <code>.studio/updates/</code>: ${st.waiting.map((f) => `<code>${esc(f)}</code>`).join(' ')}. Compare each with yours, keep what you like, then delete it there.</div>`));
     }
-    const starter = group('Other starter files', row('Optional studio templates', 'Core skills update with the app. This separate action updates studio instructions and library templates. Your preferences, memory and brand/style files are excluded.', sc));
+    const starter = group('Other starter files', row('Optional studio templates', W?.starter ?? 'Core skills update with the app. This separate action updates studio instructions and library templates. Your preferences, memory and brand/style files are excluded.', sc));
 
     // ---- managed defaults and personal versions ----
     const skills = u.skills, skillRows = [];

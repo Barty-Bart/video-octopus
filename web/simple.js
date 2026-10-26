@@ -101,3 +101,21 @@ export const SIMPLE_PAGES = ['projects', 'resources'];
 export const hiddenInSimple = (route, mode = DEFAULT_MODE) => mode !== 'advanced' && HIDDEN_PAGES.includes(route?.page);
 // The one quiet line a hidden deep link lands with on Projects.
 export const ADVANCED_NOTE = 'That’s in Advanced mode (Settings › General).';
+
+// ---- Settings' words in Simple (V1 follow-ups) ----
+// Settings › General › Editor mode's line, and Settings › Updates' words, in Simple mode: they name nothing Simple
+// hides (no My styles, no skills or skill preferences). Advanced keeps its own words (web/settings.js, web/updates.js).
+export const editorModeText = (mode = DEFAULT_MODE) => (mode === 'advanced'
+  ? 'Simple shows Projects and Resources and makes every video in a few steps. Advanced brings back My styles, brand kits, skills, the library, schedules and recordings. Nothing is lost when you switch.'
+  : 'Simple shows Projects and Resources, and Claude makes every video with you in a few steps. Advanced shows every tool and page, for editing each part by hand. Nothing is lost when you switch.');
+export const SIMPLE_UPDATES = {
+  section: 'New versions of Video Octopus, and opening Video Octopus when you log in.',
+  copy: 'Your projects, recordings and Resources stay as they are when the app updates.',
+  update: 'Update the app',
+  restart: 'Restart to finish the update.',
+  restartByHand: 'Restart using your original launch method to finish the update.',
+  ready: 'The new version is ready.',
+  busy: 'Finish the current work before updating',
+  fetch: 'Fetch the new version of the app. When launched with start.sh or start.cmd, the app restarts to finish the update after current work is idle.',
+  starter: 'Updates the instructions and templates your studio started with. Your projects, recordings and Resources are left alone.',
+};

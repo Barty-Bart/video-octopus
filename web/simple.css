@@ -21,6 +21,14 @@ body.simple-editor #exportBtn,
 .project.simple .chat-sess,
 .project.simple .tab-body > .start,
 .project.simple .tab-body > .pane:not([data-pane=canvas]) { display: none !important; }
+/* The chat in plain sentences (one-editor §0.2; V1 follow-ups): no tool rows (Bash, Write…), no "What Video Octopus
+   asked Claude" under a step's line, no answered-permission lines. The permission banner (.wait-banner) and errors
+   (.error) are other elements and still show. Advanced shows all of it. */
+.project.simple .msgs .tool,
+.project.simple .msgs .ms-brief,
+.project.simple .msgs .perm-line { display: none !important; }
+/* The plan-usage meter in the top bar: Advanced only (Settings › Agent & model › Plan usage still has it). */
+html[data-mode=simple] #usage { display: none !important; }
 .project.simple.sx-recording-page .tab-body,
 .project.simple.sx-recording-page .sx-below { display: none; }
 
