@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { spawn, execFileSync } from 'node:child_process';
 import { createServer } from 'node:net';
 import { png } from './png-fixture.mjs';
-import { cleanTools } from '../web/simple-flow.js';
+import { cleanTools, recordPreview, cameraCorner, scriptPanel, SCRIPT_SIDE_MIN } from '../web/simple-flow.js';
 import { SIMPLE_KINDS, ACCEPT, AUDIO_ACCEPT, guessKind, fitsKind, dropKind, dropAsks, resourceFields } from '../web/resource-kinds.js';
 import { editorModeText, SIMPLE_UPDATES } from '../web/simple.js';
 import { clickAction, restoreTarget, waveHint, gapsOf } from '../web/simple-wave.js';
@@ -80,6 +80,7 @@ test('1: in Simple the tutorial’s Build builds every planned scene and the who
   write(join(dir, 'renders', 'whole_video_v1.mp4'), 'synthetic');
   assert.equal(intro().done, true);
   assert.match(stepPrompt(dir, 'tutorial', 'intro'), /Build this whole YouTube video/);
+  assert.match(pipelineStatus(dir, 'tutorial', { lines: true }).steps.find((x) => x.id === 'intro').line, /^Video rendered/, 'not “Intro rendered”');
   setMode('advanced');
   assert.deepEqual([intro().name, intro().done], ['Build the intro', true]);
   assert.match(stepPrompt(dir, 'tutorial', 'intro'), /^Build the intro \(the intro block/);
@@ -163,14 +164,21 @@ test('2: music is a Resources kind (sound files), known by its name; a dropped s
   assert.equal(cleanTools({ music: { cue: 'c1', file: 'x', bed: 'calm', resource: 'abc' } }).music.resource, undefined, 'a made bed is a bed');
 });
 
-test('2: the Music tool keeps the three beds, lists your music as beds and has "or add your own" (Resources’ upload, kind music)', () => {
+test('9: no tool rail in Simple: Claude is told it can do captions, music, titles and zooms; music by the command line', () => {
   const ed = src('web/simple-editor.js');
-  assert.match(ed, /Object\.entries\(MUSIC_BEDS\)/, 'the three made beds stay');
-  assert.match(ed, /or <label class="linkish" tabindex="0">add your own<input type="file" accept="\$\{AUDIO_ACCEPT\}" hidden data-k="own-music"><\/label>/);
-  assert.match(ed, /\/api\/simple-resources\/upload\?\$\{new URLSearchParams\(\{ name: f\.name, kind: 'music' \}\)\}/);
-  assert.match(ed, /filter\(\(f\) => f\.kind === 'music'\)/, 'Resources’ music files are the extra beds');
-  assert.match(ed, /api\(`\$\{base\}\/simple-music`, \{ resource: b\.dataset\.mine \}\)/);
-  assert.match(src('web/resources-page.js'), /f\.kind === 'music' \|\| AUDIO_FILE\.test\(f\.name\)/, 'a music tile has its own preview');
+  assert.doesNotMatch(ed, /sx-tools|data-tool=|sx-panel/, 'no Captions · Music · Text · Effects buttons');
+  assert.doesNotMatch(ed, /\b(onDocDown|toolOpen|paintTool|loadMine)\b/, 'nothing of the tool rail is left behind');
+  assert.doesNotMatch(src('web/simple.css'), /\.sx-tools|\.sx-panel/);
+  assert.match(src('web/simple.css'), /\.project\.simple \{ grid-template-columns: minmax\(340px, 440px\) minmax\(0, 1fr\); \}/, 'the width goes to the video');
+  const idx = src('server/index.mjs');
+  assert.match(idx, /\.\.\.\(isAdvanced\(\) \? \[\] : \[simpleChatContext\(id\)\]\)/);
+  assert.match(idx, /there are no Captions, Music, Text or Effects buttons/);
+  for (const w of ['captions', 'music under the voice', 'titles', 'zooms', 'music \$\{id\} calm\|bright\|warm', '--resource <id>']) assert.match(idx, new RegExp(w), w);
+  const cli = src('bin/octopus.mjs');
+  assert.match(cli, /octopus music <project> calm\|bright\|warm/);
+  assert.match(cli, /api\(`\$\{base\}\/simple-music`, \{ resource: opt\.resource \}\)/);
+  // Captions stay on by default in the Download.
+  assert.equal(cleanTools({}).captions.on, true);
 });
 
 // ---------- 3. Also add to Resources asks for a picture ----------
@@ -247,6 +255,88 @@ test('7: a click on a greyed part seeks; ⌥/Alt-click restores it; Restore take
   assert.match(wave, /data-a="restore" disabled/);
   assert.match(wave, /const act = model\.ready \? clickAction\(model\.segs, dur\(\), d0\.t0, \{ alt: d0\.alt, editable: !model\.locked \}\) : \{ seek: d0\.t0 \};/);
   assert.doesNotMatch(wave, /if \(gap\) \{ if \(await model\.edit\(restoreRange/, 'the old click-to-restore is gone');
+});
+
+// ---------- 8. Record: a live preview of what the take records ----------
+test('8: each source maps to its preview: camera + screen in the corner, camera, screen (with its picker), or the mic', () => {
+  const both = recordPreview('camera-screen', { streams: { cam: 1, mic: 1 }, layout: { webcam: { x: 0.05, y: 0.06, w: 0.2 } } });
+  assert.deepEqual([both.view, both.frame, both.screen, both.camera, both.pickScreen, both.changeScreen, both.ready], ['camera-screen', '16:9', true, true, true, false, false]);
+  assert.deepEqual(both.corner, { x: 0.05, y: 0.06, w: 0.2 }, 'the style’s picture-in-picture box');
+  const picked = recordPreview('camera-screen', { streams: { screen: 1, cam: 1, mic: 1 } });
+  assert.deepEqual([picked.pickScreen, picked.changeScreen, picked.ready], [false, true, true]);
+  assert.deepEqual(picked.corner, cameraCorner(null), 'no style box: the bottom-right corner');
+  const camOnly = recordPreview('camera', { aspect: '9:16', streams: { cam: 1, mic: 1 } });
+  assert.deepEqual([camOnly.view, camOnly.frame, camOnly.cameraFills, camOnly.corner, camOnly.pickScreen, camOnly.cameraPicker], ['camera', '9:16', true, null, false, true]);
+  const screen = recordPreview('screen', { streams: { mic: 1 } });
+  assert.deepEqual([screen.view, screen.camera, screen.pickScreen, screen.cameraPicker, screen.micPicker], ['screen', false, true, false, true]);
+  const audio = recordPreview('audio', { streams: { mic: 1 } });
+  assert.deepEqual([audio.view, audio.bigMeter, audio.screen, audio.camera, audio.ready], ['mic', true, false, false, true]);
+  assert.equal(recordPreview('nonsense').view, 'camera');
+  assert.deepEqual(cameraCorner({ webcam: { x: 2, y: 0, w: 0.2 } }), cameraCorner(null), 'a box off the frame is ignored');
+});
+
+test('8: the script panel is secondary: one line while empty, open with a script, beside the preview when wide', () => {
+  assert.deepEqual(scriptPanel({ text: '' }), { open: false, place: 'side', words: 0, line: 'Paste or write one, or ask Claude. It scrolls as a teleprompter while you record.' });
+  assert.equal(scriptPanel({ text: '', open: true }).open, true, 'opened by hand');
+  const s1 = scriptPanel({ text: 'Hello there, this is my video [pause] about cuts.', width: 375 });
+  assert.deepEqual([s1.open, s1.place, s1.words, s1.line], [true, 'below', 8, '8 words · under a minute']);
+  assert.equal(scriptPanel({ text: 'Hi', open: false }).open, false, 'closed by hand');
+  assert.equal(scriptPanel({ text: 'word '.repeat(450), width: SCRIPT_SIDE_MIN }).line, '450 words · about 3 min');
+  assert.equal(scriptPanel({ width: SCRIPT_SIDE_MIN - 1 }).place, 'below');
+  assert.match(src('web/simple.css'), new RegExp(`@media \\(min-width: ${SCRIPT_SIDE_MIN}px\\) \\{\\n  \\.sx-rec\\[data-script=open\\]`), 'CSS and the panel agree on the width');
+});
+
+test('8: the Record page: preview, then its controls, then "Script (optional)"; the take records the preview’s streams', () => {
+  const rp = src('web/simple-record.js');
+  const at = (re) => { const m = re.exec(rp); assert.ok(m, String(re)); return m.index; };
+  const pv = at(/<div class="sx-pv"/), ctl = at(/<div class="sx-rec-ctl"/), scr = at(/<aside class="sx-scr"/);
+  assert.ok(pv < ctl && ctl < scr, 'at 375 px the page reads preview, controls, script');
+  assert.match(rp, /Choose what to share…/);
+  assert.match(rp, /data-a="screen" title="Pick another screen or window">Change</);
+  assert.match(rp, /Script <span class="sub">\(optional\)<\/span>/);
+  assert.match(rp, /Ask Claude to write one/);
+  assert.match(rp, /rec\.previewOpen\(\{ camera: pl\.camera \? picks\.camera : 'none', mic: picks\.mic \}\)/);
+  assert.match(rp, /await rec\.previewScreen\(\)/);
+  assert.match(rp, /rec\.previewClose\(\)/);
+  assert.match(rp, /<div class="rl-stage"><div class="rl-frame">/, 'B7’s live frame (rec-live, recorder.css)');
+  const r = src('web/recorder.js');
+  assert.match(r, /const pre = pv && dev === pv \? pv : null;/, 'quickRecord takes the preview’s streams: no second screen picker');
+  assert.match(r, /if \(want\.screen && !d\.screen\) d\.screen = await pickScreen\(\);/);
+  assert.match(src('web/simple-editor.js'), /recPage\.show\(page && rec\.session\(\)\.phase === 'idle'\);/);
+  // While recording without a script: the live picture, not a blank timer (Audio only keeps the big timer).
+  assert.match(rp, /sources !== 'audio' \? `<div class="vt-live"/);
+  // Advanced's recorder is unchanged: its panel never opens the Simple preview.
+  assert.match(r, /if \(S\.phase !== 'idle' \|\| panelOpen\) return pv;/);
+});
+
+// ---------- 9. Media in Simple ----------
+test('9: Media lists the takes, dropped files and the music, each with a picture or icon, a name and a length', async () => {
+  const { mediaRows } = await import('../web/simple-media.js');
+  const rows = mediaRows({
+    items: [{ id: '2026-10-26_10-00-00', canvas: true, take: true, picture: true, duration: 71, files: [{ file: '2026-10-26_10-00-00_webcam.mp4', role: 'camera' }] },
+      { id: 'b-roll', name: 'b-roll.mov', canvas: false, take: false, picture: true, duration: 9, files: [{ file: 'b-roll.mov', role: 'video' }] }],
+    dropped: [{ file: 'source/app shot.png', name: 'app shot.png', bytes: 120000, picture: true }, { file: 'source/notes.pdf', name: 'notes.pdf', bytes: 2000, picture: false }],
+    music: [{ id: 'c1', file: 'work/music/calm-71s.m4a', label: 'Calm pad', duration: 71, gain: -6, t: 0 }],
+  });
+  assert.deepEqual(rows.map((r) => [r.kind, r.sub]), [['take', 'Your recording · 1:11'], ['clip', 'Clip · 0:09'], ['picture', 'Picture · 120 KB'], ['file', 'File · 2 KB'], ['music', 'Music under the video · 1:11']]);
+  assert.deepEqual(rows[0].thumb, { video: 'source/2026-10-26_10-00-00_webcam.mp4' });
+  assert.deepEqual(rows[2].thumb, { img: 'source/app shot.png' });
+  assert.equal(rows[4].thumb, null);
+  assert.equal(rows[1].name, 'b-roll.mov');
+  const ed = src('web/simple-editor.js'), me = src('web/simple-media.js');
+  assert.match(ed, /cardHost\.after\(media\.el\);/, 'collapsed under the step card, in Claude’s column');
+  assert.match(me, /<details class="sx-media">/);
+  assert.match(me, /actions\.deleteRecording\(r\.item, \{ recording: r\.item\.canvas \}\)/, 'a take: Media’s own delete (Remove from this video, or to the Bin)');
+  assert.match(me, /media-drop-remove/);
+  assert.match(me, /\['Undo', \(\) => actions\.restore\(x\.trash, r\.name\)\]/);
+});
+
+test('centre: on every step the video stays in the centre; thumbnails go in the card, scenes below the video', () => {
+  const ed = src('web/simple-editor.js');
+  assert.doesNotMatch(ed, /sx-over/, 'nothing covers the video');
+  assert.match(ed, /if \(c\.extra === 'thumbs'\) extra \+= thumbsHTML\(\);/);
+  assert.match(ed, /side\.append\(sceneList\)/, 'the scene list sits below the video, in the transcript’s place');
+  assert.match(src('web/simple.css'), /\.project\.simple \.center \{ order: -1; \}/, 'narrow: the video first');
 });
 
 // ---------- a real server: music from Resources, a picture as a photo of you ----------
@@ -328,7 +418,7 @@ export async function removeKey() { throw new Error('Fixture does not remove cre
     try { if ((await fetch(`${url}/api/learning`)).ok) break; } catch {}
     await sleep(100);
   }
-  return { studio: studioDir, req, ok, project: (id) => join(studioDir, 'projects', id) };
+  return { studio: studioDir, url, req, ok, project: (id) => join(studioDir, 'projects', id) };
 }
 
 test('server: your music goes into Resources and plays as this video’s bed; a dropped picture can go in as a photo of you', async (t) => {
@@ -363,4 +453,35 @@ test('server: your music goes into Resources and plays as this video’s bed; a 
   const added = await s.ok(`/api/simple-resources/upload?${new URLSearchParams({ project: v.id, file: me, kind: 'photo' })}`, {});
   assert.deepEqual([added.kind, added.line], ['photo', 'Used in thumbnails']);
   assert.ok(existsSync(join(s.project(v.id), me)), 'the video keeps its own copy');
+});
+
+test('server: Media lists dropped files and the music; Delete with Undo; the command line puts music under the video', async (t) => {
+  const s = await startServer(t);
+  const v = await s.ok('/api/projects', { untitled: true, shape: 'youtube' });
+  const base = `/api/projects/${v.id}`;
+  const shot = (await s.ok(`${base}/drop?name=${encodeURIComponent('app shot.png')}`, undefined, png(4, 4, () => [5, 5, 5]))).file;
+  let m = await s.ok(`${base}/media-items`);
+  assert.deepEqual(m.dropped.map((f) => [f.file, f.picture]), [[shot, true]]);
+  assert.deepEqual(m.music, []);
+  // Delete: to the studio's trash, and Undo brings it back.
+  const gone = await s.ok(`${base}/media-drop-remove`, { file: shot });
+  assert.ok(gone.trash);
+  assert.equal(existsSync(join(s.project(v.id), shot)), false);
+  assert.deepEqual((await s.ok(`${base}/media-items`)).dropped, []);
+  await s.ok(`${base}/media-restore`, { trash: gone.trash });
+  assert.ok(existsSync(join(s.project(v.id), shot)), 'back');
+  for (const bad of ['project.json', 'source/../project.json', 'source/missing.png']) assert.notEqual((await s.req(`${base}/media-drop-remove`, { file: bad })).status, 200, bad);
+
+  // Music by the command line (what Claude runs in Simple): the creator's own music from Resources.
+  const up = await s.req(`/api/simple-resources/upload?${new URLSearchParams({ name: 'Theme.wav', kind: 'music' })}`, undefined, wav());
+  assert.equal(up.status, 200, JSON.stringify(up.body));
+  const cli = (...args) => execFileSync(process.execPath, [join(APP, 'bin', 'octopus.mjs'), ...args], { env: { ...process.env, STUDIO_URL: s.url }, encoding: 'utf8' });
+  assert.match(cli('music', v.id, '--resource', up.body.id), /Music under the video: Theme\.wav \(-6 dB\)/);
+  m = await s.ok(`${base}/media-items`);
+  assert.deepEqual(m.music.map((x) => [x.label, x.gain]), [['Theme.wav', -6]]);
+  assert.equal((await s.ok(base)).simpleTools.music.resource, up.body.id);
+  cli('music', v.id, '--resource', up.body.id, '--gain', '-9');
+  assert.deepEqual((await s.ok(`${base}/media-items`)).music.map((x) => x.gain), [-9], 'replaced, not stacked');
+  assert.match(cli('music', v.id, 'off'), /No music/);
+  assert.deepEqual((await s.ok(`${base}/media-items`)).music, []);
 });
