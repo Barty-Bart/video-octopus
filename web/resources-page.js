@@ -10,9 +10,10 @@ import { icon } from './icons.js';
 import { actionToast } from './media.js';
 import { KIT_PALETTE, avatarInk } from './kit-colors.js';
 import { startResearch, researchActions } from './brand-research.js';
+import { folderRow } from './simple-profiles.js';
 import { SIMPLE_KINDS, PICTURE_KINDS, ACCEPT, guessKind, lookColors, IMAGE_FILE, FONT_FILE, VIDEO_FILE } from './resource-kinds.js';
 
-const LEAD = 'What Claude uses in every video, for every profile: your look, your photos, your products. Files for one profile go on that profile’s page.';
+const LEAD = 'What Claude uses. Shared goes into every video; each profile has a folder of its own.';
 const fileUrl = (id) => `/api/simple-resources/${encodeURIComponent(id)}/file`;
 const firstLine = (t, n) => String(t || '').split(/\n/)[0].trim().slice(0, n);
 const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return u; } };
@@ -68,10 +69,12 @@ export function renderResources(main, ctx = {}) {
       <span class="res-title"><h1>Resources</h1><span class="sub">${esc(LEAD)}</span></span>
       <label class="btn primary res-up">${icon('upload', 14)}Upload<input type="file" id="resFile" multiple accept="${ACCEPT}" hidden></label>
     </header>
+    <section class="res-sec" aria-label="Folders"><div id="resFolders"></div></section>
     <section class="res-sec" aria-labelledby="resLookH"><h2 class="res-h" id="resLookH">Your look</h2><div id="resLook"><p class="sub">Loading…</p></div></section>
     <section class="res-sec" aria-labelledby="resFilesH"><h2 class="res-h" id="resFilesH">Files</h2><div id="resAsk"></div><div id="resFiles"></div></section>
   </div>`));
   const root = $('.res', main);
+  folderRow($('#resFolders', main), '');
 
   const closeChat = () => { events?.close(); chat?.destroy?.(); events = null; chat = null; };
   const closeMenu = () => { menu?.remove(); menu = null; document.removeEventListener('pointerdown', outside, true); };

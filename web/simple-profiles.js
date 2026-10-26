@@ -19,6 +19,23 @@ async function upload(url, file) {
   return j;
 }
 
+// The folders row at the top of Resources and of each profile's page: Shared (the Resources page: files every profile
+// uses) and one folder per profile, plus + New profile. current: '' for Shared, else the profile's slug.
+export function folderRow(host, current = '') {
+  const paint = (profiles) => {
+    const tile = (href, name, sub, on) => `<a class="pf-folder${on ? ' on' : ''}" href="${href}"${on ? ' aria-current="page"' : ''}>${icon('library', 16)}<span><b>${esc(name)}</b><span class="sub">${esc(sub)}</span></span></a>`;
+    const row = h(`<div class="pf-folders" role="list">
+      ${tile('#/resources', 'Shared', 'Used in every video', !current)}
+      ${profiles.map((p) => tile(`#/profile/${encodeURIComponent(p.slug)}`, p.name, `${plural(p.files, 'file')} · ${plural(p.learnings, 'learning')}`, p.slug === current)).join('')}
+      <button type="button" class="pf-folder pf-folder-add">${icon('plus', 16)}<span><b>New profile</b><span class="sub">Its own files and learnings</span></span></button>
+    </div>`);
+    $('.pf-folder-add', row).onclick = () => host.replaceChildren(newProfileForm((p) => { location.hash = `#/profile/${encodeURIComponent(p.slug)}`; }, () => load()));
+    host.replaceChildren(row);
+  };
+  const load = () => api('/api/simple-profiles').then((r) => { if (host.isConnected) paint(r.profiles || []); }).catch(() => {});
+  load();
+}
+
 // The New profile form: name, what it makes, the shape and (for topics) how much script. onMade(profile).
 function newProfileForm(onMade, onCancel) {
   const el = h(`<form class="pf-card pf-new-form" aria-label="New profile">
@@ -112,7 +129,8 @@ export function renderProfilePage(main, { slug, projects = [] }) {
     const p = data;
     const vids = projects.filter((v) => v.profile === slug);
     root.replaceChildren(h(`<div>
-      <header class="pv-head"><span class="res-title"><a class="sub" href="#/">‹ Projects</a><h1>${esc(p.name)}</h1><span class="sub">${esc(profileLine(p, SHAPES))} · its folder: <code>${esc(p.path)}</code></span></span></header>
+      <div class="pf-folders-host"></div>
+      <header class="pv-head"><span class="res-title"><h1>${esc(p.name)}</h1><span class="sub">${esc(profileLine(p, SHAPES))} · its folder: <code>${esc(p.path)}</code></span></span></header>
       <section class="res-sec pf-set" aria-label="Settings">
         <label class="pf-f"><span>Name</span><input class="field" id="pfName" maxlength="60" value="${esc(p.name)}"></label>
         <label class="pf-f"><span>How it starts</span><select class="field" id="pfWorkflow">${WORKFLOW_KEYS.map((k) => `<option value="${k}"${k === p.workflow ? ' selected' : ''}>${esc(WORKFLOWS[k].name)}</option>`).join('')}</select></label>
@@ -136,6 +154,7 @@ export function renderProfilePage(main, { slug, projects = [] }) {
       <section class="res-sec" aria-labelledby="pfVidsH"><h2 class="res-h" id="pfVidsH">Videos</h2>
         <ul class="pf-files">${vids.map((v) => `<li><a href="#/p/${encodeURIComponent(v.id)}">${esc(v.name)}</a></li>`).join('') || '<li class="sub">No videos from this profile yet: start one from Projects.</li>'}</ul></section>
     </div>`));
+    folderRow($('.pf-folders-host', root), slug);
     const patch = async (b, msg) => { try { data = await api(base(slug), b); if (msg) toast(msg); paint(); } catch (e) { toast(e.message); } };
     $('#pfName', root).onchange = (e) => patch({ name: e.target.value });
     $('#pfWorkflow', root).onchange = (e) => patch({ workflow: e.target.value });

@@ -534,3 +534,13 @@
 /* A batch's split in the Simple editor (web/simple-editor.js) */
 .sx-batch { display: flex; flex-direction: column; gap: 6px; padding: 12px; border-radius: 12px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
 .sx-batch-l { display: flex; flex-wrap: wrap; gap: 6px; font-size: 13px; }
+/* The folders row on Resources and a profile's page: Shared + one per profile */
+.pf-folders { display: flex; flex-wrap: wrap; gap: 10px; }
+.pf-folder { display: flex; align-items: center; gap: 10px; min-width: 180px; padding: 12px 14px; border: 0; border-radius: var(--r-l); background: var(--surface-2); color: var(--text); font: inherit; text-align: left; text-decoration: none; cursor: pointer; box-shadow: inset 0 0 0 1px var(--line); }
+.pf-folder > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pf-folder b { font-size: 13.5px; font-weight: 600; }
+.pf-folder .sub { font-size: 12px; }
+.pf-folder:hover { background: var(--hover); }
+.pf-folder.on { box-shadow: inset 0 0 0 2px var(--accent); }
+.pf-folder-add { background: transparent; }
+.pf-folders-host:empty { display: none; }

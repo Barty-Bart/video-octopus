@@ -219,7 +219,7 @@ async function home(route, nav = null) {
   if (!STATUS.studioOk) return setupScreen();
   const [projects, takes, counts] = await Promise.all([api('/api/projects'), api('/api/takes'), api('/api/app/counts').catch(() => ({}))]);
   const agent = agentView(STATUS);
-  const active = { page: view };
+  const active = { page: view === 'profile' ? 'resources' : view }; // a profile is one of Resources' folders
   const styleName = view === 'kit' ? (counts.channels || []).find((c) => c.id === route.id)?.name : null;
   const el = h(`<div class="home shell${view === 'library' ? ' with-side' : ''}">
     ${topBarMarkup(pageName(active, styleName))}
