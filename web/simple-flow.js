@@ -20,7 +20,8 @@ export const ROUGH_CUT = ['prepare', 'sections', 'lock'];
 export const CAPTION_LOOKS = { clean: 'Clean', bold: 'Bold', boxed: 'Boxed' };
 export const INTENSITY = { 0.6: 'Subtle', 1: 'Normal', 1.4: 'Strong' };
 // Music beds ffmpeg makes on this computer (server/simple-music.mjs): synthesised tones, no downloads, no licence.
-// They sit lower under the voice than an effect does (a cue's default level is an effect's).
+// They sit lower under the voice than an effect does (a cue's default level is an effect's). The creator's own music
+// (Resources' music files, the tool's "or add your own") is listed after them as more beds.
 export const MUSIC_BEDS = { calm: 'Calm pad', bright: 'Bright pulse', warm: 'Warm drone' };
 export const BED_GAIN = -6;
 export const DEFAULT_TOOLS = { captions: { on: true, look: 'clean' }, effects: { zooms: true, intensity: 1 }, music: null };
@@ -33,7 +34,7 @@ export function cleanTools(t = {}) {
     effects: { zooms: e.zooms !== false, intensity: clampN(e.intensity, 0.25, 2, 1) },
     music: m && typeof m === 'object' && typeof m.cue === 'string' && m.cue
       ? { cue: m.cue.slice(0, 40), file: String(m.file || '').slice(0, 300), label: String(m.label || '').slice(0, 80), gain: clampN(m.gain, -24, 12, 0),
-        ...(Object.hasOwn(MUSIC_BEDS, m.bed) ? { bed: m.bed } : {}) }
+        ...(Object.hasOwn(MUSIC_BEDS, m.bed) ? { bed: m.bed } : typeof m.resource === 'string' && /^[\w-]{1,80}$/.test(m.resource) ? { resource: m.resource } : {}) }
       : null,
   };
 }

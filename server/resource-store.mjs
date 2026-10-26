@@ -21,6 +21,8 @@ export const RESOURCE_KINDS = {
   // Simple mode's Resources page (V1 spec §4): a product shot and a video clip of the creator's.
   product: 'Product',
   clip: 'Video clip',
+  // A sound file: music for Simple's Music tool (V1 follow-ups).
+  music: 'Music',
 };
 // "Who is in it" (a photo must say): me, someone who agreed, someone else (never sent to an image model), nobody.
 export const LIKENESS = {
@@ -34,15 +36,19 @@ export const USES = ['always', 'ask', 'never'];
 export const MAX_RESOURCE_BYTES = 50 * 1024 * 1024;
 // A video clip (kind clip) may be bigger than a picture: up to 2 GB, like the brand folder's example videos.
 export const MAX_CLIP_BYTES = 2 * 1024 * 1024 * 1024;
-export const maxBytesFor = (kind) => (kind === 'clip' ? MAX_CLIP_BYTES : MAX_RESOURCE_BYTES);
+// Music (an uncompressed WAV of a long track is big) up to 500 MB.
+export const MAX_MUSIC_BYTES = 500 * 1024 * 1024;
+export const maxBytesFor = (kind) => (kind === 'clip' ? MAX_CLIP_BYTES : kind === 'music' ? MAX_MUSIC_BYTES : MAX_RESOURCE_BYTES);
+export const tooBigText = (kind) => (kind === 'clip' ? 'A clip can be at most 2 GB.' : kind === 'music' ? 'Music can be at most 500 MB.' : 'Resources can be at most 50 MB.');
 export const MAX_RESOURCES_PER_SCOPE = 300;
 const IMAGE = /\.(png|jpe?g|webp|gif|svg)$/i;
 const FONT = /\.(ttf|otf|woff2?)$/i;
 const VIDEO = /\.(mp4|mov|m4v|webm)$/i;
+const AUDIO = /\.(mp3|wav|m4a|aac|ogg|flac)$/i;
 // The files each kind takes, and what to say when a file doesn't fit.
-const FILES_FOR = (kind) => (kind === 'font' ? FONT : kind === 'clip' ? VIDEO : IMAGE);
+const FILES_FOR = (kind) => (kind === 'font' ? FONT : kind === 'clip' ? VIDEO : kind === 'music' ? AUDIO : IMAGE);
 const WRONG_FILE = (kind) => (kind === 'font' ? 'Choose a font file (.ttf, .otf, .woff, .woff2).'
-  : kind === 'clip' ? 'Choose a video clip (.mp4, .mov, .m4v or .webm).' : 'Choose an image (.png, .jpg, .webp, .gif or .svg).');
+  : kind === 'clip' ? 'Choose a video clip (.mp4, .mov, .m4v or .webm).' : kind === 'music' ? 'Choose a sound file (.mp3, .wav, .m4a, .aac, .ogg or .flac).' : 'Choose an image (.png, .jpg, .webp, .gif or .svg).');
 const SHA = /^[a-f0-9]{64}$/;
 
 const now = () => new Date().toISOString();
@@ -128,7 +134,7 @@ export function addResource(store, { scope, tempPath = null, bytes = null, text 
     const fileName = cleanFileName(clean.name);
     const ext = extensionOf(fileName);
     if (!FILES_FOR(clean.kind).test(ext)) fail(WRONG_FILE(clean.kind));
-    const max = maxBytesFor(clean.kind), tooBig = clean.kind === 'clip' ? 'A clip can be at most 2 GB.' : 'Resources can be at most 50 MB.';
+    const max = maxBytesFor(clean.kind), tooBig = tooBigText(clean.kind);
     let stored;
     if (tempPath) {
       if (lstatSync(tempPath).size > max) fail(tooBig);

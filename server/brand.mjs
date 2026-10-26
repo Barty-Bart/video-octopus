@@ -46,6 +46,13 @@ export function sniff(ext, head) {
     case 'woff2': return at(0, 'wOF2');
     case 'mp4': case 'm4v': case 'mov': return ['ftyp', 'moov', 'mdat', 'wide', 'free', 'skip', 'pnot'].some((x) => at(4, x));
     case 'webm': return b.length > 3 && b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3;
+    // Sound files (Resources' music): an ID3 tag or an MPEG frame, RIFF WAVE, an MP4 box, ADTS, Ogg, FLAC.
+    case 'mp3': return at(0, 'ID3') || (b.length > 1 && b[0] === 0xff && (b[1] & 0xe0) === 0xe0);
+    case 'wav': return at(0, 'RIFF') && at(8, 'WAVE');
+    case 'm4a': return ['ftyp', 'moov', 'mdat', 'wide', 'free', 'skip'].some((x) => at(4, x));
+    case 'aac': return at(0, 'ID3') || (b.length > 1 && b[0] === 0xff && (b[1] & 0xf6) === 0xf0);
+    case 'ogg': return at(0, 'OggS');
+    case 'flac': return at(0, 'fLaC');
     default: return false;
   }
 }

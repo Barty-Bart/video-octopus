@@ -37,13 +37,13 @@ import { cleanBrand } from './profile-store.mjs';
 import { settings, readJSON, inside } from './util.mjs';
 import { settingsChanged } from './settings.mjs';
 import { listProjects, projectDir, projectMeta, saveProjectMeta, appendWorklog } from './studio.mjs';
-import { addResource, updateResource, archiveResource, getResource, listResources, maxBytesFor } from './resource-store.mjs';
-import { mimeOf, hashFile } from './file-store.mjs';
+import { addResource, updateResource, archiveResource, getResource, listResources, maxBytesFor, tooBigText } from './resource-store.mjs';
+import { mimeOf, hashFile, cloneInto, cleanFileName } from './file-store.mjs';
 import { sniff } from './brand.mjs';
 import { trashRoot, TRASH_NAME, newTrashEntry } from './browser-recorder.mjs';
 import { projectBuilt } from './profiles.mjs';
 import { BUILTIN } from './learning-store.mjs';
-import { SIMPLE_KINDS, simpleKindOf, resourceFields, fitsKind, renamed, lookColors, dropKind } from '../web/resource-kinds.js';
+import { SIMPLE_KINDS, KIND_HELP, simpleKindOf, resourceFields, fitsKind, renamed, lookColors, dropKind } from '../web/resource-kinds.js';
 
 export const TRASH_KIND = 'resource-removed';
 const fail = (message, status = 400) => { throw Object.assign(new Error(message), { status }); };
@@ -157,8 +157,8 @@ const own = (s, pid, id) => {
 
 export function addFile(s, { tempPath, name, kind }) {
   const p = builtin(s, true);
-  if (!SIMPLE_KINDS[kind]) fail('Choose what this is: logo, font, photo of you, product or clip.');
-  if (!fitsKind(String(name || ''), kind)) fail(kind === 'font' ? 'A font is a .ttf, .otf, .woff or .woff2 file.' : kind === 'clip' ? 'A clip is an .mp4, .mov, .m4v or .webm file.' : 'Choose a picture (.png, .jpg, .webp, .gif or .svg).');
+  if (!SIMPLE_KINDS[kind]) fail(KIND_HELP);
+  if (!fitsKind(String(name || ''), kind)) fail(kind === 'font' ? 'A font is a .ttf, .otf, .woff or .woff2 file.' : kind === 'clip' ? 'A clip is an .mp4, .mov, .m4v or .webm file.' : kind === 'music' ? 'Music is an .mp3, .wav, .m4a, .aac, .ogg or .flac file.' : 'Choose a picture (.png, .jpg, .webp, .gif or .svg).');
   // Does the start of the file look like its extension says? (So a renamed program never lands as a "logo".)
   const ext = String(name).slice(String(name).lastIndexOf('.') + 1).toLowerCase();
   const head = Buffer.alloc(65536), fd = openSync(tempPath, 'r');
@@ -181,7 +181,7 @@ export function addFromProject(s, { project, file, kind }) {
   const path = inside(dir, rel);
   if (!path || !existsSync(path) || !statSync(path).isFile()) fail('That file isn’t in the video any more.', 404);
   const name = rel.slice('source/'.length), k = kind || dropKind(name);
-  if (!k || !SIMPLE_KINDS[k]) fail('Resources keeps logos, fonts, pictures and video clips.');
+  if (!k || !SIMPLE_KINDS[k]) fail('Resources keeps logos, fonts, pictures, video clips and music.');
   const p = builtin(s);
   if (p) {
     const hash = hashFile(path);
@@ -193,13 +193,33 @@ export function addFromProject(s, { project, file, kind }) {
   return r;
 }
 
+// Simple's Music tool: a music file of Resources as this video's bed (V1 follow-ups). The file store's copy is cloned
+// into the project's work/music/ once per content, so it plays and exports as a project sound cue, like the made beds.
+export function musicForProject(s, { project, resource }) {
+  const dir = projectDir(String(project || '')) || fail('That video isn’t in the studio.', 404);
+  const p = builtin(s) || fail('Add your music in Resources first.', 404);
+  const r = own(s, p.id, String(resource || ''));
+  if (r.kind !== 'music' || r.archived) fail('That file isn’t music in your Resources.');
+  const from = s.files.locate(r.hash);
+  if (!from || !existsSync(from)) fail('That file is missing from the studio’s file store.', 404);
+  const file = `work/music/${r.hash.slice(0, 12)}-${cleanFileName(r.name)}`;
+  const out = inside(dir, file) || fail('That name doesn’t fit a file.');
+  if (!existsSync(out)) {
+    mkdirSync(join(dir, 'work/music'), { recursive: true });
+    cloneInto(from, out);
+    appendWorklog(dir, `Music from Resources: ${r.name}`);
+  }
+  return { file, label: r.name, resource: r.id };
+}
+export const musicBed = (project, resource) => use((s) => musicForProject(s, { project, resource }));
+
 export function editFile(s, id, { name, kind, expected } = {}) {
   const p = builtin(s) || fail('That file isn’t one of your Resources.', 404);
   const r = own(s, p.id, id);
   const patch = { expected };
   if (name !== undefined) patch.name = renamed(name, r.ext);
   if (kind !== undefined) {
-    if (!fitsKind(r.name, kind)) fail(kind === 'font' || kind === 'clip' || r.kind === 'font' || r.kind === 'clip' ? 'Only a picture can be a logo, a photo of you or a product.' : 'That kind doesn’t fit this file.');
+    if (!fitsKind(r.name, kind)) fail(['font', 'clip', 'music'].includes(kind) || ['font', 'clip', 'music'].includes(r.kind) ? 'Only a picture can be a logo, a photo of you or a product.' : 'That kind doesn’t fit this file.');
     Object.assign(patch, resourceFields(kind));
   }
   const next = updateResource(s, id, patch);
@@ -286,9 +306,9 @@ export function approveLook(s, researchId, { revision, token } = {}) {
 }
 
 // ---- the route ----
-async function receive(req, dest, max) {
+async function receive(req, dest, max, tooBig = 'Files can be at most 50 MB.') {
   let size = 0;
-  const limit = new Transform({ transform(chunk, enc, done) { size += chunk.length; if (size > max) done(Object.assign(new Error(max > 1e9 ? 'A clip can be at most 2 GB.' : 'Files can be at most 50 MB.'), { status: 413 })); else done(null, chunk); } });
+  const limit = new Transform({ transform(chunk, enc, done) { size += chunk.length; if (size > max) done(Object.assign(new Error(tooBig), { status: 413 })); else done(null, chunk); } });
   await pipeline(req, limit, createWriteStream(dest));
   return size;
 }
@@ -329,13 +349,13 @@ export async function simpleResourcesRoute(req, res, url, { send, body }) {
     if (parts[0] === 'upload') {
       const q = Object.fromEntries(url.searchParams);
       if (q.project) return reply(use((s) => addFromProject(s, q)));
-      if (!SIMPLE_KINDS[q.kind]) fail('Choose what this is: logo, font, photo of you, product or clip.');
+      if (!SIMPLE_KINDS[q.kind]) fail(KIND_HELP);
       const studio = settings().studio || fail('Choose a studio folder first.');
       const tmp = join(studio, '.studio', 'resources-tmp', randomUUID());
       mkdirSync(tmp, { recursive: true });
       try {
         const file = join(tmp, 'upload');
-        await receive(req, file, maxBytesFor(SIMPLE_KINDS[q.kind].kind));
+        await receive(req, file, maxBytesFor(SIMPLE_KINDS[q.kind].kind), tooBigText(SIMPLE_KINDS[q.kind].kind));
         return reply(use((s) => addFile(s, { tempPath: file, name: q.name, kind: q.kind })));
       } finally { rmSync(tmp, { recursive: true, force: true }); } // the upload's own temporary copy
     }

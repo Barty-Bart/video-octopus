@@ -2,7 +2,7 @@
 //   Your look: colour swatches, font and a one-line voice, from the built-in brand ("My brand"). Edit changes them;
 //   Get my look from my website runs the brand research (B12, web/brand-research.js) on that brand and shows its
 //   proposal, which is saved only when the creator presses Use this look.
-//   Files: one grid of everything uploaded (logo, fonts, photos of you, products, clips; web/resource-kinds.js), each
+//   Files: one grid of everything uploaded (logo, fonts, photos of you, products, clips, music; web/resource-kinds.js), each
 //   with a preview, its name and one line of use; Rename, Use as and Remove (to the studio's trash, with Undo).
 // Server: /api/simple-resources (server/simple-resources.mjs); the research's own routes (/api/profile-research).
 import { $, esc, h, api, toast } from './ui.js';
@@ -10,7 +10,7 @@ import { icon } from './icons.js';
 import { actionToast } from './media.js';
 import { KIT_PALETTE, avatarInk } from './kit-colors.js';
 import { startResearch, researchActions } from './brand-research.js';
-import { SIMPLE_KINDS, PICTURE_KINDS, ACCEPT, guessKind, lookColors, IMAGE_FILE, FONT_FILE, VIDEO_FILE } from './resource-kinds.js';
+import { SIMPLE_KINDS, PICTURE_KINDS, ACCEPT, guessKind, lookColors, IMAGE_FILE, FONT_FILE, VIDEO_FILE, AUDIO_FILE } from './resource-kinds.js';
 
 const LEAD = 'What Claude uses in every video: your look, your photos, your products.';
 const fileUrl = (id) => `/api/simple-resources/${encodeURIComponent(id)}/file`;
@@ -31,18 +31,21 @@ function fontFamily(id) {
   return family;
 }
 
-// One file's preview: the picture, the clip's first frame, or "Aa" in the font.
+// One file's preview: the picture, the clip's first frame, "Aa" in the font, or a note for music.
 function preview(f) {
   if (f.kind === 'font' || FONT_FILE.test(f.name)) return `<span class="res-aa" style="font-family:'${fontFamily(f.id)}', var(--font)">Aa</span>`;
   if (f.kind === 'clip' || VIDEO_FILE.test(f.name)) return `<video src="${fileUrl(f.id)}#t=0.1" muted playsinline preload="metadata" aria-hidden="true"></video><span class="res-play" aria-hidden="true"></span>`;
+  if (f.kind === 'music' || AUDIO_FILE.test(f.name)) return `<span class="res-aa" aria-hidden="true">♪</span>`;
   if (IMAGE_FILE.test(f.name)) return `<img class="${f.kind === 'photo' ? 'cover' : 'fit'}" src="${fileUrl(f.id)}" alt="" loading="lazy" decoding="async">`;
   return `<span class="res-aa">·</span>`;
 }
 
 // The upload's one question, inline above the grid: what a picture is. Resolves 'photo' | 'product' | 'logo' | null.
-function askKind(box, file) {
+// file: the File being uploaded, or { name, src } for a picture already in a video (the editor's Also add to Resources
+// asks the same question: web/simple-editor.js).
+export function askKind(box, file) {
   return new Promise((done) => {
-    const url = URL.createObjectURL(file);
+    const own = typeof file?.src === 'string', url = own ? file.src : URL.createObjectURL(file);
     const card = h(`<div class="res-ask" role="group" aria-labelledby="resAskT">
       <span class="res-ask-pic"><img src="${url}" alt=""></span>
       <span class="res-ask-t"><b id="resAskT">Is this a photo of you?</b><span class="sub">${esc(file.name)}</span></span>
@@ -52,7 +55,7 @@ function askKind(box, file) {
         <button type="button" class="btn small" data-k="logo">It’s my logo</button>
         <button type="button" class="btn small ghost" data-k="">Skip</button>
       </span></div>`);
-    const end = (k) => { card.remove(); URL.revokeObjectURL(url); done(k || null); };
+    const end = (k) => { card.remove(); if (!own) URL.revokeObjectURL(url); done(k || null); };
     card.addEventListener('click', (e) => { const b = e.target.closest('[data-k]'); if (b) end(b.dataset.k); });
     card.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); end(null); } });
     box.replaceChildren(card);
@@ -264,7 +267,7 @@ export function renderResources(main, ctx = {}) {
     const box = $('#resFiles', root);
     closeMenu();
     if (!data.files.length) {
-      box.replaceChildren(h(`<div class="res-empty"><b>Nothing here yet</b><span class="sub">Upload your logo, a font, photos of you, product shots or clips. Claude uses them in every video.</span>
+      box.replaceChildren(h(`<div class="res-empty"><b>Nothing here yet</b><span class="sub">Upload your logo, a font, photos of you, product shots, clips or music. Claude uses them in every video.</span>
         <label class="btn small">${icon('upload', 14)}Upload<input type="file" multiple accept="${ACCEPT}" hidden data-up></label></div>`));
       $('[data-up]', box).onchange = (e) => upload([...e.target.files]);
       return;
@@ -360,7 +363,7 @@ export function renderResources(main, ctx = {}) {
     try {
       for (const file of files) {
         let kind = guessKind(file.name);
-        if (kind === 'unsupported') { toast(`${file.name}: Resources take pictures, fonts and video clips.`); continue; }
+        if (kind === 'unsupported') { toast(`${file.name}: Resources take pictures, fonts, video clips and music.`); continue; }
         if (!kind) kind = await askKind($('#resAsk', root), file);
         if (!live) return;
         if (!kind) continue;

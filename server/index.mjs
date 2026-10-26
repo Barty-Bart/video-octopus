@@ -47,7 +47,7 @@ import { recRoute, unfinishedTakes, recorderChoices, recorderBusy } from './brow
 import { mediaRoute, importedRecordings } from './media.mjs';
 import { playSource, playbackView, playbackMode, PLAYBACK_MODES, copiesSummary, deleteCopies, allCopies, deleteAllCopies } from './playback.mjs';
 import { trashRoute, binEntry } from './trash.mjs';
-import { simpleResourcesRoute, resourcesForNewVideo } from './simple-resources.mjs';
+import { simpleResourcesRoute, resourcesForNewVideo, musicBed } from './simple-resources.mjs';
 import { makeBed } from './simple-music.mjs';
 import { agentChoice, setAgentChoice, choiceView, codexModels } from './agent-choices.mjs';
 import { ccSource } from './claude-source.mjs';
@@ -1158,10 +1158,11 @@ async function route(req, res) {
     try { return send(res, 200, { simpleTools: saveSimpleTools(dir, b) }); }
     catch (e) { return send(res, 400, { error: e.message }); }
   }
-  // Simple's Music tool: a bed ffmpeg synthesises here (server/simple-music.mjs), then placed as a project sound cue.
+  // Simple's Music tool: a bed ffmpeg synthesises here (server/simple-music.mjs), or { resource }: a music file of
+  // Resources copied under the video (server/simple-resources.mjs musicForProject); then placed as a project sound cue.
   if (action === '/simple-music') {
-    try { return send(res, 200, await makeBed(dir, String(b.bed || ''), b.seconds)); }
-    catch (e) { return send(res, 400, { error: e.message }); }
+    try { return send(res, 200, b.resource ? musicBed(id, String(b.resource)) : await makeBed(dir, String(b.bed || ''), b.seconds)); }
+    catch (e) { return send(res, e.status || 400, { error: e.message }); }
   }
   if (action === '/final') {
     const f = b.file == null ? null : String(b.file);

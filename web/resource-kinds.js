@@ -1,4 +1,4 @@
-// Simple mode's Resources page (V1 spec §4): the five kinds of file the creator keeps for every video, and how each is
+// Simple mode's Resources page (V1 spec §4): the six kinds of file the creator keeps for every video, and how each is
 // stored as a resource (server/resource-store.mjs) at the built-in profile's level (profile:<My brand>). Pure: no DOM,
 // no fetch; used by the server (server/simple-resources.mjs) and the page (web/resources-page.js).
 //   kind      the resource kind it is stored as
@@ -11,22 +11,28 @@ export const SIMPLE_KINDS = {
   photo: { label: 'Photo of you', line: 'Used in thumbnails', kind: 'photo', likeness: 'self', use: 'always' },
   product: { label: 'Product', line: 'Your product', kind: 'product', likeness: 'nobody', use: 'ask' },
   clip: { label: 'Clip', line: 'Video clip', kind: 'clip', likeness: 'nobody', use: 'ask' },
+  // A sound file of the creator's (V1 follow-ups): a bed in the editor's Music tool, next to the three made ones.
+  music: { label: 'Music', line: 'Music for your videos', kind: 'music', likeness: 'nobody', use: 'ask' },
 };
 export const SIMPLE_KIND_KEYS = Object.keys(SIMPLE_KINDS);
+export const KIND_HELP = 'Choose what this is: logo, font, photo of you, product, clip or music.';
 // The kinds a picture can be (the upload's one question, and the tile menu's "Use as").
 export const PICTURE_KINDS = ['photo', 'product', 'logo'];
 
 export const IMAGE_FILE = /\.(png|jpe?g|webp|gif|svg)$/i;
 export const FONT_FILE = /\.(ttf|otf|woff2?)$/i;
 export const VIDEO_FILE = /\.(mp4|mov|m4v|webm)$/i;
-export const ACCEPT = '.png,.jpg,.jpeg,.webp,.gif,.svg,.ttf,.otf,.woff,.woff2,.mp4,.mov,.m4v,.webm';
+export const AUDIO_FILE = /\.(mp3|wav|m4a|aac|ogg|flac)$/i;
+export const AUDIO_ACCEPT = '.mp3,.wav,.m4a,.aac,.ogg,.flac';
+export const ACCEPT = `.png,.jpg,.jpeg,.webp,.gif,.svg,.ttf,.otf,.woff,.woff2,.mp4,.mov,.m4v,.webm,${AUDIO_ACCEPT}`;
 
-// What an upload is, from its name alone: a font, a clip, a logo (an SVG, or "logo" in the name), or null for a
-// picture, which asks one question ("Is this a photo of you?"). Unsupported files: 'unsupported'.
+// What an upload is, from its name alone: a font, a clip, music (a sound file), a logo (an SVG, or "logo" in the
+// name), or null for a picture, which asks one question ("Is this a photo of you?"). Unsupported files: 'unsupported'.
 export function guessKind(name = '') {
   const n = String(name);
   if (FONT_FILE.test(n)) return 'font';
   if (VIDEO_FILE.test(n)) return 'clip';
+  if (AUDIO_FILE.test(n)) return 'music';
   if (!IMAGE_FILE.test(n)) return 'unsupported';
   if (/\.svg$/i.test(n) || /(^|[^a-z])logo/i.test(n)) return 'logo';
   return null;
@@ -34,12 +40,16 @@ export function guessKind(name = '') {
 
 // A file dropped for Claude in a video, added to Resources too ("Also add to Resources", V1 §6): the kind it is stored
 // as without asking. Fonts, clips and logos are known by name; any other picture is most likely a product shot or a
-// screenshot (product; "Use as" on the Resources page changes it). null: Resources doesn't keep this kind of file
-// (sound, PDF, text), so the link isn't offered.
+// screenshot (product; "Use as" on the Resources page changes it). null: no link for this kind of file (PDF, text),
+// and none for a sound either: a sound dropped for Claude is more often a voice note or an effect than music (music
+// goes in through the Music tool's "or add your own", or Resources' Upload).
+// pictureAsk: the picture kinds Also add to Resources asks about instead ("Is this a photo of you?", one tap, as
+// Resources' Upload does): a picture that isn't a logo by its name.
 export function dropKind(name = '') {
   const k = guessKind(name);
-  return k === 'unsupported' ? null : k || 'product';
+  return k === 'unsupported' || k === 'music' ? null : k || 'product';
 }
+export const dropAsks = (name = '') => guessKind(name) === null;
 
 // A resource's Simple kind (logo | font | photo | product | clip), or null for anything else at that level (an image
 // or reference thumbnail added from a Simple video's Packaging tab, a style note). A photo of someone else is not "of
@@ -53,15 +63,16 @@ export function simpleKindOf(r) {
 // The resource fields for a Simple kind (what addResource / updateResource take).
 export function resourceFields(kind) {
   const k = SIMPLE_KINDS[kind];
-  if (!k) throw new Error('Choose what this is: logo, font, photo of you, product or clip.');
+  if (!k) throw new Error(KIND_HELP);
   return { kind: k.kind, likeness: k.likeness, use: k.use };
 }
 
-// Can a file of this name be this kind? (A picture can be a logo, photo of you or product; fonts and clips stay what
-// they are.)
+// Can a file of this name be this kind? (A picture can be a logo, photo of you or product; fonts, clips and music stay
+// what they are.)
 export function fitsKind(name, kind) {
   if (kind === 'font') return FONT_FILE.test(name);
   if (kind === 'clip') return VIDEO_FILE.test(name);
+  if (kind === 'music') return AUDIO_FILE.test(name);
   return IMAGE_FILE.test(name);
 }
 

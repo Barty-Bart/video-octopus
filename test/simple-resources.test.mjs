@@ -43,7 +43,7 @@ test('Resources kinds: fonts, clips and logos are known by name; any other pictu
   assert.equal(renamed('logo.svg', '.svg'), 'logo.svg');
   assert.throws(() => renamed('  ', '.png'), /name/);
   assert.deepEqual(lookColors('#1D4ED8', ['#18181b', '#1d4ed8', 'red', '#facc15']), ['#1d4ed8', '#18181b', '#facc15'], 'main first, no repeats, hex only');
-  assert.deepEqual(Object.keys(SIMPLE_KINDS), ['logo', 'font', 'photo', 'product', 'clip']);
+  assert.deepEqual(Object.keys(SIMPLE_KINDS), ['logo', 'font', 'photo', 'product', 'clip', 'music']); // music: V1 follow-ups
 });
 
 // ---------- a real server ----------
@@ -276,7 +276,7 @@ test('server: look edits are brand versions; Get my look runs brand research and
   const s = await startServer(t);
   const fresh = await s.ok('/api/projects', { untitled: true, shape: 'youtube' });
   const built = await s.ok('/api/projects', { untitled: true, shape: 'youtube' });
-  write(join(s.project(built.id), 'renders', `${built.id}_intro_v1.mp4`), 'fixture render');
+  write(join(s.project(built.id), 'renders', `${built.id}_video_v1.mp4`), 'fixture render');
 
   // Edit: colours (main first), font and voice → a brand version on the built-in profile; earlier fields are kept.
   const v1 = await s.ok('/api/simple-resources/look', { colors: ['#1D4ED8', '#18181b', '#facc15'], fonts: 'Geist', voice: 'Friendly, plain voice', expected: null });

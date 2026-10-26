@@ -17,8 +17,9 @@ import { stepCard, roughCutState, simpleStepNow, progressLine, downloadTarget, e
   CAPTION_LOOKS, INTENSITY, MUSIC_BEDS, BED_GAIN } from './simple-flow.js';
 import { simpleSteps } from './simple.js';
 import { cutoutNotesHTML } from './cutout.js';
-import { dropKind, SIMPLE_KINDS } from './resource-kinds.js';
+import { dropKind, dropAsks, SIMPLE_KINDS, AUDIO_ACCEPT } from './resource-kinds.js';
 import { makeCutModel, makeWave, makeTranscript, cutRange, restoreRange, isKept } from './simple-wave.js';
+import { askKind } from './resources-page.js';
 import { makeRecordPage, openTeleprompter, listTakes, deleteTake, restoreTake, useTake, sourcesFor } from './simple-record.js';
 
 const TAKE_FILE = /\.(mov|mp4|m4v|mkv|webm|wav|m4a|mp3|aif|aiff|caf|flac)$/i;
@@ -106,7 +107,9 @@ export function mountSimpleEditor(ctx) {
     <div class="sx-panel" role="dialog" aria-modal="false" hidden></div></aside>`);
   el.append(tools);
   const panel = $('.sx-panel', tools);
-  let toolOpen = null, sounds = null;
+  let toolOpen = null, sounds = null, mine = null;
+  // The creator's own music: Resources' music files (web/resource-kinds.js), listed in the Music tool as beds.
+  const loadMine = async () => { try { mine = ((await api('/api/simple-resources')).files || []).filter((f) => f.kind === 'music'); } catch { mine = []; } };
 
   // ================= the card =================
   function card() {
@@ -461,31 +464,41 @@ export function mountSimpleEditor(ctx) {
         if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
         const last = $('.sx-drop-last', drop);
         last.hidden = false;
-        const kind = dropKind(j.file);
-        last.innerHTML = `${esc(j.file.split('/').pop())} is with the project.${kind ? ` <button type="button" class="linkish" data-res="${esc(j.file)}" data-kind="${kind}">Also add to Resources</button>` : ''}`;
+        // A picture that isn't a logo by its name asks first ("Is this a photo of you?"); fonts, clips and logos don't.
+        const kind = dropKind(j.file), ask = kind && dropAsks(j.file);
+        last.innerHTML = `${esc(j.file.split('/').pop())} is with the project.${kind ? ` <button type="button" class="linkish" data-res="${esc(j.file)}" data-kind="${ask ? '' : kind}">Also add to Resources</button>` : ''}`;
         await ctx.chat.send(`I dropped ${j.file} into this project. In one line, tell me what it is and where you'll use it in this video (a time and the words I say there, if it fits). Don't change anything yet.`).catch(() => {});
       } catch (e) { toast(`${f.name} didn’t come in: ${e.message}`); }
     }
   }
   const pick = $('input[type=file]', drop);
   // "Also add to Resources": the dropped file joins Resources too (one copy in the file store; the same bytes twice
-  // stay one tile), as the kind dropKind gives it; Use as on the Resources page changes it.
+  // stay one tile). Fonts, clips and logos (by name) go in as what they are; any other picture asks one question first,
+  // "Is this a photo of you?", with the same one-tap answers as Resources' Upload (web/resources-page.js askKind).
   async function addToResources(b) {
     b.disabled = true;
     const last = $('.sx-drop-last', drop), name = b.dataset.res.split('/').pop();
+    let kind = b.dataset.kind;
+    if (!kind) {
+      const box = h('<div class="sx-askkind"></div>');
+      last.replaceChildren(box);
+      kind = await askKind(box, { name, src: `${base}/media?f=${encodeURIComponent(b.dataset.res)}` });
+      if (!kind) { last.textContent = `${name} is with the project.`; return; }
+      last.textContent = `Adding ${name} to Resources…`;
+    }
     try {
-      const r = await api(`/api/simple-resources/upload?project=${encodeURIComponent(id)}&file=${encodeURIComponent(b.dataset.res)}&kind=${encodeURIComponent(b.dataset.kind)}`, {});
+      const r = await api(`/api/simple-resources/upload?project=${encodeURIComponent(id)}&file=${encodeURIComponent(b.dataset.res)}&kind=${encodeURIComponent(kind)}`, {});
       const what = SIMPLE_KINDS[r.kind]?.label.toLowerCase() || 'a file';
       last.innerHTML = r.already ? `${esc(name)} is in Resources already. <a href="#/resources" class="linkish">Open Resources</a>`
         : `${esc(name)} is in Resources too, as ${r.kind === 'photo' ? 'a photo of you' : `your ${esc(what)}`}. <a href="#/resources" class="linkish">Open Resources</a>`;
-    } catch (e) { b.disabled = false; toast(`Couldn’t add it to Resources: ${e.message}`); }
+    } catch (e) { b.disabled = false; if (!b.isConnected) last.textContent = `${name} is with the project.`; toast(`Couldn’t add it to Resources: ${e.message}`); }
   }
   drop.addEventListener('click', (e) => {
     const res = e.target.closest('[data-res]');
     if (res) { e.stopPropagation(); return addToResources(res); }
-    if (!e.target.closest('a,button')) pick.click();
+    if (!e.target.closest('a,button,.sx-askkind')) pick.click();
   });
-  drop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick.click(); } });
+  drop.addEventListener('keydown', (e) => { if (e.target === drop && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); pick.click(); } });
   pick.onchange = () => { handleFiles(pick.files); pick.value = ''; };
   const onDragOver = (e) => { if (![...(e.dataTransfer?.types || [])].includes('Files')) return; e.preventDefault(); document.body.classList.add('sx-dragging'); };
   const onDragLeave = (e) => { if (!e.relatedTarget) document.body.classList.remove('sx-dragging'); };
@@ -524,16 +537,20 @@ export function mountSimpleEditor(ctx) {
     } else if (toolOpen === 'music') {
       panel.innerHTML = '<h3 class="sx-h">Music</h3><p class="sub">Loading your sound library…</p>';
       if (!sounds) { try { sounds = (await api(`${base}/sound`)).sounds || []; } catch { sounds = []; } }
+      if (!mine) await loadMine();
       if (toolOpen !== 'music') return;
       const cur = t.music, on = (f) => cur?.file === f;
-      // The three beds made here (no library needed), then the library's approved sounds, if any.
+      // The three beds made here (no library needed), the creator's own music from Resources, then the library's
+      // approved sounds, if any.
       const opts = [...Object.entries(MUSIC_BEDS).map(([k, v]) => ({ bed: k, name: v, on: Boolean(cur && cur.bed === k) })),
-        ...sounds.slice(0, 9).map((x) => ({ file: x.file, name: x.name, on: on(x.file) && !cur?.bed }))];
+        ...mine.map((x) => ({ res: x.id, name: x.name.replace(/\.[a-z0-9]+$/i, ''), on: Boolean(cur && cur.resource === x.id) })),
+        ...sounds.slice(0, 9).map((x) => ({ file: x.file, name: x.name, on: on(x.file) && !cur?.bed && !cur?.resource }))];
       panel.innerHTML = `<h3 class="sx-h">Music</h3><div class="sx-list" role="radiogroup" aria-label="Music bed">
         <button type="button" role="radio" data-bed="" class="${cur ? '' : 'on'}" aria-checked="${!cur}">None</button>
-        ${opts.map((o) => `<button type="button" role="radio" ${o.bed ? `data-gen="${o.bed}"` : `data-bed="${esc(o.file)}"`} data-name="${esc(o.name)}" class="${o.on ? 'on' : ''}" aria-checked="${o.on}">${esc(o.name)}</button>`).join('')}</div>
+        ${opts.map((o) => `<button type="button" role="radio" ${o.bed ? `data-gen="${o.bed}"` : o.res ? `data-mine="${esc(o.res)}"` : `data-bed="${esc(o.file)}"`} data-name="${esc(o.name)}" class="${o.on ? 'on' : ''}" aria-checked="${o.on}">${esc(o.name)}</button>`).join('')}</div>
+        <p class="sub sx-own">or <label class="linkish" tabindex="0">add your own<input type="file" accept="${AUDIO_ACCEPT}" hidden data-k="own-music"></label> · a sound file, kept in Resources for every video</p>
         <label class="sx-row"><span>Volume</span><input type="range" min="-24" max="12" step="1" value="${cur?.gain ?? BED_GAIN}" data-k="gain" aria-label="Music volume"${cur ? '' : ' disabled'}></label>
-        <p class="sub">Plays under your voice for the whole video. Made on this computer, free to use.</p>${askLine('Add calm music under my voice')}`;
+        <p class="sub">Plays under your voice for the whole video. The three above are made on this computer, free to use.</p>${askLine('Add calm music under my voice')}`;
     } else if (toolOpen === 'text') {
       const at = model.ready ? mmss(cutTime(player.time())) : mmss(player.time());
       panel.innerHTML = `<h3 class="sx-h">Text</h3><label class="vh" for="sxTitle">Title text</label><input class="field" id="sxTitle" maxlength="80" placeholder="A title, e.g. “Three steps”">
@@ -551,11 +568,32 @@ export function mountSimpleEditor(ctx) {
     const k = e.target.dataset.k, t = toolsOf(getP());
     if (k === 'cap-on') await saveTools({ captions: { ...t.captions, on: e.target.checked } });
     if (k === 'zooms') await saveTools({ effects: { ...t.effects, zooms: e.target.checked } });
+    if (k === 'own-music' && e.target.files?.[0]) {
+      // "or add your own": Resources' Upload with the kind set to music, right here; then it plays as this video's bed.
+      const f = e.target.files[0];
+      e.target.value = '';
+      const say = $('.sx-own', panel);
+      if (say) say.textContent = `Adding ${f.name}…`;
+      try {
+        const r = await fetch(`/api/simple-resources/upload?${new URLSearchParams({ name: f.name, kind: 'music' })}`, { method: 'POST', headers: { 'X-Studio': '1' }, body: f });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.error || `Could not add ${f.name}.`);
+        await loadMine();
+        toast(`${f.name} is in Resources, with your music.`);
+        await paintTool();
+        $(`[data-mine="${CSS.escape(j.id)}"]`, panel)?.click();
+      } catch (err) { toast(err.message); paintTool(); }
+      return;
+    }
     if (k === 'gain' && t.music) {
       const gain = Number(e.target.value);
       try { await api(`${base}/sfx`, { op: 'update', id: t.music.cue, gain }); } catch {}
       await saveTools({ music: { ...t.music, gain } });
     }
+  });
+  panel.addEventListener('keydown', (e) => {
+    const l = e.target.closest?.('label.linkish');
+    if (l && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); l.querySelector('input[type=file]')?.click(); }
   });
   panel.addEventListener('click', async (e) => {
     const b = e.target.closest('button');
@@ -564,7 +602,7 @@ export function mountSimpleEditor(ctx) {
     if (b.dataset.ask) { if (input) { input.value = b.dataset.ask; input.focus(); input.dispatchEvent(new Event('input')); } return; }
     if (b.dataset.look) await saveTools({ captions: { ...t.captions, look: b.dataset.look } });
     if (b.dataset.int) await saveTools({ effects: { ...t.effects, intensity: Number(b.dataset.int) } });
-    if ('bed' in b.dataset || b.dataset.gen) {
+    if ('bed' in b.dataset || b.dataset.gen || b.dataset.mine) {
       if (b.classList.contains('on')) return;
       panel.querySelectorAll('[role=radio]').forEach((x) => { x.disabled = true; });
       const gain = t.music?.gain ?? BED_GAIN;
@@ -576,11 +614,13 @@ export function mountSimpleEditor(ctx) {
           file = (await api(`${base}/simple-music`, { bed: b.dataset.gen, seconds: Math.ceil(player.duration() || getP().export?.duration || 60) })).file;
           from = 'project';
         }
+        // The creator's own music: its Resources file is copied under this video first (once per file).
+        if (b.dataset.mine) { b.textContent = `${b.dataset.name} · adding it…`; file = (await api(`${base}/simple-music`, { resource: b.dataset.mine })).file; from = 'project'; }
         if (t.music?.cue) { try { await api(`${base}/sfx`, { op: 'remove', id: t.music.cue }); } catch {} }
         if (!file) return saveTools({ music: null });
         const at = model.ready && model.segs.length ? model.segs[0][0] : 0;
         const r = await api(`${base}/sfx`, { op: 'add', file, from, t: at, gain, label: `Music: ${b.dataset.name}` });
-        await saveTools({ music: { cue: r.id, file, label: b.dataset.name, gain, ...(b.dataset.gen ? { bed: b.dataset.gen } : {}) } });
+        await saveTools({ music: { cue: r.id, file, label: b.dataset.name, gain, ...(b.dataset.gen ? { bed: b.dataset.gen } : b.dataset.mine ? { resource: b.dataset.mine } : {}) } });
       } catch (err) { toast(err.message); paintTool(); }
     }
     if (b.dataset.k === 'add-title') {
