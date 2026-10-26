@@ -46,6 +46,7 @@ import { recRoute, unfinishedTakes, recorderChoices, recorderBusy } from './brow
 import { mediaRoute, importedRecordings } from './media.mjs';
 import { playSource, playbackView, playbackMode, PLAYBACK_MODES, copiesSummary, deleteCopies, allCopies, deleteAllCopies } from './playback.mjs';
 import { trashRoute, binEntry } from './trash.mjs';
+import { simpleResourcesRoute, resourcesForNewVideo } from './simple-resources.mjs';
 import { agentChoice, setAgentChoice, choiceView, codexModels } from './agent-choices.mjs';
 import { ccSource } from './claude-source.mjs';
 import { codexSource } from './codex.mjs';
@@ -609,6 +610,8 @@ async function route(req, res) {
   // Packaging (thumbnails, its Codex chat) and the resources it uses (server/packaging.mjs).
   if (p.startsWith('/api/packaging/') && await packagingRoute(req, res, url, { send, body })) return;
   if ((p === '/api/resources' || p.startsWith('/api/resources/')) && await resourcesRoute(req, res, url, { send, body })) return;
+  // Simple mode's Resources page: the built-in brand's look and its files (server/simple-resources.mjs).
+  if ((p === '/api/simple-resources' || p.startsWith('/api/simple-resources/')) && await simpleResourcesRoute(req, res, url, { send, body })) return;
   if (await learningRoute(req, res, url, { send, body, serveFile })) return;
   // Which agent runs the chats (Settings → Claude): Claude Code or Codex, and what each install reports.
   if (p === '/api/app/engines' && req.method === 'GET') return send(res, 200, await enginesView(url.searchParams.has('refresh'), { models: url.searchParams.has('models'), source: url.searchParams.has('source') }));
@@ -686,7 +689,7 @@ async function route(req, res) {
       if (shape) b = { ...b, ...simpleVideoChoice(shape), name: b.untitled ? UNTITLED : b.name, nameSource: b.untitled ? 'auto' : b.nameSource };
       else if (b.untitled) b = { ...b, ...newVideoChoice(b), name: UNTITLED, nameSource: 'auto' };
       const id = createConfiguredProject(b);
-      if (shape) rememberSimpleVideo(shape);
+      if (shape) { rememberSimpleVideo(shape); resourcesForNewVideo(id); }
       else if (b.untitled) rememberNewVideo(b);
       const dir = projectDir(id);
       logUse('project.created', { project: id, type: b.type || null });

@@ -21,7 +21,7 @@ import { pinnedContext } from './profiles.mjs';
 import { readPost, savePost } from './postkit.mjs';
 import { PackagingStore, MAX_WINNERS } from './packaging-store.mjs';
 import { addResource, updateResource, archiveResource, getResource, listResources, resourcePath, checkResourceScope,
-  RESOURCE_KINDS, LIKENESS, USES, MAX_RESOURCE_BYTES, canAttach } from './resource-store.mjs';
+  RESOURCE_KINDS, LIKENESS, USES, MAX_RESOURCE_BYTES, maxBytesFor, canAttach } from './resource-store.mjs';
 import { RESOURCE_LEVELS, parseScope } from './scope-chain.mjs';
 import { SHEET_GRID, THUMB_SIZE, sheetBoxes, cutBoxes, fitThumbnail, imageSize, imageType, extensionFor } from './images.mjs';
 import { autoName } from './naming.mjs';
@@ -326,7 +326,7 @@ export async function resourcesRoute(req, res, url, { send, body }) {
       const tmp = scratch(settings().studio);
       try {
         const file = join(tmp, 'upload');
-        await receive(req, file, MAX_RESOURCE_BYTES);
+        await receive(req, file, maxBytesFor(q.kind));
         return reply(use((s) => describeResource(addResource(s, { scope: checkScopeExists(s, q.scope), name: q.name, kind: q.kind, likeness: q.likeness || undefined,
           use: q.use || undefined, note: q.note || '', tempPath: file, source: { via: 'upload' } }))));
       } finally { rmSync(tmp, { recursive: true, force: true }); }

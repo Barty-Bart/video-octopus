@@ -4,7 +4,9 @@
 // - the record panel's Delete take and the Recordings page's Delete (kind "deleted", browser-recorder.mjs deleteTake);
 // - the record panel's Restart (kind "discarded": the parts of a take that was never saved);
 // - the editor's Media section, Remove from this video and Delete recording (kind "media-removed", media.mjs; a deleted
-//   recording's entry also holds the recordings folder's copy, as take/).
+//   recording's entry also holds the recordings folder's copy, as take/);
+// - the Resources page's Remove (kind "resource-removed", simple-resources.mjs): the resource is archived and its entry
+//   holds only a manifest (the file stays in the studio's file store); Put back unarchives it.
 // Delete recording and the Recordings page's Delete then send their entry on to the computer's own Bin (os-trash.mjs):
 // the Trash on a Mac, the Recycle Bin on Windows. When no Bin takes it, it stays here and the toast says so; Finder's
 // Put Back returns an entry here, where Put back works as usual.
@@ -30,6 +32,7 @@ import { projectDir, projectMeta } from './studio.mjs';
 import { trashRoot, TRASH_NAME, deleteTake, restoreTake } from './browser-recorder.mjs';
 import { restoreMedia } from './media.mjs';
 import { sendToBin, binName, rememberUndo, undoFromBin } from './os-trash.mjs';
+import { TRASH_KIND as RESOURCE_REMOVED, describeRemoved, putBackRemoved } from './simple-resources.mjs';
 
 const DAY = 86400000;
 const refuse = (message) => Object.assign(new Error(message), { status: 409 });
@@ -71,6 +74,10 @@ function describe(n) {
     if (!video) item.why = 'Its video is gone or archived, so it can’t go back there.';
     // An imported file taken off its video (A17) is in the recordings folder, not here; Put back fetches it from there.
     else if (m.parked && !existsSync(join(settings().recordingsDir, m.parked.folder))) item.why = 'Its file isn’t in Recordings any more: a video uses it now, or it was deleted.';
+  } else if (m?.kind === RESOURCE_REMOVED) {
+    item.what = 'Removed from Resources';
+    const why = describeRemoved(m);
+    if (why) item.why = why;
   } else if (m?.kind === 'discarded') {
     item.what = 'Dropped by Restart while recording';
     item.why = 'It was never saved as a take, so there’s nothing to put back.';
@@ -105,6 +112,7 @@ export function putBack(entry, { busy = () => null } = {}) {
     if (!dir) throw refuse('Its video is gone or archived, so it can’t go back there.');
     return { ...restoreMedia(dir, entry, { busy: busy(m.project, dir) }), kind: m.kind, project: m.project };
   }
+  if (m?.kind === RESOURCE_REMOVED) return putBackRemoved(entry);
   throw refuse(describe(entry).why || 'That can’t be put back.');
 }
 

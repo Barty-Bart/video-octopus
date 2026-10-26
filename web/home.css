@@ -419,3 +419,80 @@
   .nv-pic { height: 60px; }
 }
 .pv-thumb:has(.pv-audio) .pv-ph { display: none; }
+
+/* ---------- Simple mode's Resources page (V1 spec §4, board "V1 Resources"): web/resources-page.js ----------
+   Your look (swatches, font, voice; Get my look from my website, Edit) and one grid of files. */
+.res-head { align-items: flex-start; }
+.res-title { flex: 1 1 auto; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.res-title h1 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.01em; color: var(--text); }
+.res-up { gap: 6px; flex: none; cursor: pointer; }
+.res-sec { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.res-h { margin: 0; font-size: 14px; font-weight: 600; color: var(--text); }
+.res-look { display: flex; flex-direction: column; gap: 14px; }
+.res-look-row { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 28px; }
+.res-gap { flex: 1 1 0; }
+.res-sw { display: inline-flex; flex-wrap: wrap; gap: 8px; }
+.res-sw i { display: block; width: 44px; height: 44px; border-radius: 12px; box-shadow: inset 0 0 0 1px var(--line); }
+.res-sw-none { display: inline-grid; place-items: center; height: 44px; padding: 0 14px; border-radius: 12px; background: var(--surface-2); }
+.res-font { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.res-font b { font-size: 20px; font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
+.res-panel { display: flex; flex-direction: column; gap: 14px; max-width: 720px; padding: 16px; border-radius: var(--r-l); background: var(--surface-2); }
+.res-f { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; border: 0; font-size: 12px; font-weight: 500; color: var(--text-2); min-width: 0; }
+.res-f legend { padding: 0; margin-bottom: 4px; }
+.res-f input:not([type=color]) { height: 36px; padding: 0 12px; border: 0; border-radius: var(--r-m); background: var(--surface); color: var(--text); font: 400 13px var(--font); box-shadow: inset 0 0 0 1px var(--line); }
+.res-f input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.res-main { display: flex; flex-wrap: wrap; gap: 10px; padding: 4px 2px; }
+.res-more-c { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.res-chip { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 4px 0 6px; border-radius: 999px; background: var(--surface); color: var(--text); font: 500 12px var(--mono); box-shadow: inset 0 0 0 1px var(--line); }
+.res-chip i { width: 16px; height: 16px; border-radius: 50%; background: var(--c); box-shadow: inset 0 0 0 1px var(--line); }
+.res-chip button { display: inline-grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--text-3); cursor: pointer; }
+.res-chip button:hover { background: var(--hover); color: var(--text); }
+.res-add-c { position: relative; gap: 4px; cursor: pointer; }
+.res-add-c input { position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; opacity: 0; cursor: pointer; }
+.res-acts { display: flex; flex-wrap: wrap; gap: 8px; }
+.res-err { margin: 0; color: var(--bad-ink); }
+.res-run { display: flex; align-items: center; gap: 10px; }
+.res-chat .learn-chat { height: 380px !important; margin-top: 0; background: var(--surface); }
+.res-proposal > b { font-size: 14px; color: var(--text); }
+.res-src summary { cursor: pointer; font-size: 12px; color: var(--text-2); }
+.res-src p { margin: 8px 0 0; font-size: 12px; overflow-wrap: anywhere; }
+.res-src a { color: var(--accent-text); }
+.res-ask { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 14px; padding: 12px; border-radius: var(--r-l); background: var(--accent-soft); }
+.res-ask-pic { flex: none; width: 56px; height: 56px; border-radius: 10px; overflow: hidden; background: var(--surface); }
+.res-ask-pic img { width: 100%; height: 100%; object-fit: cover; }
+.res-ask-t { flex: 1 1 160px; display: flex; flex-direction: column; min-width: 0; }
+.res-ask-t .sub { overflow-wrap: anywhere; }
+.res-ask-a { display: flex; flex-wrap: wrap; gap: 6px; }
+.res-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(200px, 100%), 1fr)); gap: 16px; }
+.res-tile { position: relative; display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 14px; border-radius: 14px; background: var(--surface-2); }
+.res-pv { position: relative; display: flex; align-items: center; justify-content: center; height: 108px; border-radius: 10px; overflow: hidden; background: var(--surface); }
+.res-pv img.cover { width: 100%; height: 100%; object-fit: cover; }
+.res-pv img.fit { width: 100%; height: 100%; padding: 12px; box-sizing: border-box; object-fit: contain; }
+.res-pv.clip { background: var(--stage); }
+.res-pv video { width: 100%; height: 100%; object-fit: cover; }
+.res-play { position: absolute; width: 0; height: 0; border-style: solid; border-width: 9px 0 9px 15px; border-color: transparent transparent transparent var(--stage-text); filter: drop-shadow(0 1px 2px var(--black)); }
+.res-aa { font-size: 34px; color: var(--text-2); }
+.res-t { display: flex; flex-direction: column; gap: 1px; min-width: 0; padding-right: 30px; }
+.res-name { font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.res-rename { height: 26px; margin: -2px 0; padding: 0 8px; border: 0; border-radius: 8px; background: var(--surface); color: var(--text); font: 500 13px var(--font); box-shadow: inset 0 0 0 1.5px var(--text-3); }
+.res-more { position: absolute; right: 10px; bottom: 16px; width: 28px; padding: 0; }
+.res-menu { position: absolute; right: 8px; bottom: 50px; z-index: 40; display: flex; flex-direction: column; min-width: 180px; padding: 6px; border-radius: 12px; background: var(--surface); box-shadow: var(--shadow-pop); }
+.res-menu button { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.res-menu button:hover, .res-menu button:focus-visible { background: var(--hover); outline: none; }
+.res-menu-h { padding: 8px 10px 2px; font-size: 11px; font-weight: 500; color: var(--text-3); }
+.res-menu .res-menu-del { color: var(--bad-ink); }
+.res-busy .res-pv { background: var(--surface); }
+.res-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 40px 24px; border-radius: var(--r-l); background: var(--surface-2); text-align: center; }
+.res-empty .sub { max-width: 46ch; }
+.res-empty .btn { gap: 6px; margin-top: 6px; cursor: pointer; }
+.res.res-drop { box-shadow: inset 0 0 0 2px var(--accent); border-radius: var(--r-l); }
+@media (max-width: 640px) {
+  .res-head { flex-wrap: nowrap; }
+  .res-look-row { gap: 12px 16px; }
+  .res-gap { display: none; }
+  .res-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .res-tile { padding: 10px; }
+  .res-pv { height: 84px; }
+}
+.res-look > div:empty { display: none; }
+@media (max-width: 640px) { .res-font b { font-size: 17px; } }

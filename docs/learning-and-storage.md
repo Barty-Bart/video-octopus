@@ -348,6 +348,24 @@ Reel formats with `selectProjectContext`; after a Build step it answers 409 `nee
 change the video setup (the style picker still refuses that). Simple's New video and the shape chip leave
 `lastNewVideo` alone; Simple remembers `lastSimpleVideo`. Switching modes writes only `editor.mode`.
 
+**Simple mode's Resources page** (V1, Unreleased; `server/simple-resources.mjs`, `web/resources-page.js`,
+`web/resource-kinds.js`) stores nothing new. **Your look** is the built-in profile's brand versions: `colors` (the
+first is the main colour, which kit colours use), `fonts`, `voice`, and as `assets` the ids of its logo and font
+files (a change to those files commits a new version). **Get my look from my website** is the brand research (B12)
+on the built-in profile; `POST /api/simple-resources/research/<id>/approve` saves its proposal on top of the current
+look with the same checks as `approveResearch` (reviewed proposal and token, evidence kept). Videos on the built-in
+profile without a Build step re-pin to each new look (pin, `project.json` `context`, context files, one worklog
+line); built videos keep theirs. **Files** are resources at `profile:<built-in id>` with kinds `logo`, `font`,
+`photo` (likeness `self`, use `always`), `product` and `clip` (`.mp4/.mov/.m4v/.webm`, up to 2 GB); uploads are
+checked against their extension and first bytes (`server/brand.mjs` `sniff`). Every change rewrites
+`packaging/RESOURCES.md` and `packaging/resources/` of the videos on the built-in profile (also when one is made),
+and their pinned context text points the chat there. **Remove** archives the resource and writes a trash entry
+(`<studio>/.trash/<when>-<name>/manifest.json`, kind `resource-removed`, no file copy); Undo
+(`POST /api/simple-resources/restore`) or the Trash page's Put back unarchives it and removes the entry. Emptying the
+trash leaves the record archived and its bytes in the file store. Reading the page never creates the built-in
+profile. In Advanced this data stays hidden like the built-in profile (no kit page); it shows in the Packaging tab
+of a Simple video as the "Brand kit: My brand" level, and the page still opens at `#/resources`.
+
 **Kit colours** (0.1.0-beta.20, `web/kit-colors.js`): every kit shows a colour, its approved brand's first colour,
 else the kit colour saved on the profile row (`color`, `#rrggbb`). A new kit gets the first colour of a 12-colour
 palette that no other kit shows (cycling by kit count when all are taken); kits made before this version get one
