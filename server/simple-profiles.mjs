@@ -36,7 +36,7 @@ import { createConfiguredProject, simpleVideoChoice } from './profiles.mjs';
 import { UNTITLED } from './naming.mjs';
 import { mimeOf } from './file-store.mjs';
 import { SHAPES, isShape } from '../web/simple.js';
-import { WORKFLOWS, SCRIPTS, isWorkflow, isScript, profileSlug, cleanFileName, lessonsOf, splitPlan } from '../web/profile-kinds.js';
+import { WORKFLOWS, SCRIPTS, PRESETS, isWorkflow, isScript, profileSlug, cleanFileName, lessonsOf, splitPlan, cleanLook, lessonLines } from '../web/profile-kinds.js';
 
 const fail = (message, status = 400) => { throw Object.assign(new Error(message), { status }); };
 const MAX_FILE = 4e9; // a reference video or a long clip
@@ -52,10 +52,7 @@ const dirOf = (slug) => {
 const readText = (p) => { try { return readFileSync(p, 'utf8'); } catch { return ''; } };
 const isFile = (p) => { try { return statSync(p).isFile(); } catch { return false; } };
 
-const INSTRUCTIONS = (name) => `# ${name}
-
-How videos for this profile are made. Claude reads this before every step, so write it the way you'd brief an editor: who it's for, the tone, how long, what a good one looks like, what to avoid. Keep it short at first: Claude adds what it learns to LEARNINGS.md as you go.
-`;
+const INSTRUCTIONS = () => '';
 const LEARNINGS = `# Learnings
 
 Lessons from earlier videos of this profile. Claude saves one whenever you correct it or say how you want things done, and reads this file before every video. Edit or delete any line.
@@ -83,7 +80,7 @@ function summary(slug, d, videos) {
   const p = readJSON(join(d, 'profile.json'), {});
   return {
     slug, name: p.name || slug, workflow: isWorkflow(p.workflow) ? p.workflow : 'topic',
-    shape: isShape(p.shape) ? p.shape : 'youtube', script: isScript(p.script) ? p.script : 'points', created: p.created || 0,
+    shape: isShape(p.shape) ? p.shape : 'youtube', script: isScript(p.script) ? p.script : 'points', created: p.created || 0, look: cleanLook(p.look || {}),
     files: filesOf(d).length, learnings: lessonCount(readText(join(d, 'LEARNINGS.md'))), skills: skillsOf(d).length,
     videos: videos.filter((v) => v.profile === slug).length, path: d,
   };
@@ -106,13 +103,16 @@ export function getProfile(slug) {
     ...summary(slug, d, listProjects()),
     instructions: readText(join(d, 'INSTRUCTIONS.md')),
     learningsText: readText(join(d, 'LEARNINGS.md')),
+    lessons: lessonLines(readText(join(d, 'LEARNINGS.md'))).map(({ text, stage, from }) => ({ text, stage, from })),
     fileList: filesOf(d),
     skillList: skillsOf(d),
   };
 }
 
 // ---- making and changing ----
-export function createProfile({ name, workflow = 'topic', shape, script } = {}) {
+export function createProfile({ name, preset, ...rest } = {}) {
+  if (preset !== undefined && !PRESETS[preset]) fail('Pick what kind of videos this profile makes.');
+  const { workflow = 'topic', shape, script } = preset ? PRESETS[preset] : rest;
   const clean = String(name || '').replace(/\s+/g, ' ').trim().slice(0, 60);
   if (!clean) fail('Give the profile a name.');
   if (!isWorkflow(workflow)) fail('Choose Topic → video or Batch of shorts.');
@@ -142,10 +142,41 @@ export function updateProfile(slug, b = {}) {
   if (b.shape !== undefined) { if (!isShape(b.shape)) fail('Choose YouTube video, Reel or Short, or Audio only.'); p.shape = b.shape; }
   if (b.script !== undefined) { if (!isScript(b.script)) fail('Choose Full script or Talking points.'); p.script = b.script; }
   if (b.workflow !== undefined) { if (!isWorkflow(b.workflow)) fail('Choose Topic → video or Batch of shorts.'); p.workflow = b.workflow; }
+  if (b.look !== undefined) p.look = cleanLook(b.look);
   writeJSON(join(d, 'profile.json'), p);
   if (typeof b.instructions === 'string') writeFileSync(join(d, 'INSTRUCTIONS.md'), b.instructions.slice(0, 200000));
   if (typeof b.learnings === 'string') writeFileSync(join(d, 'LEARNINGS.md'), b.learnings.slice(0, 200000));
   return getProfile(slug);
+}
+
+// ---- lessons (LEARNINGS.md's "- " lines) ----
+// Add one in the creator's words, or remove one by its text (the first line that says it).
+export function editLessons(slug, { add, remove } = {}) {
+  const d = dirOf(slug), file = join(d, 'LEARNINGS.md');
+  let text = readText(file) || LEARNINGS;
+  if (typeof add === 'string') {
+    const t = add.replace(/\s+/g, ' ').trim().slice(0, 400);
+    if (!t) fail('Write the lesson first.');
+    text = `${text.replace(/\s*$/, '')}\n- ${t} · ${new Date().toISOString().slice(0, 10)}, added by hand\n`;
+  }
+  if (typeof remove === 'string') {
+    const hit = lessonLines(text).find((l) => l.text === remove.trim());
+    if (!hit) fail('That lesson isn’t there any more.', 404);
+    const lines = text.split('\n');
+    lines.splice(lines.indexOf(hit.line), 1);
+    text = lines.join('\n');
+  }
+  writeFileSync(file, text);
+  return getProfile(slug);
+}
+
+// Remove a profile: its folder moves to profiles/.removed/ (never deleted); its videos stay as they are.
+export function removeProfile(slug) {
+  const d = dirOf(slug), bin = join(profilesRoot(), REMOVED);
+  mkdirSync(bin, { recursive: true });
+  const to = `${Date.now()}-${slug}`;
+  renameSync(d, join(bin, to));
+  return { removed: to };
 }
 
 // ---- files ----
@@ -249,6 +280,7 @@ export function profileContext(meta) {
   if (!p) return [];
   const lines = [
     `This video belongs to the creator's profile "${p.name}" (${WORKFLOWS[p.workflow].name}, ${SHAPES[p.shape].name}${p.workflow === 'topic' ? `, ${SCRIPTS[p.script].name.toLowerCase()}` : ''}). Its folder is ${p.dir}: read INSTRUCTIONS.md (how this profile's videos are made) and LEARNINGS.md (the creator's lessons from earlier videos) before each step and follow them; they override general habits. resources/ holds this profile's own files (logos, photos, references, music): use them where they fit, on top of the shared Resources. skills/ may hold skills of this profile's own (skills/<name>/SKILL.md): read the ones that fit the step you're on. Don't change anything in that folder.`,
+    ...(p.look.colors.length || p.look.font || p.look.voice ? [`This profile's look: ${[p.look.colors.length ? `colours ${p.look.colors.join(', ')} (the first leads: titles, cards, thumbnails)` : '', p.look.font ? `font ${p.look.font}` : '', p.look.voice ? `voice: ${p.look.voice}` : ''].filter(Boolean).join('; ')}. Use it in this video's graphics, captions, thumbnails and words.`] : []),
     `Learning: whenever the creator corrects you, pushes back, or says how they want something done in a way that should hold for this profile's next videos, add it to work/learnings.json in this project ({"lessons": [{"text": "one short rule in the creator's words", "stage": "research" | "script" | "record" | "cut" | "scenes" | "build" | "thumbnail" | "post"}]}; keep the lessons already there). Video Octopus copies new ones into the profile's LEARNINGS.md when your reply ends and tells the creator. Only save lasting preferences, not one-off changes to this video.`,
     `The profile's research: work/research.md (if there is one) holds the topic's research and angle. Read it before you plan scenes, build, write titles or the post, so the edit says what the research found.`,
   ];
@@ -368,6 +400,8 @@ export async function simpleProfilesRoute(req, res, url, { send, body, started }
       return reply({ ok: Boolean(text) });
     }
     if (parts[1] === 'remove') return reply(removeFile(parts[0], b.name));
+    if (parts[1] === 'lessons') return reply(editLessons(parts[0], b));
+    if (parts[1] === 'delete') return reply(removeProfile(parts[0]));
     if (parts[1] === 'restore') return reply(restoreFile(parts[0], b.removed));
     if (parts[1] === 'start') {
       const { id } = startVideo(parts[0], b);

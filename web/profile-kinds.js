@@ -24,6 +24,35 @@ export const SCRIPTS = {
 export const SCRIPT_KEYS = Object.keys(SCRIPTS);
 export const isScript = (k) => SCRIPT_KEYS.includes(k);
 
+// The four ways a new profile starts (New profile's tiles): each sets how it starts, its shape and its script. The
+// details stay editable on the profile.
+export const PRESETS = {
+  'youtube-face': { key: 'youtube-face', name: 'YouTube · talking head', sub: 'Topic in, research, talking points, you on camera', workflow: 'topic', shape: 'youtube', script: 'points' },
+  'youtube-voice': { key: 'youtube-voice', name: 'YouTube · voiceover', sub: 'Topic in, research, a full script to read', workflow: 'topic', shape: 'youtube', script: 'full' },
+  'shorts-batch': { key: 'shorts-batch', name: 'Shorts · batch', sub: 'Drop reference shorts, record several in one take', workflow: 'batch', shape: 'reel', script: 'points' },
+  'shorts-voice': { key: 'shorts-voice', name: 'Shorts · voiceover', sub: 'Topic in, a full script for a vertical voiceover', workflow: 'topic', shape: 'reel', script: 'full' },
+};
+export const PRESET_KEYS = Object.keys(PRESETS);
+
+// A profile's look ({ colors: ['#hex'…], font, voice }), cleaned: up to six #rrggbb colours, no repeats.
+export function cleanLook(look = {}) {
+  const colors = [];
+  for (const c of Array.isArray(look.colors) ? look.colors : []) {
+    const x = String(c || '').trim().toLowerCase();
+    if (/^#[0-9a-f]{6}$/.test(x) && !colors.includes(x) && colors.length < 6) colors.push(x);
+  }
+  return { colors, font: String(look.font || '').trim().slice(0, 120), voice: String(look.voice || '').trim().slice(0, 300) };
+}
+
+// The lessons in a profile's LEARNINGS.md: its "- " lines, without the date and video note Video Octopus adds.
+export function lessonLines(md) {
+  return String(md || '').split('\n').filter((l) => /^\s*-\s+\S/.test(l)).map((l) => {
+    const raw = l.replace(/^\s*-\s+/, '');
+    const m = /^(.*?)(?:\s+_\(([^)]*)\)_)?(?:\s+·\s+(.*))?$/.exec(raw);
+    return { line: l, text: (m?.[1] || raw).trim(), stage: m?.[2] || '', from: m?.[3] || '' };
+  });
+}
+
 // A profile's one-line description on its card: "Topic → video · YouTube · Talking points".
 export function profileLine(p, shapes) {
   const w = WORKFLOWS[p.workflow]?.name || '';

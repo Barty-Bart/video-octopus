@@ -159,6 +159,19 @@ test('server: profiles are folders with their own files; a topic video researche
   assert.equal((await s.ok('/api/simple-profiles', { name: 'Main channel', workflow: 'topic' })).slug, 'main-channel-2', 'a second one of the same name gets its own folder');
   assert.equal((await s.req('/api/simple-profiles', { name: ' ' })).status, 400);
 
+  // The four kinds, the look and lessons by hand.
+  const shorts = await s.ok('/api/simple-profiles', { name: 'Shorts', preset: 'shorts-batch' });
+  assert.deepEqual([shorts.workflow, shorts.shape], ['batch', 'reel']);
+  assert.equal((await s.req('/api/simple-profiles', { name: 'X', preset: 'nope' })).status, 400);
+  const looked = await s.ok('/api/simple-profiles/shorts', { look: { colors: ['#EA580C', 'red', '#ea580c', '#111111'], font: 'Inter', voice: 'Dry' } });
+  assert.deepEqual(looked.look, { colors: ['#ea580c', '#111111'], font: 'Inter', voice: 'Dry' });
+  let withLesson = await s.ok('/api/simple-profiles/shorts/lessons', { add: 'Hook in the first 3 seconds' });
+  assert.deepEqual(withLesson.lessons.map((l) => l.text), ['Hook in the first 3 seconds']);
+  withLesson = await s.ok('/api/simple-profiles/shorts/lessons', { remove: 'Hook in the first 3 seconds' });
+  assert.deepEqual(withLesson.lessons, []);
+  await s.ok('/api/simple-profiles/shorts/delete', {});
+  assert.ok(!existsSync(join(s.studio, 'profiles', 'shorts')) && readdirSync(join(s.studio, 'profiles', '.removed')).some((n) => n.endsWith('-shorts')), 'removed, never deleted');
+
   // Files: upload, remove, Undo.
   const up = await s.ok('/api/simple-profiles/main-channel/upload?name=logo.png', undefined, Buffer.from('fixture'));
   assert.equal(up.name, 'logo.png');
@@ -168,7 +181,7 @@ test('server: profiles are folders with their own files; a topic video researche
   await s.ok('/api/simple-profiles/main-channel/restore', { removed: gone.removed });
   assert.equal((await s.ok('/api/simple-profiles/main-channel')).files, 2);
   assert.equal((await s.req('/api/simple-profiles/main-channel/file/..%2Fprofile.json')).status, 404);
-  const saved = await s.ok('/api/simple-profiles/main-channel', { instructions: '# Main\nTalk like a friend.' });
+  const saved = await s.ok('/api/simple-profiles/main-channel', { instructions: '# Main\nTalk like a friend.', look: { colors: ['#2563eb'] } });
   assert.match(saved.instructions, /Talk like a friend/);
 
   // A topic video: the research brief is its first message, and the profile is in its chat's context.
@@ -181,6 +194,7 @@ test('server: profiles are folders with their own files; a topic video researche
   const launch = s.agentLog().find((e) => e.kind === 'launch');
   assert.ok(launch.prompt.includes(join(s.studio, 'profiles', 'main-channel').replaceAll('\\', '\\')) || launch.prompt.includes('profiles'), 'the chat is told where the profile folder is');
   assert.match(launch.prompt, /LEARNINGS\.md/);
+  assert.match(launch.prompt, /colours #2563eb/, 'the profile’s look reaches the chat');
   assert.equal((await s.ok('/api/projects')).find((x) => x.id === id).profile, 'main-channel');
 
   // A lesson Claude saves goes into the profile's LEARNINGS.md once, with a line in the chat.

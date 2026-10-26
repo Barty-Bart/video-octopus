@@ -513,34 +513,56 @@
 .pf-drop-t { display: inline-flex; align-items: center; gap: 6px; }
 .pf-chips { color: var(--text); overflow-wrap: anywhere; }
 .pf-chips:empty { display: none; }
-.pf-drop-big { padding: 22px; align-items: center; text-align: center; }
 .pf-add { cursor: pointer; justify-content: center; align-items: flex-start; box-shadow: inset 0 0 0 1px var(--line); background: transparent; }
 .pf-add:hover { background: var(--hover); }
-.pf-new-form .pf-f, .pf-set .pf-f { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; border: 0; font-size: 12px; font-weight: 500; color: var(--text-2); min-width: 0; }
-.pf-new-form select.field, .pf-set .field { height: 36px; }
-.pf-radio { display: flex; gap: 8px; align-items: flex-start; padding: 6px 0; font-weight: 400; color: var(--text); cursor: pointer; }
-.pf-radio span { display: flex; flex-direction: column; gap: 2px; }
 .pf-filter { display: flex; flex-wrap: wrap; gap: 6px; }
 .pf-chip { height: 30px; padding: 0 12px; border: 0; border-radius: 999px; background: var(--surface-2); color: var(--text-2); font: 500 12.5px var(--font); cursor: pointer; box-shadow: inset 0 0 0 1px var(--line); }
 .pf-chip[aria-pressed="true"] { background: var(--active); color: var(--text); }
-.pf-page > div { display: flex; flex-direction: column; gap: 28px; }
-.pf-set { flex-direction: row; flex-wrap: wrap; gap: 14px; }
-.pf-set .pf-f { flex: 1 1 180px; }
-.pf-text { width: 100%; min-height: 160px; padding: 12px; border: 0; border-radius: var(--r-m); background: var(--surface); color: var(--text); font: 400 13px/1.5 var(--mono, ui-monospace, monospace); box-shadow: inset 0 0 0 1px var(--line); resize: vertical; box-sizing: border-box; }
-.pf-files { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
-.pf-files li { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.pf-files li a { flex: 0 1 auto; overflow-wrap: anywhere; }
-.pf-page code { overflow-wrap: anywhere; }
 /* A batch's split in the Simple editor (web/simple-editor.js) */
 .sx-batch { display: flex; flex-direction: column; gap: 6px; padding: 12px; border-radius: 12px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
 .sx-batch-l { display: flex; flex-wrap: wrap; gap: 6px; font-size: 13px; }
-/* The folders row on Resources and a profile's page: Shared + one per profile */
-.pf-folders { display: flex; flex-wrap: wrap; gap: 10px; }
-.pf-folder { display: flex; align-items: center; gap: 10px; min-width: 180px; padding: 12px 14px; border: 0; border-radius: var(--r-l); background: var(--surface-2); color: var(--text); font: inherit; text-align: left; text-decoration: none; cursor: pointer; box-shadow: inset 0 0 0 1px var(--line); }
-.pf-folder > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.pf-folder b { font-size: 13.5px; font-weight: 600; }
-.pf-folder .sub { font-size: 12px; }
-.pf-folder:hover { background: var(--hover); }
-.pf-folder.on { box-shadow: inset 0 0 0 2px var(--accent); }
-.pf-folder-add { background: transparent; }
-.pf-folders-host:empty { display: none; }
+
+/* Resources in Simple: one tab per profile (web/simple-profiles.js renderProfilesPage) */
+.rp-tabs { display: flex; flex-wrap: wrap; gap: 6px; padding-bottom: 2px; }
+.rp-tab { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 14px; border: 0; border-radius: 999px; background: transparent; color: var(--text-2); font: 500 13px var(--font); text-decoration: none; cursor: pointer; box-shadow: inset 0 0 0 1px var(--line); }
+.rp-tab:hover { background: var(--hover); color: var(--text); }
+.rp-tab[aria-current="page"] { background: var(--text); color: var(--surface); box-shadow: none; }
+.rp-new { color: var(--text-2); box-shadow: inset 0 0 0 1px var(--line); border-style: dashed; }
+.rp-panel { display: flex; flex-direction: column; gap: 32px; min-width: 0; }
+.rp-meta { display: flex; align-items: center; gap: 10px; margin-bottom: -16px; }
+.rp-settings { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; max-width: 900px; padding: 14px; border-radius: var(--r-l); background: var(--surface-2); }
+.rp-settings[hidden] { display: none; }
+.rp-settings .pf-f { display: flex; flex-direction: column; gap: 6px; flex: 1 1 160px; font-size: 12px; font-weight: 500; color: var(--text-2); }
+.rp-settings .field { height: 34px; }
+.rp-del { color: var(--bad-ink); }
+.rp-narrow { max-width: 720px; }
+.rp-ins { width: 100%; min-height: 110px; padding: 12px; border: 0; border-radius: var(--r-m); background: var(--surface-2); color: var(--text); font: 400 13.5px/1.5 var(--font); box-shadow: inset 0 0 0 1px var(--line); resize: vertical; box-sizing: border-box; }
+.rp-saved { min-height: 1em; margin-top: -6px; }
+.rp-lessons { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.rp-lessons li { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border-radius: var(--r-m); background: var(--surface-2); font-size: 13.5px; color: var(--text); }
+.rp-lessons li > span { flex: 1 1 auto; display: flex; flex-direction: column; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.rp-lessons li .sub { font-size: 11.5px; }
+.rp-add { display: flex; gap: 8px; }
+.rp-add .field { flex: 1 1 auto; height: 34px; padding: 0 12px; border: 0; border-radius: var(--r-m); background: var(--surface-2); color: var(--text); font: 400 13px var(--font); box-shadow: inset 0 0 0 1px var(--line); }
+.rp-drop { cursor: pointer; }
+.rp-drop:focus-visible { outline: 2px solid var(--focus-ring); }
+.rp-ext { font: 600 15px var(--font); color: var(--text-2); letter-spacing: 0.04em; }
+.rp-first { max-width: 560px; margin: 0; }
+.rp-look-form { margin-top: 12px; }
+.rp-col { position: relative; display: inline-flex; }
+.rp-col input[type=color] { width: 40px; height: 40px; padding: 0; border: 0; border-radius: 10px; background: none; cursor: pointer; }
+.rp-col button { position: absolute; top: -6px; right: -6px; display: grid; place-items: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 50%; background: var(--surface); color: var(--text-2); box-shadow: 0 0 0 1px var(--line); cursor: pointer; }
+/* New profile (web/simple-profiles.js newProfile): a name and four kinds, in the confirm dialog */
+.cf:has(.npf) { width: min(560px, calc(100vw - 32px)); }
+.npf { display: flex; flex-direction: column; gap: 14px; min-width: 0; margin-top: 14px; }
+.npf-name { display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 500; color: var(--text-2); }
+.npf-name .field { width: 100%; height: 38px; padding: 0 12px; box-sizing: border-box; }
+.npf-kinds { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.npf-kind { min-width: 0; box-sizing: border-box; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 12px; border: 0; border-radius: var(--r-l); background: var(--surface-2); color: var(--text); font: inherit; text-align: left; cursor: pointer; box-shadow: inset 0 0 0 1px var(--line); }
+.npf-kind b { font-size: 13.5px; }
+.npf-kind .sub { font-size: 12px; line-height: 1.35; }
+.npf-kind[aria-checked="true"] { box-shadow: inset 0 0 0 2px var(--accent); }
+.npf-pic { display: block; margin-bottom: 4px; border-radius: 4px; box-shadow: inset 0 0 0 1.5px var(--text-3); }
+.npf-pic.youtube { width: 36px; height: 20px; }
+.npf-pic.reel { width: 14px; height: 24px; }
+@media (max-width: 520px) { .npf-kinds { grid-template-columns: 1fr; } }

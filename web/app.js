@@ -19,7 +19,7 @@ import { isAdvanced, editorMode, setEditorMode } from './mode.js';
 import { ADVANCED_NOTE } from './simple.js';
 import { renderSimpleProjects } from './simple-home.js';
 import { renderResources } from './resources-page.js';
-import { renderProfilePage } from './simple-profiles.js';
+import { renderProfilesPage } from './simple-profiles.js';
 import { makeShapeChip } from './shape-chip.js';
 import { mountSimpleEditor } from './simple-editor.js';
 import { TERMS } from './terms.js';
@@ -284,8 +284,9 @@ async function home(route, nav = null) {
   }
   // Recordings also lists the files dropped or imported into videos, where they are (A17).
   if (view === 'recordings') renderRecordings(main, await api('/api/recordings').catch(() => takes));
-  if (view === 'resources') page = renderResources(main, { makeChat }); // V1 spec §4 (web/resources-page.js)
-  if (view === 'profile') page = renderProfilePage(main, { slug: route.id, projects }); // web/simple-profiles.js
+  // Resources: one tab per profile (web/simple-profiles.js); ?shared is the beta.24 shared page (web/resources-page.js).
+  if (view === 'resources') page = route.query?.has('shared') ? renderResources(main, { makeChat }) : renderProfilesPage(main, { projects });
+  if (view === 'profile') page = renderProfilesPage(main, { slug: route.id, projects });
   if (view === 'scheduled') page = await renderSchedules(main, nav).catch((e) => { main.replaceChildren(h(`<div class="home-wrap"><div class="notice">${esc(e.message)}</div></div>`)); return null; });
   if (view === 'skills') page = await renderSkills(main, { counts });
   if (view === 'library') page = renderLibrary(main, $('#libSide', el));
