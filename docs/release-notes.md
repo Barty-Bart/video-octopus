@@ -1,3 +1,14 @@
+# Unreleased
+
+- **Simple is the default.** Settings › General has a new **Editor mode: Simple | Advanced**. Simple is on for everyone, existing studios included. Advanced shows the app exactly as before. Switching changes only that setting: no styles, kits, memories, skills, projects or files are deleted or moved, and you can switch back any time.
+- **A shorter sidebar.** In Simple the sidebar has **Projects** and **Resources**, with **Settings** at the foot. Resources is a placeholder for now (your look, photos and products come next).
+- **+ New video ▾ on Projects.** The button sits top right and opens a menu under it with three choices: **YouTube video** (16:9), **Reel or Short** (9:16) and **Audio only** (voice, podcast or narration). **Start** makes the video and opens Record. Your last choice is preselected. Projects in Simple is one plain grid ("YouTube · Rough cut · 2 h ago"), with no filters.
+- **A built-in style.** Videos made in Simple use a built-in style with those three formats, even if you have styles of your own, so My styles never gets in the way. It is made the first time you need it, it is hidden from My styles in Advanced, and existing videos keep the style they have.
+- **Audio only.** A new voice-only video setup: Record, clean up and lock the cut, an optional cover picture, then download. It has no scene plan and no build.
+- **Change the shape from the top bar.** In Simple the editor's top bar shows a shape chip (**YouTube · 16:9** or **Reel · 9:16**) in place of the style picker. It switches freely until a Build step has run; after that it asks first, and the video you built stays in Renders.
+- **Hidden pages land on Projects.** In Simple, a link to My styles, a brand kit, Skills, the Library, Scheduled or Recordings opens Projects with one line: "That’s in Advanced mode (Settings › General)."
+- **Nothing in Simple points to styles.** The editor's style picker and its Brand & instructions panel, the post kit's Comment WORD → DM card, and Settings' links to My styles, brand kits and Skills are Advanced only. The editor's stage menus and the change package are unchanged for now; the Simple editor replaces them next.
+
 # v0.1.0-beta.23
 
 - **Check my computer finds the Python you already have.** It now also looks for `.venv`, `venv` and `env` folders up to two folders deep in Movies, Documents, Downloads, Desktop, Developer, Projects, code, src and dev, one folder deep in your home folder, next to your studio, and in apps' data (`~/Library/Application Support` on a Mac, so OpenToolkit's speech environment shows up). It reads folder names only, never follows links, skips hidden folders, app bundles, photo and video libraries and node_modules, and stops after 1,500 folders, 2 seconds or 16 environments. The status line says exactly where it looked.

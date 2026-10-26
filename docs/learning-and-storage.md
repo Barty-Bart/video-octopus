@@ -335,6 +335,19 @@ style (cover, Short/Long badge, kit chip, description, skill version, videos, ch
 review; most recently used first; archived behind Show archived), **New style**, and the shared **Studio
 instructions** (`#/styles/instructions`) and **Memories for everything** (`#/styles/memories`).
 
+**Simple mode's built-in style** (V1, Unreleased): Settings › General › Editor mode is `simple` by default
+(`settings.json` `editor.mode`; a file without it is Simple). Simple's New video (`POST /api/projects { untitled,
+shape: youtube | reel | audio }`) pins the project to a hidden built-in profile (`system: 'default'`, named "My
+brand") and one of its three formats (`builtin: youtube | reel | audio`, types `tutorial`, `short`, `audio`), made
+together the first time one is needed (`LearningStore.builtinProfile` / `builtinFormats`), never at start-up or on a
+mode switch. Like No brand it is never listed as a kit, renamed or archived; unlike No brand it can hold a brand
+(Simple's Resources page). Its formats are left out of My styles and the style picker (`web/style-list.js`
+`styleEntries`, except the picker's own current one, shown as "Built-in") and refuse rename, archive and Change kit.
+The editor's shape chip (`POST /api/project-context/<id>/shape { shape, confirm }`) re-pins between the YouTube and
+Reel formats with `selectProjectContext`; after a Build step it answers 409 `needsConfirm` and, with `confirm`, may
+change the video setup (the style picker still refuses that). Simple's New video and the shape chip leave
+`lastNewVideo` alone; Simple remembers `lastSimpleVideo`. Switching modes writes only `editor.mode`.
+
 **Kit colours** (0.1.0-beta.20, `web/kit-colors.js`): every kit shows a colour, its approved brand's first colour,
 else the kit colour saved on the profile row (`color`, `#rrggbb`). A new kit gets the first colour of a 12-colour
 palette that no other kit shows (cycling by kit count when all are taken); kits made before this version get one
