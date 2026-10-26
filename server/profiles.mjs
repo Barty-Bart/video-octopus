@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { safeFile } from './learning-store.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { autoKitColors, cleanColor } from '../web/kit-colors.js';
+import { SHAPES, SWITCHABLE, isShape, shapeOfType } from '../web/simple.js';
 const chats=new Map();
 const use=fn=>{const s=new ProfileStore(settings().studio);try{return fn(s);}finally{s.close();}};
 export const profileBusy=()=>[...chats.values()].some(c=>c.busy);
@@ -65,6 +66,41 @@ export function rememberNewVideo({ profileId = null, formatId = null } = {}) {
  saveSettings({ lastNewVideo: { profileId: profileId || null, formatId: formatId || null } });
 }
 
+// ---- Simple mode's built-in style (V1 spec §2–§3) ----
+// POST /api/projects { untitled, shape: youtube | reel | audio }: the built-in style's format for that shape, made the
+// first time it is needed (ProfileStore builtinFormats). Used for every video Simple makes, also when the creator has
+// styles of their own (Decision 3); Advanced's last-used style (lastNewVideo) is left alone. The shape is remembered
+// as settings lastSimpleVideo, the menu's preselected choice.
+export function simpleVideoChoice(shape) {
+ if (!isShape(shape)) throw Error('Choose YouTube video, Reel or Short, or Audio only.');
+ if (!settings().studio) throw Error('Choose a studio folder first.');
+ const f = use((s) => s.builtinFormats())[shape];
+ return { profileId: f.profileId, formatId: f.id, type: f.type };
+}
+export const rememberSimpleVideo = (shape) => { if (isShape(shape)) saveSettings({ lastSimpleVideo: shape }); };
+export const lastSimpleVideo = () => (isShape(settings().lastSimpleVideo) ? settings().lastSimpleVideo : 'youtube');
+
+// The editor's shape chip (Decision 5): switch a project between YouTube video (16:9) and Reel or Short (9:16), the
+// built-in formats, through the same re-pin as the style picker. Free until a Build step has run; after that the
+// server answers 409 needsConfirm and the switch needs confirm: true (unlike the style picker, the shape may then
+// change the video setup: the built video keeps its renders, the next Build makes the new shape). Audio only has no
+// shape chip and can't be switched. A project on another style moves to the built-in one.
+export const SHAPE_BUILT_NOTE = 'This video is already built. Switching the shape now means building it again in the new shape; the video you have stays in Renders.';
+export function switchProjectShape(id, b = {}) {
+ const dir = projectDir(id);
+ if (!dir) throw Object.assign(Error('Project not found.'), { status: 404 });
+ const meta = projectMeta(dir) || {};
+ const shape = String(b.shape || '');
+ if (!SWITCHABLE.includes(shape)) throw Error('Choose YouTube video or Reel or Short.');
+ if (shapeOfType(typeOf(meta.type)) === 'audio') throw Error('Audio only has no picture, so it has no shape to switch.');
+ const built = projectBuilt(dir, meta.type);
+ if (built && b.confirm !== true) throw Object.assign(Error(SHAPE_BUILT_NOTE), { status: 409, needsConfirm: true });
+ const choice = simpleVideoChoice(shape);
+ if (meta.context?.formatId === choice.formatId) return { ok: true, built, typeChanged: false, shape, unchanged: true };
+ const r = selectProjectContext(id, { formatId: choice.formatId, confirm: true }, { shape: true });
+ return { ...r, shape };
+}
+
 // Has a Build step run? After that, changing the style needs the creator's OK.
 export const BUILT_NOTE = 'Videos keep the style they were built with; changing it now affects only new steps.';
 export function projectBuilt(dir, type) {
@@ -77,7 +113,9 @@ export function projectBuilt(dir, type) {
 // rebuild its context files, move its chat memories to the new style, and follow the format's video setup. Free before
 // a Build step has run; after that only with confirm: true, and only within the same video setup.
 // The database pins, project.json and the context files change together or not at all.
-export function selectProjectContext(id, b = {}) {
+// opts.shape (the shape chip, switchProjectShape): a built video may change its video setup too, it says "Shape changed"
+// in the worklog, and Advanced's last-used style is left alone.
+export function selectProjectContext(id, b = {}, opts = {}) {
  const dir = projectDir(id);
  if (!dir) throw Object.assign(Error('Project not found.'), { status: 404 });
  const meta = projectMeta(dir) || {};
@@ -88,7 +126,7 @@ export function selectProjectContext(id, b = {}) {
   const profileId = f ? f.profileId : (b.profileId || null);
   if (f && b.profileId && b.profileId !== f.profileId) throw Error('That format belongs to another style.');
   const type = f ? f.type : typeOf(meta.type);
-  if (built && type !== typeOf(meta.type)) throw Error(`This video was built as a ${formats()[typeOf(meta.type)] || meta.type}. Choose a format with the same video setup, or No style.`);
+  if (built && type !== typeOf(meta.type) && !opts.shape) throw Error(`This video was built as a ${formats()[typeOf(meta.type)] || meta.type}. Choose a format with the same video setup, or No style.`);
   const bundle = s.bundle({ profileId, formatId: f?.id || null, type });
   const before = s.binding(id) || meta.learning || null;
   const learning = bundle.versionId
@@ -117,8 +155,9 @@ export function selectProjectContext(id, b = {}) {
  });
  const { bundle } = result;
  const what = bundle.profileName ? `${bundle.profileName}${bundle.formatName ? ` · ${bundle.formatName}` : ''}` : 'No style';
- appendWorklog(dir, `Style changed to ${what}${built ? ' after Build (earlier steps keep the style they were made with)' : ''}.`);
- rememberNewVideo(bundle);
+ if (opts.shape) appendWorklog(dir, `Shape changed to ${bundle.formatName}${built ? ' after Build (the built video stays in Renders; build again for the new shape)' : ''}.`);
+ else appendWorklog(dir, `Style changed to ${what}${built ? ' after Build (earlier steps keep the style they were made with)' : ''}.`);
+ if (!opts.shape) rememberNewVideo(bundle);
  return {
   ok: true, built, typeChanged: result.typeChanged,
   context: { profileId: bundle.profileId, profileName: bundle.profileName, formatId: bundle.formatId, formatName: bundle.formatName },

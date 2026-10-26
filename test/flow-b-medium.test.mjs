@@ -317,6 +317,7 @@ test('B4: the Plan panel, the dock’s Approve the plan and the asks that say "a
   const PIPE = JSON.parse(src('core/pipelines.json'));
   for (const [f, v] of Object.entries(PIPE.formats)) {
     const plan = v.steps.find((s) => s.id === 'plan');
+    if (v.simple && !plan) continue; // Audio only (Simple mode) has no picture, so no scene plan
     assert.deepEqual(plan.done, { json: ['work/production.json', 'approved'], built: true }, f);
     assert.match(plan.ask, /tell me about it and stop/, f);
     assert.match(plan.ask, /never set "approved" in the sheet yourself/, f);

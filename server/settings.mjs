@@ -52,6 +52,11 @@ export const THEME_OF_LOOK = {
   night: 'dark', frost: 'dark', control: 'dark', cinema: 'dark', split: 'dark',
 };
 export const OLD_LOOKS = Object.keys(THEME_OF_LOOK);
+export const EDITOR_MODES = ['simple', 'advanced'];
+// The editor mode (Settings › General › Editor mode): 'simple' unless the settings file says 'advanced'. The web's
+// gate is web/mode.js isAdvanced(); this is the server's, for anything server side that must know.
+export const editorMode = (s = settings()) => (s?.editor?.mode === 'advanced' ? 'advanced' : 'simple');
+export const isAdvanced = (s = settings()) => editorMode(s) === 'advanced';
 export const LANGS = { auto: 'Detect', en: 'English', de: 'German', es: 'Spanish', fr: 'French', it: 'Italian', nl: 'Dutch', pl: 'Polish', pt: 'Portuguese' };
 
 const SECTIONS = {
@@ -78,6 +83,10 @@ const SECTIONS = {
   // migratedFrom: the old look's id after the one-time migration, until the creator dismisses the note ('' after).
   appearance: { theme: 'system', accent: 'orange', sidebar: 'labels', migratedFrom: '' },
   editing: { trimHighlight: false, trimLens: false },
+  // Settings › General › Editor mode (V1 "ultra simple", 26 Oct 2026): simple (the default for everyone, existing
+  // settings files included, which have no editor section) shows Projects, Resources and Settings and the built-in
+  // style; advanced shows the whole app as it was. Hide, never delete: switching changes only this setting.
+  editor: { mode: 'simple' },
   // Settings → Rendering → Object separation: the SAM 2.1 model the object-separation skill uses; auto = the one
   // Setup recommends for this computer (server/sam2.mjs).
   objsep: { model: 'auto' },
@@ -97,6 +106,7 @@ const SECTIONS = {
 export const section = (name, s = settings()) => {
   if (name === 'recorder') return recorderSection(s);
   if (name === 'appearance') return appearanceSection(s);
+  if (name === 'editor') return { mode: editorMode(s) };
   return { ...SECTIONS[name], ...(s[name] || {}) };
 };
 
@@ -162,6 +172,7 @@ const RULES = {
   look: { background: ['night-desk', 'stars', 'led'], pip: ['rounded', 'circle', 'frame'], colors: 'colors', fonts: 'str' },
   appearance: { theme: THEMES, accent: ACCENTS, sidebar: SIDEBARS, migratedFrom: ['', ...OLD_LOOKS] },
   editing: { trimHighlight: 'bool', trimLens: 'bool' },
+  editor: { mode: EDITOR_MODES },
   objsep: { model: ['auto', ...SAM2_SIZES] },
   setup: { done: 'bool', agent: ['', 'claude', 'codex', 'pi', 'lmstudio', 'ollama'] },
   updates: { auto: 'bool' },
@@ -503,7 +514,7 @@ export async function settingsView() {
       claude: { ...section('claude', s), permissionMode: s.permissionMode, model: s.model },
       transcribe: section('transcribe', s), render: section('render', s),
       recorder: { ...section('recorder', s), recordingsDir: s.recordingsDir },
-      sound: section('sound', s), look: section('look', s), appearance: section('appearance', s), editing: section('editing', s), objsep: section('objsep', s),
+      sound: section('sound', s), look: section('look', s), appearance: section('appearance', s), editor: section('editor', s), editing: section('editing', s), objsep: section('objsep', s),
       folders: { studio: s.studio, projectsDir: s.projectsDir, libraryDir: s.libraryDir || 'library', recordingsDir: s.recordingsDir },
       setup: section('setup', s), updates: section('updates', s), storage: section('storage', s),
     },

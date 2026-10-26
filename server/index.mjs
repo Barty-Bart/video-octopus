@@ -27,7 +27,7 @@ import { buildSteps, renderKind } from './built.mjs';
 import { appRoute } from './setup.mjs';
 import { onboardingRoute, ffmpegReady, setupBusy } from './onboarding.mjs';
 import { createStudio, defaultStudioPath } from './starter.mjs';
-import { profileRoute, profileBusy, killProfileResearch, createConfiguredProject, pinnedContext, profilePalette, projectIdHasRows, hasPinnedContext, channelSummaries, studioWaiting, withProjectChannels, newVideoChoice, rememberNewVideo, selectProjectContext } from './profiles.mjs';
+import { profileRoute, profileBusy, killProfileResearch, createConfiguredProject, pinnedContext, profilePalette, projectIdHasRows, hasPinnedContext, channelSummaries, studioWaiting, withProjectChannels, newVideoChoice, rememberNewVideo, selectProjectContext, simpleVideoChoice, rememberSimpleVideo, lastSimpleVideo, switchProjectShape } from './profiles.mjs';
 import { UNTITLED, autoName, nameFromReply, namingContext, onAutoRename } from './naming.mjs';
 import { memoryRoute } from './memory.mjs';
 import { packagingRoute, resourcesRoute, packagingBusy, killPackaging } from './packaging.mjs';
@@ -578,6 +578,24 @@ async function route(req, res) {
       return send(res, e.status || 400, { error: e.message, ...(e.needsConfirm ? { needsConfirm: true } : {}) });
     }
   }
+  // The editor's shape chip in Simple mode (Decision 5): YouTube video 16:9 ⇄ Reel or Short 9:16, until Build without
+  // asking, after it with confirm: true (409 needsConfirm first). GET: the shape New video ▾ preselects.
+  if (p === '/api/simple/last-shape' && req.method === 'GET') return send(res, 200, { shape: lastSimpleVideo() });
+  const shapeRoute = /^\/api\/project-context\/([^/]+)\/shape$/.exec(p);
+  if (shapeRoute && req.method === 'POST') {
+    let pid = '';
+    try { pid = decodeURIComponent(shapeRoute[1]); } catch {}
+    const b = await body(req);
+    const live = chats.get(pid);
+    if (live?.busy) return send(res, 409, { error: 'Wait for the agent to finish its reply, then change the shape.' });
+    try {
+      const result = switchProjectShape(pid, b);
+      if (!result.unchanged) restartWhenIdle(live);
+      return send(res, 200, result);
+    } catch (e) {
+      return send(res, e.status || 400, { error: e.message, ...(e.needsConfirm ? { needsConfirm: true } : {}) });
+    }
+  }
   if (await profileRoute(req, res, url, { send, body, serveFile })) return;
   // Packaging (thumbnails, its Codex chat) and the resources it uses (server/packaging.mjs).
   if (p.startsWith('/api/packaging/') && await packagingRoute(req, res, url, { send, body })) return;
@@ -626,6 +644,9 @@ async function route(req, res) {
       agent: await agentStatus(url.searchParams.has('refresh') && engineName() !== 'claude'),
       // modelSource: Claude Code on another model than the plan (then there are no plan limits to show).
       formats: formats(), formatInfo: formatInfo(), usage: modelSourceView() ? null : getPlanUsage(engineName()), modelSource: modelSourceView(), engine: engineName(), engineLabel: ENGINES[engineName()],
+      // Settings › General › Editor mode: simple (default) or advanced; the web's gate is web/mode.js isAdvanced().
+      // lastShape: the shape New video ▾ preselects (the last one chosen).
+      editor: { ...section('editor', s), lastShape: lastSimpleVideo() },
       appearance: section('appearance', s), // Settings → Appearance: how Video Octopus looks (web/appearance.js applies it)
       help: section('help', s), // first-time help seen (help.stepsIntro: 'dismissed')
       // Settings › Storage: what Delete recording does, and the computer's Bin it uses (null: none, the studio's trash).
@@ -651,9 +672,13 @@ async function route(req, res) {
     try {
       // New video (design V2 §6): "Untitled video" with the last-used style and format (or the ones given), named
       // automatically later (server/naming.mjs).
-      if (b.untitled) b = { ...b, ...newVideoChoice(b), name: UNTITLED, nameSource: 'auto' };
+      // Simple mode's New video ▾ (V1 spec §2–§3) sends shape: youtube | reel | audio, the built-in style's format.
+      const shape = b.shape ? String(b.shape) : null;
+      if (shape) b = { ...b, ...simpleVideoChoice(shape), name: b.untitled ? UNTITLED : b.name, nameSource: b.untitled ? 'auto' : b.nameSource };
+      else if (b.untitled) b = { ...b, ...newVideoChoice(b), name: UNTITLED, nameSource: 'auto' };
       const id = createConfiguredProject(b);
-      if (b.untitled) rememberNewVideo(b);
+      if (shape) rememberSimpleVideo(shape);
+      else if (b.untitled) rememberNewVideo(b);
       const dir = projectDir(id);
       logUse('project.created', { project: id, type: b.type || null });
       if (b.take) { importTake(dir, b.take); logUse('take.imported', { project: id }); makeProxies(dir, (ev) => broadcast(id, ev)); }

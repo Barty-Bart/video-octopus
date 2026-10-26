@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, lstatSy
 import { resolve, join, dirname, relative, isAbsolute, basename } from 'node:path';
 import { otherFileUses } from './resource-store.mjs';
 import { autoKitColors, nextKitColor, kitColor, cleanColor } from '../web/kit-colors.js';
+import { SHAPES } from '../web/simple.js';
 import { FileStore, MAX_SKILL_FILES, MAX_SKILL_FILE_BYTES, TEXT_FILES, KNOWLEDGE_TYPES, cleanFileName, extensionOf, mimeOf, hashFile, formatBytes } from './file-store.mjs';
 
 const id = () => randomUUID();
@@ -21,9 +22,13 @@ const describe = (d) => {
 const text = (s, max = 200) => typeof s === 'string' && s.trim() && s.length <= max ? s.trim() : fail(`Enter text between 1 and ${max} characters.`);
 const focusAreas = ['scripting','pacing','visuals','captions','sound','knowledge'];
 export const FOCUS_AREAS = focusAreas;
-const formatTypes = ['tutorial', 'faceless', 'short', 'explainer'];
+// audio: Audio only, the built-in style's voice-only format (Simple mode; core/pipelines.json formats.audio).
+const formatTypes = ['tutorial', 'faceless', 'short', 'explainer', 'audio'];
 const openStatuses = ['draft', 'review', 'interrupted', 'failed'];
 export const UNBRANDED = 'unbranded';
+// The built-in style Simple mode uses (V1 spec §3): one hidden profile named "My brand" with three formats.
+export const BUILTIN = 'default';
+const BUILTIN_FIXED = 'This is the built-in style Simple mode uses. It cannot be renamed, archived or moved.';
 const VIDEO_REFERENCE = /\.(mp4|mov|m4v|webm)$/i;
 const KEY_FRAMES = 6;
 // Used when a creator's direct edit starts a format's first version: the creator still reviews it before saving.
@@ -188,6 +193,34 @@ export class LearningStore {
     if (found) return found;
     return this.put('profiles', { id: id(), name: 'No brand', system: UNBRANDED, description: '', revision: 1, created: now() });
   }
+  // Simple mode's built-in style (V1 spec §3, Decision 3): one hidden profile, system 'default', named "My brand",
+  // the brand the Resources page edits. Like No brand it is never listed as a kit (every kit list filters p.system),
+  // renamed or archived; unlike No brand it can hold a brand and brand assets. Made the first time a Simple video
+  // needs it, never before: opening the app or switching modes writes nothing.
+  builtinProfile() {
+    const found = this.list('profiles').find((p) => p.system === BUILTIN);
+    if (found) return found;
+    return this.put('profiles', { id: id(), name: 'My brand', system: BUILTIN, description: '', revision: 1, created: now() });
+  }
+  // Its three formats, { youtube, reel, audio } (web/simple.js SHAPES), each marked builtin: <shape key> so My styles
+  // and the style picker leave them out (web/style-list.js). Made together, once; one missing (never expected) is
+  // added again. A creator's own styles are never touched.
+  builtinFormats() {
+    return this.tx(() => {
+      const owner = this.builtinProfile();
+      const mine = this.list('formats').filter((f) => f.profileId === owner.id && f.builtin);
+      const out = {};
+      for (const shape of Object.values(SHAPES)) {
+        out[shape.key] = mine.find((f) => f.builtin === shape.key)
+          || this.put('formats', { id: id(), profileId: owner.id, name: shape.name, description: '', type: shape.type, builtin: shape.key, targetSeconds: 0, activeVersion: null, revision: 1, created: now() }, owner.id);
+      }
+      return out;
+    });
+  }
+  isBuiltin(profileId) {
+    if (!profileId) return false;
+    try { return this.get('profiles', profileId).system === BUILTIN; } catch { return false; }
+  }
   isUnbranded(profileId) {
     if (!profileId) return false;
     try { return this.get('profiles', profileId).system === UNBRANDED; } catch { return false; }
@@ -235,6 +268,7 @@ export class LearningStore {
   // Type and target length apply to future videos only: versions and pinned projects are untouched.
   updateFormat(formatId, { expected, name, type, targetSeconds, description } = {}) {
     return this.changeRecord('formats', formatId, expected, 'This format', (f) => {
+      if (f.builtin) fail(BUILTIN_FIXED);
       if (name !== undefined) f.name = text(name);
       if (description !== undefined) Object.assign(f, describe(description));
       if (type !== undefined) {
@@ -246,6 +280,7 @@ export class LearningStore {
   }
   archiveFormat(formatId, expected, archived = true) {
     return this.changeRecord('formats', formatId, expected, 'This format', (f) => {
+      if (f.builtin) fail(BUILTIN_FIXED);
       if (!archived && this.get('profiles', f.profileId).archived) fail('Restore the channel before restoring its format.');
       f.archived = Boolean(archived);
       f.archivedAt = archived ? now() : null;
@@ -259,6 +294,7 @@ export class LearningStore {
     return this.tx(() => {
       const f = this.get('formats', formatId);
       if (revisionOf(f) !== expected) fail('This style changed. Reload before changing its kit.');
+      if (f.builtin) fail(BUILTIN_FIXED);
       const target = profileId ? this.get('profiles', profileId) : this.unbrandedProfile();
       if (target.archived) fail('That brand kit is archived. Restore it first.');
       if (target.id === f.profileId) fail('This style already uses that brand kit.');

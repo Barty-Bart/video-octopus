@@ -730,6 +730,8 @@ export const formats = () => Object.fromEntries(Object.entries(PIPELINES().forma
 // What the New project dialog shows per format: frame shape, hint, its block row and (Shorts) its styles.
 export const formatInfo = () => Object.fromEntries(Object.entries(PIPELINES().formats).map(([k, v]) => [k, {
   label: v.label, aspect: v.aspect || '16:9', hint: v.hint || '', platforms: v.platforms || null, camera: v.record?.camera !== false,
+  // simple: a Simple-mode format (Audio only, core/pipelines.json): Advanced's video-setup pickers leave it out.
+  simple: Boolean(v.simple), screen: v.record?.screen !== false,
   blocks: (v.blocks || []).map((b) => ({ type: b.type, label: b.label, optional: Boolean(b.optional) })),
   steps: (v.steps || []).map((s) => { const x = typeof s === 'string' ? { id: s, ...PIPELINES().shared[s] } : s; return { id: x.id, label: x.label || x.id, name: x.name || x.label || x.id }; }),
   styles: (v.styles || []).map((x) => ({ id: x.id, label: x.label, hint: x.hint || '' })),
