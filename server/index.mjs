@@ -33,6 +33,7 @@ import { UNTITLED, autoName, nameFromReply, namingContext, onAutoRename } from '
 import { memoryRoute } from './memory.mjs';
 import { packagingRoute, resourcesRoute, packagingBusy, killPackaging } from './packaging.mjs';
 import { startBuildRun, endBuildRun, buildProgress, noteBuildFiles } from './build-progress.mjs';
+import { prepareRoto, cutoutSummary } from './roto.mjs';
 import { learningRoute, learningProjectContext, projectLearning, guardLearnedStep, learningBusy, killLearning, approveLearnedPlan, unapproveLearnedPlan } from './learning.mjs';
 import { assistantRoute, killAssistant, assistantBusy } from './assistant.mjs';
 import { onSettingsChange, restartWhenIdle, section, transcribeHow } from './settings.mjs';
@@ -383,6 +384,9 @@ async function startStep(id, dir, stepId) {
   // brief folded under it (the user event's brief), and names a new session after the step.
   const st = pipelineStatus(dir, meta.type), step = [...(st?.steps || []), ...(st?.more || [])].find((x) => x.id === stepId);
   text += guardLearnedStep(id,dir,step);
+  // Build: object separation for the scenes the plan flags with a cutout, or their plain layout when it can't run here
+  // (V1 §7, server/roto.mjs; checks the Python's imports and the model on disk, never downloads).
+  text += (await prepareRoto(dir, step)).note;
   if (tx?.fallback && !state().noKeyTold?.[tx.fallback]) {
     chatFor(id).emit({ t: 'note', text: `Transcription is set to ${tx.fallback} in Settings, but no ${tx.fallback} key is saved, so ${step?.name || 'this step'} transcribes on this computer (${tx.model}). Add the key in Settings → Transcription to use ${tx.fallback}.` });
     patchState({ noKeyTold: { ...(state().noKeyTold || {}), [tx.fallback]: new Date().toISOString() } });
@@ -477,6 +481,7 @@ function projectView(id, dir) {
     runningAt: busy ? stepRuns.get(id)?.at || null : null, // when it started (the dock shows how long it has run)
     // A Build step's progress per scene while it runs (server/build-progress.mjs; null until Claude marks a scene).
     build: busy && stepRuns.get(id) ? buildProgress(id, dir) : null,
+    cutouts: cutoutSummary(dir), // the scenes with a cutout: cutting, done, or built without it (Set up), V1 §7
     cut: cutPlan(dir), busy, renders: listRenders(dir),
     export: exportInfo(id, dir), recorder: recorderChoices(id, styleOf(id, pinned)), recUnfinished: unfinishedTakes(id), scenes: scenesSummary(dir), kit: kitSummary(dir, meta), editing: section('editing'),
     brandColors: profilePalette(id) ?? section('look').colors, // Settings → Look → Brand (and the Brand kit): the canvas's border picker offers them

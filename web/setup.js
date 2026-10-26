@@ -52,7 +52,9 @@ export function studioCreator({ suggest, onCreated, button = 'Set up local stora
   return { el };
 }
 
-export async function setupPage(ctx, { back = '#/', assistantPanel }) {
+// focus 'objsep' (#/setup/objsep, a scene's "Built without the cutout · Set up"): opens at Python environments and the
+// Object separation row, checked (read-only: nothing is installed, selected or downloaded until you click).
+export async function setupPage(ctx, { back = '#/', assistantPanel, focus = '' }) {
   document.body.classList.add('in-home', 'in-app-page');
   document.title = 'Setup · Video Octopus';
   // One screen: what's on this computer (agents, tools, and the machine's model picks on request), then a few optional
@@ -102,12 +104,15 @@ export async function setupPage(ctx, { back = '#/', assistantPanel }) {
     rows.set(c.id, { li, state: 'checking', check: { title: c.title }, card: c.card });
   }
   const count = () => {};
+  let focusShown = false;
   const drawRow = (id) => {
     const r = rows.get(id), c = r.check;
     const s = fixing.has(id) ? 'fixing' : r.state;
     const icon = s === 'checking' || s === 'fixing' ? '<span class="spin big" aria-hidden="true"></span>' : MARK[s];
-    r.li.className = `su-item ${s}${id === 'ffmpeg' ? ' su-rec' : ''}`;
+    r.li.className = `su-item ${s}${id === 'ffmpeg' ? ' su-rec' : ''}${id === focus ? ' su-focus' : ''}`;
     r.li.hidden = Boolean(c.hidden);
+    // Set up from a scene (focus): the row comes into view once its check has an answer.
+    if (id === focus && s !== 'checking' && !focusShown) { focusShown = true; requestAnimationFrame(() => r.li.scrollIntoView({ block: 'center' })); }
     // A model row says its own few words (drawModels); the check's longer line only for a failure or cloud transcription.
     const short = MODEL_ROWS[id] && c[MODEL_ROWS[id].key] && s !== 'fail' && !c[MODEL_ROWS[id].key].cloud;
     r.li.replaceChildren(h(`<div class="su-i">${icon}</div>`), h(`<div class="su-b"><b>${esc(c.title)}${id === 'ffmpeg' ? ' <span class="badge ob-rec">Recommended</span>' : ''}</b><span class="sub">${esc(s === 'fixing' ? 'The Video Octopus assistant is on it. Answer its questions on the right.' : short ? '' : c.detail || '')}</span>
@@ -436,5 +441,11 @@ export async function setupPage(ctx, { back = '#/', assistantPanel }) {
   for (const id of rows.keys()) drawRow(id);
   count();
   drawSteps(Boolean(st.studioReady));
+  if (focus === 'objsep' && rows.has('objsep')) {
+    // As if Check my computer and Check my machine were pressed: the same read-only checks, then the row in view.
+    machineOn = true;
+    $('#machine', el).hidden = false; $('#machineNote', el).hidden = true; $('#machineBtn', el).hidden = true;
+    $('#again', el).click();
+  }
   return { teardown: () => { live = false; picker.destroy(); Object.values(polls).forEach(clearTimeout); panel.destroy(); profilePanel?.teardown?.(); document.body.classList.remove('in-home', 'in-app-page'); } };
 }

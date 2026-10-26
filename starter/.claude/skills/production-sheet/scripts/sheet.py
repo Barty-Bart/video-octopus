@@ -6,7 +6,9 @@
   python3 sheet.py check    work/production.json [--words WORDS.json [--edl EDL]] [--skills ../../.claude/skills]
   python3 sheet.py view     work/production.json [--md work/production.md] [--html work/production.html]
   python3 sheet.py status   work/production.json            # what's planned / built / approved per crew role
-  python3 sheet.py mark     work/production.json building 3  # set scene 3's status (planned/building/built/approved)
+  python3 sheet.py mark     work/production.json building 3  # set scene 3's status (planned/cutting/building/built/approved)
+  python3 sheet.py cutouts  work/production.json            # the scenes that need a cutout, with their time ranges
+  python3 sheet.py cutout   work/production.json done 3 --masks work/objsep/scene3-speaker   # or: skipped 3 --why no-model
 
 draft   splits the transcript into sentences and makes one scene per sentence (short ones merge), with
         intro scenes marked "dynamic" and body scenes "calm". Layouts, visuals and transitions start empty
@@ -18,7 +20,13 @@ check   flags gaps and overlaps, scenes outside the words, transitions closer th
 view    writes a readable table (Markdown) and a storyboard page (HTML, light/dark) to approve.
 mark    sets the status of one or more scenes (by id) while building: "building" when you start a scene, "built"
         when it is done. Video Octopus watches it and shows the build's progress per scene. Only the scenes' status
-        changes; the file is replaced in one step, so it is never read half written.
+        changes; the file is replaced in one step, so it is never read half written. "cutting" while a scene's subject
+        is being cut out (object separation, before the scene is built).
+cutouts lists the scenes that need their subject cut out of the background ("cutout": true, or the cutout layout):
+        id, time range and what to cut out ("cutout_subject", "speaker" when left out). --json for a machine-readable list.
+cutout  records what came of a scene's cutout during Build: "done" (with --masks, the object-separation folder its masks
+        are in) or "skipped" (built with the plain layout; --why no-python / no-packages / no-model / failed). Only those
+        scenes' cutout_result, cutout_masks and cutout_why change, replaced in one step like mark.
 """
 import argparse, html, json, os, re, sys, tempfile
 from collections import Counter, defaultdict
@@ -41,6 +49,18 @@ TRANSITIONS = {"cut", "none", "morph", "smart", "pip-shrink", "pip-grow", "fade"
 ROLE_OF = {"talking-head": "animator", "visual-storytelling": "animator", "split": "animator", "cutout": "animator",
            "overlay": "animator", "card": "animator", "screen-facecam": "animator",
            "broll": "b-roll", "screen": "b-roll"}
+
+
+CUTOUT_WHY = ("no-python", "no-packages", "no-model", "failed")
+
+
+def needs_cutout(s):
+    """A scene that needs its subject cut out of the background: "cutout": true, or the cutout layout."""
+    return s.get("cutout") is True or s.get("layout", s.get("shot")) == "cutout"
+
+
+def subject_of(s):
+    return str(s.get("cutout_subject") or "").strip() or "speaker"
 
 
 def fmt(t):
@@ -153,6 +173,14 @@ def cmd_check(a):
             warns.append(f"{tag}: full-screen intro stretch starts without talking-head-zoom (zoom in within the first second)")
         if s.get("layout") in ("broll", "split", "visual-storytelling", "card", "overlay", "cutout") and not s.get("visual"):
             issues.append(f"{tag}: layout '{s['layout']}' but nothing in 'visual'")
+        if "cutout" in s and not isinstance(s["cutout"], bool):
+            issues.append(f"{tag}: 'cutout' must be true or false")
+        if s.get("layout") == "cutout" and s.get("cutout") is False:
+            issues.append(f"{tag}: layout 'cutout' but 'cutout' is false")
+        if needs_cutout(s) and not s.get("cutout_subject"):
+            warns.append(f"{tag}: needs a cutout but no 'cutout_subject' (the speaker is cut out)")
+        if s.get("cutout_subject") and not needs_cutout(s):
+            warns.append(f"{tag}: 'cutout_subject' without 'cutout': true (nothing is cut out)")
         if s.get("layout") == "broll" and not s.get("skills") and not s.get("source") and not s.get("visual"):
             warns.append(f"{tag}: B-roll without a 'source' (a file, a library clip, a generated clip, a URL to record) or a 'visual'")
         if skills is not None:
@@ -166,7 +194,8 @@ def cmd_check(a):
     intro = [s for s in sc if s["section"] == "intro"]
     if intro and all(s["layout"] == "talking-head" for s in intro):
         warns.append("the intro is all full-screen presenter: plan visual-storytelling scenes, B-roll or cards (dynamic intro)")
-    print(f"{len(sc)} scenes, {len(issues)} problem(s), {len(warns)} warning(s)")
+    n_cut = sum(needs_cutout(s) for s in sc)
+    print(f"{len(sc)} scenes, {len(issues)} problem(s), {len(warns)} warning(s)" + (f", {n_cut} with a cutout" if n_cut else ""))
     for x in issues:
         print("  PROBLEM ", x)
     for x in warns:
@@ -189,7 +218,7 @@ def cmd_view(a):
         for s in rows:
             cell = lambda x: str(x).replace("|", "/").replace("\n", " ")
             md.append(f"| {s['id']} | {fmt(s['start'])}-{fmt(s['end'])} | {cell(s['line'])} | {s['layout']} | "
-                      f"{cell(s.get('visual', ''))} | {s.get('transition_in', '')} | {', '.join(s.get('skills', []))} | "
+                      f"{cell(s.get('visual', ''))}{(' (cutout: ' + cell(subject_of(s)) + ')') if needs_cutout(s) else ''} | {s.get('transition_in', '')} | {', '.join(s.get('skills', []))} | "
                       f"{', '.join(s.get('sfx', []))} |")
         md.append("")
     mdp = Path(a.md or Path(a.sheet).with_suffix(".md"))
@@ -207,7 +236,7 @@ def cmd_view(a):
 <span class="t">{fmt(s["start"])} – {fmt(s["end"])}</span><span class="shot {s["layout"]}">{html.escape(s["layout"])}</span>
 <span class="tr">in: {html.escape(s.get("transition_in", ""))}</span></header>
 <p class="line">“{html.escape(s["line"])}”</p><p class="vis">{html.escape(s.get("visual", "") or "—")}</p>
-<footer>{html.escape(", ".join(s.get("skills", [])))}{(" · sfx: " + html.escape(", ".join(s["sfx"]))) if s.get("sfx") else ""}{(" · " + html.escape(s["notes"])) if s.get("notes") else ""}</footer></article>''')
+<footer>{("cutout: " + html.escape(subject_of(s)) + " · ") if needs_cutout(s) else ""}{html.escape(", ".join(s.get("skills", [])))}{(" · sfx: " + html.escape(", ".join(s["sfx"]))) if s.get("sfx") else ""}{(" · " + html.escape(s["notes"])) if s.get("notes") else ""}</footer></article>''')
     page = f'''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Production sheet</title><style>
 :root{{--bg:#f6f5f2;--card:#fff;--ink:#141414;--mute:#6b6b6b;--line:#e3e1dc;--acc:#ff5a1f}}
@@ -238,29 +267,77 @@ def cmd_status(a):
         by[ROLE_OF.get(s["layout"], "animator")][s.get("status", "planned")] += 1
     for role, c in by.items():
         print(f"{role:10s} " + ", ".join(f"{k}: {v}" for k, v in c.items() if v))
+    cut = Counter(s.get("cutout_result") or "to do" for s in scenes_of(sh) if needs_cutout(s))
+    if cut:
+        print("cutouts    " + ", ".join(f"{k}: {v}" for k, v in cut.items()))
 
 
-STATUSES = ("planned", "building", "built", "approved")
+STATUSES = ("planned", "cutting", "building", "built", "approved")
 
 
-def cmd_mark(a):
-    path = Path(a.sheet)
-    sh = json.load(open(path, encoding="utf-8"))
-    want = {str(x) for x in a.ids}
-    found = set()
-    for s in sh.get("scenes", []):
-        if str(s.get("id")) in want:
-            s["status"] = a.status
-            found.add(str(s.get("id")))
-    missing = sorted(want - found)
-    if missing:
-        sys.exit(f"no scene with id {', '.join(missing)} in {path} (nothing changed)")
+def replace_sheet(path, sh):
+    """Write the sheet next to itself and swap it in, so it is never read half written."""
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".production-", suffix=".tmp")
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(sh, f, indent=1, ensure_ascii=False)
     os.chmod(tmp, os.stat(path).st_mode & 0o777)
     os.replace(tmp, path)
-    print(f"scene{'s' if len(found) > 1 else ''} {', '.join(sorted(found, key=lambda x: (len(x), x)))}: {a.status}")
+
+
+def pick(sh, ids, path):
+    want = {str(x) for x in ids}
+    found = [s for s in sh.get("scenes", []) if str(s.get("id")) in want]
+    missing = sorted(want - {str(s.get("id")) for s in found})
+    if missing:
+        sys.exit(f"no scene with id {', '.join(missing)} in {path} (nothing changed)")
+    return found
+
+
+def id_list(found):
+    return ", ".join(sorted({str(s.get("id")) for s in found}, key=lambda x: (len(x), x)))
+
+
+def cmd_mark(a):
+    path = Path(a.sheet)
+    sh = json.load(open(path, encoding="utf-8"))
+    found = pick(sh, a.ids, path)
+    for s in found:
+        s["status"] = a.status
+    replace_sheet(path, sh)
+    print(f"scene{'s' if len(found) > 1 else ''} {id_list(found)}: {a.status}")
+
+
+def cmd_cutouts(a):
+    sh = json.load(open(a.sheet, encoding="utf-8"))
+    rows = [{"id": s["id"], "start": s["start"], "end": s["end"], "subject": subject_of(s), "layout": s.get("layout", ""),
+             "result": s.get("cutout_result") or ""} for s in scenes_of(sh) if needs_cutout(s)]
+    if a.json:
+        print(json.dumps(rows, ensure_ascii=False))
+        return
+    if not rows:
+        print("no scene needs a cutout")
+    for r in rows:
+        print(f"scene {r['id']}: {r['start']:.2f}-{r['end']:.2f} s, cut out {r['subject']}" + (f" ({r['result']})" if r["result"] else ""))
+
+
+def cmd_cutout(a):
+    path = Path(a.sheet)
+    sh = json.load(open(path, encoding="utf-8"))
+    found = pick(sh, a.ids, path)
+    flat = [s for s in found if not needs_cutout(s)]
+    if flat:
+        sys.exit(f"scene {id_list(flat)} has no cutout planned (\"cutout\": true): nothing changed")
+    if a.result == "done" and not a.masks:
+        sys.exit("cutout done needs --masks (the object-separation folder, e.g. work/objsep/scene3-speaker)")
+    for s in found:
+        s["cutout_result"] = a.result
+        s.pop("cutout_why", None); s.pop("cutout_masks", None)
+        if a.result == "done":
+            s["cutout_masks"] = a.masks
+        else:
+            s["cutout_why"] = a.why or "failed"
+    replace_sheet(path, sh)
+    print(f"scene{'s' if len(found) > 1 else ''} {id_list(found)}: cutout {a.result}" + (f" ({a.why or 'failed'})" if a.result == "skipped" else ""))
 
 
 def main():
@@ -276,8 +353,13 @@ def main():
     p = sub.add_parser("status"); p.add_argument("sheet")
     p = sub.add_parser("mark"); p.add_argument("sheet"); p.add_argument("status", choices=STATUSES)
     p.add_argument("ids", nargs="+", help="scene ids")
+    p = sub.add_parser("cutouts"); p.add_argument("sheet"); p.add_argument("--json", action="store_true")
+    p = sub.add_parser("cutout"); p.add_argument("sheet"); p.add_argument("result", choices=("done", "skipped"))
+    p.add_argument("ids", nargs="+", help="scene ids"); p.add_argument("--masks", help="done: the folder the masks are in")
+    p.add_argument("--why", choices=CUTOUT_WHY, help="skipped: why (no-python, no-packages, no-model, failed)")
     a = ap.parse_args()
-    {"draft": cmd_draft, "check": cmd_check, "view": cmd_view, "status": cmd_status, "mark": cmd_mark}[a.cmd](a)
+    {"draft": cmd_draft, "check": cmd_check, "view": cmd_view, "status": cmd_status, "mark": cmd_mark,
+     "cutouts": cmd_cutouts, "cutout": cmd_cutout}[a.cmd](a)
 
 
 if __name__ == "__main__":

@@ -28,12 +28,14 @@ export async function appPage(hash, ctx) {
   // The project you're in: outside projects, the drawer's "This project" is this one.
   const pm = /^#\/p\/([^/?]+)/.exec(hash);
   if (pm) rememberProject(decodeURIComponent(pm[1]));
-  askAvailable = !(hash.startsWith('#/p/') || hash === '#/setup');
+  askAvailable = !(hash.startsWith('#/p/') || hash === '#/setup' || hash === '#/setup/objsep');
   // The drawer opens again on a page where it was left open (each page remembers on its own).
   page = pageKey(hash);
   if (askAvailable && drawerWasOpen(page)) setTimeout(() => { if (page === pageKey(location.hash)) openDrawer(); }, 0);
   if (hash.startsWith('#/settings')) return settingsPage(hash);
   if (hash === '#/setup') return setupPage(ctx, { back: backTo, assistantPanel });
+  // Set up from a scene built without its cutout (V1 §7, web/cutout.js SETUP_HREF): Setup at Object separation.
+  if (hash === '#/setup/objsep') return setupPage(ctx, { back: backTo, assistantPanel, focus: 'objsep' });
   // Style pages (#/style…, #/styles…) stay behind this gate, like Home (Direction A decision 6).
   if (!hash.startsWith('#/p/') && !hash.startsWith('#/recordings') && !hash.startsWith('#/skills')) {
     // First time (or no studio folder yet): Setup opens by itself, until it's finished or skipped this session.

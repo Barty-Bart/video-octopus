@@ -107,14 +107,14 @@ test('B5b: the Scenes list, the dock and the scene timelines show it', async () 
   assert.match(app, /tone: \{ built: 'fresh', building: 'building' \}\[getP\(\)\.build\?\.states\?\.\[String\(x\.id\)\]\] \|\| ''/);
   assert.match(tl, /fresh: col\.ok, building: col\.accent/);
 });
-test('B5b: the Build asks and the production-sheet skill (1.2.0) mark each scene with one sheet.py command', () => {
+test('B5b: the Build asks and the production-sheet skill (1.2.0+) mark each scene with one sheet.py command', () => {
   const pl = JSON.parse(src('core/pipelines.json'));
   const builds = Object.values(pl.formats).flatMap((f) => f.steps.filter((s) => typeof s === 'object' && s.stage === 'Build'));
   assert.ok(builds.length >= 4);
   for (const s of builds) assert.match(s.ask, /sheet\.py mark work\/production\.json building <scene id>/, s.id);
   assert.equal(builds.find((s) => s.id === 'intro').scenes, 'intro');
   const skills = JSON.parse(src('core/skills.json'));
-  assert.equal(skills.skills.find((s) => s.id === 'octopus.production-sheet').version, '1.2.0');
+  assert.equal(skills.skills.find((s) => s.id === 'octopus.production-sheet').version, '1.3.0'); // 1.3.0: cutouts (V1 step 6)
   const md = src('starter/.claude/skills/production-sheet/SKILL.md');
   assert.match(md, /sheet\.py mark work\/production\.json building 3/);
   assert.match(src('starter/.claude/skills/production-sheet/scripts/sheet.py'), /def cmd_mark\(a\):/);

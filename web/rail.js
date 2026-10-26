@@ -25,6 +25,7 @@
 import { $, h, esc, api, toast } from './ui.js';
 import { stagesOf, stageSlug, STAGE_PANE, PANE_WORDS } from './stages.js';
 import { pending, onAttention, stateOf, describe, openItems } from './attention.js';
+import { cuttingLine } from './cutout.js';
 
 const ICON = {
   tick: '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 6.2l2.4 2.4 4.6-5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>',
@@ -443,11 +444,12 @@ export function makeRail({ root, id, getP, hooks }) {
   // then shows how long it has run, as before): "scene 3 of 10" while one builds, "10 of 10 built" at the end.
   const buildText = (b) => {
     if (!b?.marked || !b.total) return '';
+    if (b.current?.cutting) return cuttingLine(b.current.n, b.current.subject); // V1 §7: "Cutting you out for scene 3…"
     if (b.current) return `scene ${b.current.k} of ${b.total}`;
     return b.built >= b.total ? `${b.built} of ${b.total} built, rendering` : `${b.built} of ${b.total} built`;
   };
   const buildProg = (b) => b.total <= 14
-    ? `<span class="dk-prog${b.total > 8 ? ' many' : ''}" aria-hidden="true">${b.order.map((sid) => `<i class="${{ built: 'd', building: 'r' }[b.states[sid]] || ''}"></i>`).join('')}</span>`
+    ? `<span class="dk-prog${b.total > 8 ? ' many' : ''}" aria-hidden="true">${b.order.map((sid) => `<i class="${{ built: 'd', building: 'r', cutting: 'r' }[b.states[sid]] || ''}"></i>`).join('')}</span>`
     : `<span class="dk-prog bar" aria-hidden="true"><i class="d" style="flex:${b.built}"></i><i class="r" style="flex:${b.current ? 1 : 0}"></i><i style="flex:${Math.max(0, b.total - b.built - (b.current ? 1 : 0))}"></i></span>`;
   const runWord = (s) => (s.kind === 'app' ? (s.action === 'import' ? 'Start' : 'Open') : 'Run');
   const mmss = (sec) => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;

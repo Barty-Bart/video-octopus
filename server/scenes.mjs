@@ -13,6 +13,7 @@ import { EXPORT_NAME, builtEnd, isBuilt } from './built.mjs';
 import { listBackgrounds } from './backgrounds.mjs';
 import { listLibrary, AUDIO } from './library.mjs';
 import { underVoiceDb } from './sound.mjs';
+import { cutoutOf } from '../web/cutout.js';
 
 export const KIT = join(APP_DIR, 'core', 'kit', 'octopus-scene.js');
 export const KIT_IN_PROJECT = 'assets/octopus-scene.js';
@@ -32,6 +33,7 @@ function titleOf(s, i) {
 export function readProduction(dir) {
   const p = readJSON(join(dir, PRODUCTION), null);
   if (!p || !Array.isArray(p.scenes)) return null;
+  const cutouts = readJSON(join(dir, 'work/cutouts.json'), null);
   const scenes = p.scenes
     .map((s, i) => ({ s, i, start: num(s.start), end: num(s.end) }))
     .filter((x) => x.start != null && x.end != null && x.end > x.start)
@@ -46,6 +48,8 @@ export function readProduction(dir) {
       sfxDb: Array.isArray(s.sfx_db) ? s.sfx_db.map(num) : num(s.sfx_db) != null ? list(s.sfx).map(() => num(s.sfx_db)) : [],
       // The project block the scene belongs to (intro, main body, sponsor read, outro…); planned for M3b, optional.
       block: String(s.block || s.section || ''),
+      // A cutout the plan asked for (V1 §7, web/cutout.js): { subject, state, why, text }, null for none.
+      cutout: cutoutOf(s, cutouts),
       beats: Array.isArray(s.beats) ? s.beats.filter((b) => Array.isArray(b) && b.length >= 2).map(([a, b]) => [String(a), String(b)]) : [],
     }));
   if (!scenes.length) return null;
