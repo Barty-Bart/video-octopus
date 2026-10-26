@@ -73,6 +73,7 @@ export async function removeKey() { throw new Error('Fixture does not remove cre
   const port = await freePort();
   write(join(local, 'settings.json'), JSON.stringify({
     studio, setup: { done: true, agent: '' }, updates: { auto: false }, scheduleCatchUp: false, permissionMode: 'auto', help: { stepsIntro: 'dismissed' },
+    editor: { mode: 'advanced' }, // the Advanced pipeline: Build is the intro (Simple builds the whole video)
     claude: { engine: 'claude', lean: true, ccSource: 'plan' }, claudePath: join(bin, 'claude.cmd'),
   }));
   write(join(local, 'schedules.json'), '{"v":1,"schedules":[]}');

@@ -10,7 +10,8 @@ import { tmpdir } from 'node:os';
 const root = mkdtempSync(join(realpathSync(tmpdir()), 'octopus-flow-b-'));
 const studio = join(root, 'studio'), local = join(root, 'local');
 const write = (p, v) => { mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, typeof v === 'string' ? v : JSON.stringify(v, null, 2)); };
-write(join(local, 'settings.json'), { studio, projectsDir: 'projects' });
+// The Advanced pipeline (editor.mode advanced): a tutorial's Build is the intro. Simple builds the whole video (test/v1-followups.test.mjs).
+write(join(local, 'settings.json'), { studio, projectsDir: 'projects', editor: { mode: 'advanced' } });
 process.env.STUDIO_LOCAL_DIR = local;
 test.after(() => rmSync(root, { recursive: true, force: true }));
 

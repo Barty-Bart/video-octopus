@@ -12,7 +12,8 @@ const root = mkdtempSync(join(realpathSync(tmpdir()), 'octopus-walkthrough-fixes
 const studio = join(root, 'studio'), local = join(root, 'local');
 const write = (p, v) => { mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, typeof v === 'string' ? v : JSON.stringify(v, null, 2)); };
 // ffmpeg and ffprobe point nowhere: a computer without them (A13's case).
-write(join(local, 'settings.json'), { studio, projectsDir: 'projects', ffmpeg: join(root, 'no-ffmpeg'), ffprobe: join(root, 'no-ffprobe') });
+// The Advanced pipeline (editor.mode advanced): a tutorial's Build is the intro. Simple builds the whole video (test/v1-followups.test.mjs).
+write(join(local, 'settings.json'), { studio, projectsDir: 'projects', editor: { mode: 'advanced' }, ffmpeg: join(root, 'no-ffmpeg'), ffprobe: join(root, 'no-ffprobe') });
 process.env.STUDIO_LOCAL_DIR = local;
 test.after(() => rmSync(root, { recursive: true, force: true }));
 const immediate = () => new Promise((done) => setImmediate(done));

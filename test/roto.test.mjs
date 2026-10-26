@@ -361,7 +361,7 @@ export async function removeKey() { throw new Error('Fixture does not remove cre
 const hubList = (hfHome) => (existsSync(join(hfHome, 'hub')) ? readdirSync(join(hfHome, 'hub')).sort() : []);
 
 test('server: Build the intro with no Python that can run SAM 2.1 → the plain-layout note, cutouts.json, the fallback in the view', async (t) => {
-  const s = await startServer(t, { python: join(tmpdir(), 'octopus-no-such-python', 'python') });
+  const s = await startServer(t, { python: join(tmpdir(), 'octopus-no-such-python', 'python'), editor: { mode: 'advanced' } }); // Advanced: Build is the intro
   const dir = s.fixture('nopython');
   const before = hubList(s.hfHome);
   const r = await s.ok('/api/projects/nopython/step', { step: 'intro' });
@@ -385,7 +385,7 @@ test('server: Build the intro with a Python that runs SAM 2.1 and a downloaded m
   write(fakePy, `#!${process.execPath}\nprocess.stdout.write(JSON.stringify({ imports: { torch: true, torchvision: true, transformers: true, numpy: true, Pillow: true }, sam2: true, errors: {} }) + '\\n');\n`);
   chmodSync(fakePy, 0o755);
   t.after(() => rmSync(dirname(fakePy), { recursive: true, force: true }));
-  const s = await startServer(t, { python: fakePy }, { hfModel: true });
+  const s = await startServer(t, { python: fakePy, editor: { mode: 'advanced' } }, { hfModel: true }); // Advanced: Build is the intro
   const dir = s.fixture('ready');
   const before = hubList(s.hfHome);
   const r = await s.ok('/api/projects/ready/step', { step: 'intro' });

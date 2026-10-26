@@ -283,7 +283,7 @@ test('server: Simple is the default, New video ▾ uses the built-in style, the 
   assert.deepEqual(s.settings().lastNewVideo, { profileId: A.id, formatId: FA.id }, 'the shape chip leaves Advanced alone');
 
   // After Build: asked first (409 needsConfirm), then switched with confirm, across video setups (unlike the style picker).
-  write(join(s.studio, 'projects', yt.id, 'renders', `${yt.id}_intro_v1.mp4`), 'fixture render');
+  write(join(s.studio, 'projects', yt.id, 'renders', `${yt.id}_video_v1.mp4`), 'fixture render');
   const asked = await s.req(`/api/project-context/${yt.id}/shape`, { shape: 'reel' });
   assert.equal(asked.status, 409);
   assert.equal(asked.body.needsConfirm, true);
@@ -292,7 +292,7 @@ test('server: Simple is the default, New video ▾ uses the built-in style, the 
   assert.equal(r.built, true);
   assert.equal(s.meta(yt.id).type, 'short');
   assert.match(lf(readFileSync(join(s.studio, 'projects', yt.id, 'WORKLOG.md'), 'utf8')), /Shape changed to Reel or Short after Build/);
-  assert.ok(existsSync(join(s.studio, 'projects', yt.id, 'renders', `${yt.id}_intro_v1.mp4`)), 'the built video stays');
+  assert.ok(existsSync(join(s.studio, 'projects', yt.id, 'renders', `${yt.id}_video_v1.mp4`)), 'the built video stays');
   // The style picker still refuses another video setup after Build (Advanced, unchanged).
   write(join(s.studio, 'projects', reel.id, 'renders', `${reel.id}_short_v1.mp4`), 'fixture render');
   const picker = await s.req(`/api/project-context/${reel.id}/select`, { formatId: FA.id, confirm: true });

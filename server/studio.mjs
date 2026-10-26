@@ -30,9 +30,27 @@ export function takeKey(f) {
 export const STUDIO_FORMATS = join('.studio', 'formats.json');
 const PIPELINES = () => {
   const core = readJSON(join(APP_DIR, 'core', 'pipelines.json'));
-  const studio = settings().studio;
-  return studio ? mergeFormats(core, readJSON(join(studio, STUDIO_FORMATS), null)) : core;
+  const s = settings(), studio = s.studio;
+  return forMode(studio ? mergeFormats(core, readJSON(join(studio, STUDIO_FORMATS), null)) : core, s?.editor?.mode === 'advanced' ? 'advanced' : 'simple');
 };
+
+// Simple mode (Settings › General › Editor mode; Simple is the default, server/settings.mjs editorMode): a format's step
+// may carry `inSimple`, the fields it has there instead of its own (the tutorial's Build: the whole video, every planned
+// scene, rather than the intro). Advanced reads every step as written. Every reader of the steps (the status, the step's
+// brief, its done rule, the Build's scope and renders) goes through here, so they agree within a mode.
+export function forMode(p, mode = 'simple') {
+  if (!p?.formats) return p;
+  const step = (s) => {
+    if (!s || typeof s !== 'object' || !('inSimple' in s)) return s;
+    const { inSimple, ...own } = s;
+    return mode === 'simple' && inSimple && typeof inSimple === 'object' ? { ...own, ...inSimple } : own;
+  };
+  const formats = {};
+  for (const [k, f] of Object.entries(p.formats)) {
+    formats[k] = f && typeof f === 'object' ? { ...f, ...(Array.isArray(f.steps) ? { steps: f.steps.map(step) } : {}), ...(Array.isArray(f.more) ? { more: f.more.map(step) } : {}) } : f;
+  }
+  return { ...p, formats };
+}
 
 // Merge a studio's formats.json over the core: a format by id (an old alias counts), its plain fields replaced,
 // `styles` added or replaced by id, `blocks` / `steps` / `more` replaced when given. `defaultStyle` puts that style
