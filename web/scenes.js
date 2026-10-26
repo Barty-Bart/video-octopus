@@ -12,6 +12,7 @@ import { makeCutTrim, cutMapper, sec } from './cuttrim.js';
 import { makeCompare, previousOf, versionName } from './compare.js';
 import { sandboxURL } from './sandbox-painter.js';
 import { TONE_LABEL, TONE_DOT, sceneTone, sceneRow, buildLegend } from './scene-tone.js';
+import { SETUP_HREF, FALLBACK } from './cutout.js';
 
 const LS = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch {} return null; };
 const mmss = (s) => { const m = /^(\d+):(\d+(?:\.\d+)?)$/.exec(String(s).trim()); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
@@ -720,7 +721,7 @@ export function makeScenes({ pane, inspector, id, getP, onCount, onScenes, histo
   function setStrip(on) { listFold[mode] = on; LS(`studio.scenes.strip.${mode}`, on ? '1' : '0'); renderList(); requestAnimationFrame(() => fitTl()); }
   function renderStrip() {
     const groups = D.sections?.length ? D.sections : [{ id: '', label: '', scenes: D.scenes.map((x) => x.id) }];
-    const dot = (t) => (t === 'ok' || t === 'fresh' ? 'var(--ok)' : t === 'building' ? 'var(--accent)' : t === 'changed' || t === 'question' || t === 'waiting' ? 'var(--accent)' : t === 'notes' ? 'var(--sel)' : t === 'sent' ? 'var(--warn)' : 'var(--line-2)');
+    const dot = (t) => (t === 'ok' || t === 'fresh' ? 'var(--ok)' : t === 'building' || t === 'cutting' ? 'var(--accent)' : t === 'changed' || t === 'question' || t === 'waiting' ? 'var(--accent)' : t === 'notes' ? 'var(--sel)' : t === 'sent' ? 'var(--warn)' : 'var(--line-2)');
     player.lh.innerHTML = `<button class="s2-unfold" aria-label="Show the scene list" title="Show the scene list">»</button>`;
     $('.s2-unfold', player.lh).onclick = () => setStrip(false);
     player.list.replaceChildren(...groups.map((g, gi) => {
@@ -743,13 +744,16 @@ export function makeScenes({ pane, inspector, id, getP, onCount, onScenes, histo
     const appr = tones.filter((t) => t === 'ok').length, chg = tones.filter((t) => t === 'changed' || t === 'question').length, nb = tones.filter((t) => t === 'unbuilt').length, ni = tones.filter((t) => t === 'notin').length;
     const rest = Math.max(0, D.scenes.length - appr - chg - nb - ni);
     const bl = buildLegend(getP()?.build), B = getP()?.build;
+    // V1 §7: scenes the plan wanted a cutout for that were built with the plain layout, one line with Set up.
+    const fb = D.scenes.filter((s) => s.cutout?.state === 'skipped');
+    const cutNote = fb.length ? `<div class="s2-cutnote sub" role="note" title="${esc([...new Set(fb.map((s) => s.cutout.text))].join(' '))}">${fb.length === 1 ? `Scene ${fb[0].n}: ${FALLBACK.toLowerCase()}` : `${fb.length} scenes ${FALLBACK.toLowerCase()}`} · <a href="${SETUP_HREF}">Set up</a></div>` : '';
     player.lh.innerHTML = bl ? `<div class="s2-lt"><b>${D.scenes.length} scenes</b><span class="sub">${D.sections?.length > 1 ? `${D.sections.length} sections · ` : ''}${clock(D.scenes.at(-1).end)}</span></div>
       <div class="s2-prog build" role="progressbar" aria-label="${esc(bl)}" aria-valuemin="0" aria-valuemax="${B.total}" aria-valuenow="${B.built}"><i class="ok" style="flex:${B.built}"></i><i class="run" style="flex:${B.current ? 1 : 0}"></i><i style="flex:${Math.max(0, B.total - B.built - (B.current ? 1 : 0))}"></i></div>
-      <div class="s2-legend sub" role="status"><span class="s2-bl">${B.current ? '<span class="spin" aria-hidden="true"></span>' : ''}${esc(bl)}</span>${B.order.length < D.scenes.length ? `<span><i class="nb"></i>${D.scenes.length - B.order.length} not in this build</span>` : ''}</div>
+      <div class="s2-legend sub" role="status"><span class="s2-bl">${B.current ? '<span class="spin" aria-hidden="true"></span>' : ''}${esc(bl)}</span>${B.order.length < D.scenes.length ? `<span><i class="nb"></i>${D.scenes.length - B.order.length} not in this build</span>` : ''}</div>${cutNote}
       <button class="s2-foldlist" aria-label="Fold the list to a strip" title="Fold the list to a strip of scene numbers">«</button>`
     : `<div class="s2-lt"><b>${D.scenes.length} scenes</b><span class="sub">${D.sections?.length > 1 ? `${D.sections.length} sections · ` : ''}${clock(D.scenes.at(-1).end)}</span></div>
       <div class="s2-prog" title="${appr} approved · ${chg} to rewatch · ${rest} to review${ni ? ` · ${ni} not in this build` : ''}${nb ? ` · ${nb} not built yet` : ''}"><i class="ok" style="flex:${appr}"></i><i class="chg" style="flex:${chg}"></i><i style="flex:${rest}"></i>${ni + nb ? `<i class="nb" style="flex:${ni + nb}"></i>` : ''}</div>
-      <div class="s2-legend sub"><span><i class="ok"></i>${appr} approved</span><span><i class="chg"></i>${chg} to rewatch</span><span><i></i>${rest} to review</span>${ni ? `<span><i class="nb"></i>${ni} not in this build</span>` : ''}${nb ? `<span><i class="nb"></i>${nb} not built yet</span>` : ''}</div>
+      <div class="s2-legend sub"><span><i class="ok"></i>${appr} approved</span><span><i class="chg"></i>${chg} to rewatch</span><span><i></i>${rest} to review</span>${ni ? `<span><i class="nb"></i>${ni} not in this build</span>` : ''}${nb ? `<span><i class="nb"></i>${nb} not built yet</span>` : ''}</div>${cutNote}
       <button class="s2-foldlist" aria-label="Fold the list to a strip" title="Fold the list to a strip of scene numbers">«</button>`;
     $('.s2-foldlist', player.lh).onclick = () => setStrip(true);
     const groups = D.sections?.length ? D.sections : [{ id: '', label: 'All scenes', start: D.scenes[0].start, end: D.scenes.at(-1).end, scenes: D.scenes.map((s) => s.id) }];
@@ -768,10 +772,10 @@ export function makeScenes({ pane, inspector, id, getP, onCount, onScenes, histo
         // An unbuilt or not-in-this-build scene says so once, on a quiet picture (A14: not again in the line under the
         // title; B5a: no black frame where the picked render has no picture of it).
         const tone = toneOf(s), th = thumbs.get(`${renderFile}|${s.id}`);
-        const row = sceneRow({ tone, text: toneText(s, tone), built: builtSc(s), inRender: inRender(s) });
+        const row = sceneRow({ tone, text: toneText(s, tone), built: builtSc(s), inRender: inRender(s), cutout: s.cutout });
         const b = h(`<button class="s2-row${s.id === sel ? ' on' : ''}" role="listitem" data-id="${esc(s.id)}" aria-current="${s.id === sel}">
           <span class="s2-th${row.quiet ? ' nb' : ''}${row.busy ? ' busy' : ''}"><img alt=""${th && !row.quiet ? ` src="${th}"` : ' hidden'}>${row.picture ? `<span class="s2-nbl">${row.busy ? '<span class="spin" aria-hidden="true"></span>' : ''}${esc(row.picture)}</span>` : ''}<span class="s2-n">${s.n}</span></span>
-          <span class="s2-rt"><b>${esc(s.title)}</b>${s.line ? `<span class="s2-line" title="${esc(s.line)}">“${esc(s.line)}”</span>` : ''}<span class="sub"><span class="mono">${clock(s.start)}</span>${row.line == null ? '' : `<i style="background:${TONE_DOT[tone]}"></i>${esc(row.line)}`}</span></span>
+          <span class="s2-rt"><b>${esc(s.title)}</b>${s.line ? `<span class="s2-line" title="${esc(s.line)}">“${esc(s.line)}”</span>` : ''}<span class="sub"><span class="mono">${clock(s.start)}</span>${row.line == null ? '' : `<i style="background:${TONE_DOT[tone]}"></i>${esc(row.line)}`}</span>${row.fallback ? `<span class="s2-fb" title="${esc(row.fallback.why)}">${esc(row.fallback.text)}</span>` : ''}</span>
           <span class="s2-now" hidden>▶ NOW</span></button>`);
         b.onclick = () => select(s.id);
         rows.append(b);

@@ -13,6 +13,7 @@
 import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { readJSON } from './util.mjs';
+import { subjectOf } from '../web/cutout.js';
 
 const runs = new Map(); // project id -> { step, scope, at, start: { sid: status }, seen: Set(sid) }
 const DONE = new Set(['built', 'approved']);
@@ -63,8 +64,10 @@ function previewsSince(dir, scenes, at) {
 }
 
 // What the run adds up to now, or null (no run, no sheet, or nothing marked yet: the fallback).
-// { step, total, built, current: { id, n, k } | null, order: [sid in scope], states: { sid: queued|building|built|notin }, marked }
-// n: the scene's number in the whole sheet; k: "scene k of total" (the built ones plus this one).
+// { step, total, built, current: { id, n, k, cutting?, subject? } | null, order: [sid in scope],
+//   states: { sid: queued|cutting|building|built|notin }, marked }
+// n: the scene's number in the whole sheet; k: "scene k of total" (the built ones plus this one). cutting: the scene's
+// subject is being cut out before it's built (sheet.py mark … cutting, V1 §7), with what is cut out.
 export function buildProgress(id, dir) {
   const run = runs.get(id);
   if (!run || !dir) return null;
@@ -77,13 +80,13 @@ export function buildProgress(id, dir) {
   scenes.forEach((s, i) => {
     const k = sid(s), st = String(s.status || 'planned');
     if (!inScope.has(k)) { states[k] = 'notin'; return; }
-    if (st === 'building') run.seen.add(k);
+    if (st === 'building' || st === 'cutting') run.seen.add(k);
     const fresh = DONE.has(st) && (!DONE.has(run.start[k] || 'planned') || run.seen.has(k));
-    const state = st === 'building' ? 'building' : fresh || previews.has(k) ? 'built' : 'queued';
+    const state = st === 'building' || st === 'cutting' ? st : fresh || previews.has(k) ? 'built' : 'queued';
     states[k] = state;
     if (state !== 'queued') marked = true;
     if (state === 'built') built++;
-    if (state === 'building' && !current) current = { id: k, n: i + 1 };
+    if ((state === 'building' || state === 'cutting') && !current) current = { id: k, n: i + 1, ...(state === 'cutting' ? { cutting: true, subject: subjectOf(s) } : {}) };
   });
   if (!marked) return null;
   if (current) current.k = Math.min(order.length, built + 1);
