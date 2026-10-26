@@ -44,7 +44,7 @@
     {
       "id": "octopus.production-sheet",
       "name": "production-sheet",
-      "version": "1.2.0",
+      "version": "1.3.0",
       "path": "starter/.claude/skills/production-sheet",
       "legacyNames": [
         "production-sheet"

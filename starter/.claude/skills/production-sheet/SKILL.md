@@ -61,6 +61,8 @@ This makes one scene per sentence (short ones merged), marks intro scenes and bo
 | `sfx_at` | When each cue in `sfx` plays: one time per cue, in seconds on the sheet's timeline (the same as `start`/`end`), e.g. `[12.4, 15.0]`. Video Octopus's Scenes tab places and plays the cues by it |
 | `sfx_db` | How loud each cue is, in dB on top of the default effects level (Settings → Sound): one number for every cue, or one per cue (`[0, -6]`). Leave it out for the default |
 | `background` | The scene's background in Video Octopus's Look: `stars`, `led`, `night`, `plain` or `camera`, a library background as `library:<file>`, or a background file in the project (`assets/…`). Empty: the project's own Look |
+| `cutout` | `true` when the scene needs its subject cut out of the background: text or a graphic behind the speaker, the person over a new background or B-roll, a product lifted off its background. Leave it out otherwise. The `cutout` layout always needs one. Build cuts out only these scenes (see Cutouts below) |
+| `cutout_subject` | What to cut out when `cutout` is on: `speaker` (the default), `product`, `hand`, or a few words ("the mug"). One subject per scene |
 | `source` | For B-roll from elsewhere: a file, a library clip, a generated clip, a URL to record |
 | `notes` | Anything the builder needs (illustrative numbers, things not to show) |
 | `label` / `cards` | Overlay cards: a section card, a name label, or an info card (`"info: Example App | example.com"`) |
@@ -77,11 +79,15 @@ Split or merge scenes freely to fit the visuals: a scene is one layout.
 | `split` | Graphic/screen on two thirds, presenter box on one third | Both | Video Octopus's Split or Boxed layout, or an HTML scene |
 | `broll` | Full-screen cutaway: motion graphic, browser B-roll, still with a slow zoom from the centre | Both | a B-roll file, a screen recording, or an HTML scene |
 | `overlay` | Presenter full screen with a graphic over it | Body | an HTML scene over the camera |
-| `cutout` | Presenter separated, text or graphics behind | Intro | a person matte (needs a matting tool) + an HTML scene behind |
+| `cutout` | Presenter separated, text or graphics behind | Intro | the object-separation skill's masks (`"cutout": true`) + an HTML scene behind |
 | `visual-storytelling` | A story in the creator's look: presenter in a corner, in a box beside it, or voice only | Intro | HTML scenes |
 | `card` | Full-screen title or chapter card | Both | an HTML scene |
 
 HTML scenes load Video Octopus's scene kit (`assets/octopus-scene.js`) and draw each element with `Octopus.el('id', …)` (or `data-studio="id"`), so the creator can move and keyframe them in Video Octopus.
+
+### Cutouts
+
+Flag a scene with `"cutout": true` (and `cutout_subject`) only when its look really needs the subject separated: a title or graphic *behind* the speaker, the speaker over B-roll or a new background, a product cut out of its scene. A graphic beside or over the speaker needs no cutout. Cutting out runs on this computer (SAM 2.1) and takes time, so use it where it earns it, mostly in the intro. `sheet.py cutouts work/production.json` lists the flagged scenes. Plan each one so it still works without the cutout (the graphic beside or over the subject instead): when object separation isn't set up on this computer, Build makes the plain version and tells the creator.
 
 Locked framing: whenever the presenter is smaller than full screen, the frame is fixed on one centre point for the whole scene; never track the head. B-roll plays full screen, even inside a split stretch.
 
@@ -130,6 +136,16 @@ python3 ../../.claude/skills/production-sheet/scripts/sheet.py mark work/product
 python3 ../../.claude/skills/production-sheet/scripts/sheet.py mark work/production.json built 3      # scene 3 is done
 ```
 
-`mark` changes only that scene's `status` (`planned` → `building` → `built`; `approved` stays the creator's) and replaces the file in one step. Video Octopus watches it and shows the build's progress per scene: the dock says "Build the intro · scene 3 of 10", and Scenes marks each scene queued, building or built (scenes outside this build, such as the body during Build the intro, say "Not in this build"). Mark only the scenes this step builds; a one-scene preview render (`renders/<project>_scene3_preview.mp4`) counts as that scene built too. `sheet.py status` shows the counts. Render into `renders/` with the next version number (`<project>_intro_v2.mp4`) on the sheet's timeline, so Video Octopus's Scenes tab plays each scene from the newest render. Review happens there: notes per scene in `work/notes.json`, on the sheet's scene ids.
+**A scene with a cutout** (`"cutout": true`) gets its subject separated first, for that scene's own time range only, as the Build brief from Video Octopus says (it checks whether object separation can run here and whether the SAM 2.1 model is downloaded):
+
+```
+python3 ../../.claude/skills/production-sheet/scripts/sheet.py mark work/production.json cutting 3      # separating scene 3
+python3 ../../.claude/skills/production-sheet/scripts/sheet.py cutout work/production.json done 3 --masks work/objsep/scene3-speaker
+python3 ../../.claude/skills/production-sheet/scripts/sheet.py cutout work/production.json skipped 3 --why no-model   # built without it
+```
+
+then `mark … building 3` and `mark … built 3` as usual. `--why` is `no-python`, `no-packages`, `no-model` or `failed`. Never download a model or install anything during Build: when the brief says object separation can't run, build the plain layout and record it skipped; Video Octopus shows the creator "Built without the cutout · Set up".
+
+`mark` changes only that scene's `status` (`planned` → `cutting` → `building` → `built`; `approved` stays the creator's) and replaces the file in one step. Video Octopus watches it and shows the build's progress per scene: the dock says "Build the intro · scene 3 of 10", and Scenes marks each scene queued, building or built (scenes outside this build, such as the body during Build the intro, say "Not in this build"). Mark only the scenes this step builds; a one-scene preview render (`renders/<project>_scene3_preview.mp4`) counts as that scene built too. `sheet.py status` shows the counts. Render into `renders/` with the next version number (`<project>_intro_v2.mp4`) on the sheet's timeline, so Video Octopus's Scenes tab plays each scene from the newest render. Review happens there: notes per scene in `work/notes.json`, on the sheet's scene ids.
 
 When the creator asks for a change that alters the plan, update the sheet first, then the edit.
