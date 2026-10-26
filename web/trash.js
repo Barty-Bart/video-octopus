@@ -1,6 +1,6 @@
 // Settings › Storage › Trash: what's in the studio's trash (server/trash.mjs), how big it is, Put back for each item,
 // and Empty trash. Deleted takes (the record panel and the Recordings page), media removed from a video (the editor's
-// Media section) and takes dropped by Restart wait there. Nothing empties it by itself; emptying it is the only
+// Media section), files removed from Resources and takes dropped by Restart wait there. Nothing empties it by itself; emptying it is the only
 // permanent delete in Video Octopus, so it always asks first, says how much goes and that it can't be undone, and the
 // safe answer (Keep them) has the focus.
 import { $, esc, h, api, toast, tilde, ago, plural } from './ui.js';
@@ -70,7 +70,7 @@ export function trashSection({ row, group, pref = null }) {
       }
       list.append(r);
     }
-    if (!v.items.length) list.append(h('<p class="sub trash-none">Nothing in the trash. Deleted takes and media removed from a video show up here.</p>'));
+    if (!v.items.length) list.append(h('<p class="sub trash-none">Nothing in the trash. Deleted takes, media removed from a video and files removed from Resources show up here.</p>'));
     if (v.items.length > shown.length) {
       const more = h(`<button type="button" class="btn ghost small trash-more">Show all ${v.items.length}</button>`);
       more.onclick = () => { all = true; draw(v); };
@@ -90,7 +90,7 @@ export function trashSection({ row, group, pref = null }) {
     say('');
     try {
       await api('/api/trash/restore', { trash: it.trash });
-      toast(`${itemName(it.name)} is back${it.project ? ' in its video' : ' in Recordings'}.`);
+      toast(`${itemName(it.name)} is back${it.kind === 'resource-removed' ? ' in Resources' : it.project ? ' in its video' : ' in Recordings'}.`);
       await load();
     } catch (e) {
       btn.disabled = false;

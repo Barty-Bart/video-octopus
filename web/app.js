@@ -17,7 +17,8 @@ import { appPage } from './settings.js';
 import { makeRouter, legacyRoute, parseRoute, routeNeedsLookup, PAGE_CLASSES, simpleRedirect } from './nav.js';
 import { isAdvanced, editorMode, setEditorMode } from './mode.js';
 import { ADVANCED_NOTE } from './simple.js';
-import { renderSimpleProjects, renderResourcesPlaceholder } from './simple-home.js';
+import { renderSimpleProjects } from './simple-home.js';
+import { renderResources } from './resources-page.js';
 import { makeShapeChip } from './shape-chip.js';
 import { TERMS } from './terms.js';
 import { renderProjects, setTypeNames } from './projects-home.js';
@@ -281,7 +282,7 @@ async function home(route, nav = null) {
   }
   // Recordings also lists the files dropped or imported into videos, where they are (A17).
   if (view === 'recordings') renderRecordings(main, await api('/api/recordings').catch(() => takes));
-  if (view === 'resources') page = renderResourcesPlaceholder(main); // V1 spec §4: built by a later step
+  if (view === 'resources') page = renderResources(main, { makeChat }); // V1 spec §4 (web/resources-page.js)
   if (view === 'scheduled') page = await renderSchedules(main, nav).catch((e) => { main.replaceChildren(h(`<div class="home-wrap"><div class="notice">${esc(e.message)}</div></div>`)); return null; });
   if (view === 'skills') page = await renderSkills(main, { counts });
   if (view === 'library') page = renderLibrary(main, $('#libSide', el));

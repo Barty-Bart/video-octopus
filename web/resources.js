@@ -3,7 +3,7 @@
 // in a video's Packaging panel (its own chain only). Server: /api/resources (server/packaging.mjs, resource-store.mjs).
 import { $, esc, h, api, toast, confirmBox } from './ui.js';
 
-const KINDS = { photo: 'Photo', logo: 'Logo', image: 'Image or shape', reference: 'Reference thumbnail', font: 'Font', note: 'Style note' };
+const KINDS = { photo: 'Photo', logo: 'Logo', image: 'Image or shape', reference: 'Reference thumbnail', font: 'Font', note: 'Style note', product: 'Product', clip: 'Video clip' };
 const WHO = { self: 'Me', permission: 'Someone who agreed', other: 'Someone else (never sent)', nobody: 'No people' };
 const kb = (n) => (n >= 1024 * 1024 ? `${Math.round(n / 1024 / 102.4) / 10} MB` : `${Math.max(1, Math.round((n || 0) / 1024))} KB`);
 const options = (map, selected) => Object.entries(map).map(([k, v]) => `<option value="${k}"${k === selected ? ' selected' : ''}>${esc(v)}</option>`).join('');
@@ -20,7 +20,7 @@ function row(r) {
   ].filter(Boolean);
   const pic = isImage(r)
     ? `<img src="/api/resources/${encodeURIComponent(r.id)}/file" alt="" loading="lazy">`
-    : `<span class="rs-glyph" aria-hidden="true">${r.kind === 'note' ? '¶' : r.kind === 'font' ? 'Aa' : '·'}</span>`;
+    : `<span class="rs-glyph" aria-hidden="true">${r.kind === 'note' ? '¶' : r.kind === 'font' ? 'Aa' : r.kind === 'clip' ? '▶' : '·'}</span>`;
   return `<li class="rs-row" data-id="${esc(r.id)}">
     <span class="rs-pic">${pic}</span>
     <span class="rs-tx"><b>${esc(r.name)}</b>${r.note ? `<small>${esc(r.note)}</small>` : ''}${r.kind === 'note' ? `<small>${esc(r.text || '')}</small>` : ''}
@@ -37,7 +37,7 @@ function addForm(scope, label) {
       <label class="rs-who">Who is in it<select name="likeness">${options(WHO, 'self')}</select></label>
       <label class="learn-check rs-always"><input type="checkbox" name="always">Use in every thumbnail</label>
     </div>
-    <label class="rs-file">File<input type="file" name="file" accept=".png,.jpg,.jpeg,.webp,.gif,.svg,.ttf,.otf,.woff,.woff2" multiple></label>
+    <label class="rs-file">File<input type="file" name="file" accept=".png,.jpg,.jpeg,.webp,.gif,.svg,.ttf,.otf,.woff,.woff2,.mp4,.mov,.m4v,.webm" multiple></label>
     <label class="rs-text" hidden>Style note<textarea name="text" rows="2" placeholder="Bold yellow words, my face on the right, no gradients"></textarea></label>
     <label>Note (optional)<input type="text" name="note" maxlength="2000" placeholder="Where or how to use it"></label>
     <div class="learn-actions"><button class="btn small primary">Add to ${esc(label)}</button></div>
@@ -51,7 +51,7 @@ function wireAdd(form, done) {
     const note = kind.value === 'note';
     file.hidden = note;
     text.hidden = !note;
-    who.hidden = note || kind.value === 'font';
+    who.hidden = note || kind.value === 'font' || kind.value === 'clip';
   };
   kind.onchange = sync;
   sync();

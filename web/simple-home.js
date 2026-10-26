@@ -1,7 +1,7 @@
 // Simple mode's shell pages (V1 spec §2, board "V1 Projects"): Projects with + New video ▾ top right (a dropdown under
 // the button, right-aligned, never a centred dialog: YouTube video, Reel or Short, Audio only, then Start), a plain
-// grid of projects ("YouTube · Rough cut · 2 h ago"), no filters; and the Resources page, a placeholder until spec §4
-// is built. Advanced keeps web/projects-home.js. The page draws from what app.js already loaded.
+// grid of projects ("YouTube · Rough cut · 2 h ago"), no filters. The Resources page is web/resources-page.js.
+// Advanced keeps web/projects-home.js. The page draws from what app.js already loaded.
 import { $, esc, h, api, ago, toast } from './ui.js';
 import { icon } from './icons.js';
 import { SHAPES, SHAPE_KEYS, shapeOfType, simpleStageOf, ADVANCED_NOTE } from './simple.js';
@@ -130,16 +130,6 @@ export function renderSimpleProjects(main, ctx) {
   }).catch(() => {});
   if (openMenu) setTimeout(() => menu.open(), 0);
   return { teardown: () => menu.teardown(), openMenu: () => menu.open() };
-}
-
-// Resources (V1 spec §4): what Claude uses in every video. A placeholder until that page is built.
-export function renderResourcesPlaceholder(main) {
-  main.replaceChildren(h(`<div class="pv pv-simple">
-    <header class="pv-head"><h1>Resources</h1></header>
-    <p class="sub pv-lead">What Claude uses in every video: your look, your photos, your products.</p>
-    <div class="empty"><b>Coming soon</b><span class="sub">Your look, your logo, photos and product shots will live here.</span></div>
-  </div>`));
-  return { teardown() {} };
 }
 
 // The line a hidden page's deep link lands with (web/simple.js ADVANCED_NOTE), for app.js.
