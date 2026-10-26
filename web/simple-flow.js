@@ -12,12 +12,17 @@
 // - Download: the export (1080p MP4 from the originals; Audio only: the cleaned audio and the transcript).
 // Audio only skips Scenes and Build (its format has no Plan or Build step).
 import { simpleSteps, simpleProgress, shapeOfType } from './simple.js';
+import { buildCutouts } from './cutout.js';
 
 export const ROUGH_CUT = ['prepare', 'sections', 'lock'];
 
 // ---- the tools (Captions · Music · Text · Effects) ----
 export const CAPTION_LOOKS = { clean: 'Clean', bold: 'Bold', boxed: 'Boxed' };
 export const INTENSITY = { 0.6: 'Subtle', 1: 'Normal', 1.4: 'Strong' };
+// Music beds ffmpeg makes on this computer (server/simple-music.mjs): synthesised tones, no downloads, no licence.
+// They sit lower under the voice than an effect does (a cue's default level is an effect's).
+export const MUSIC_BEDS = { calm: 'Calm pad', bright: 'Bright pulse', warm: 'Warm drone' };
+export const BED_GAIN = -12;
 export const DEFAULT_TOOLS = { captions: { on: true, look: 'clean' }, effects: { zooms: true, intensity: 1 }, music: null };
 const clampN = (v, lo, hi, d) => (Number.isFinite(Number(v)) ? Math.min(hi, Math.max(lo, Number(v))) : d);
 // The tools as saved (project.json simpleTools), with every field checked; unknown fields are dropped.
@@ -27,7 +32,8 @@ export function cleanTools(t = {}) {
     captions: { on: c.on !== false, look: Object.hasOwn(CAPTION_LOOKS, c.look) ? c.look : 'clean' },
     effects: { zooms: e.zooms !== false, intensity: clampN(e.intensity, 0.25, 2, 1) },
     music: m && typeof m === 'object' && typeof m.cue === 'string' && m.cue
-      ? { cue: m.cue.slice(0, 40), file: String(m.file || '').slice(0, 300), label: String(m.label || '').slice(0, 80), gain: clampN(m.gain, -24, 12, 0) }
+      ? { cue: m.cue.slice(0, 40), file: String(m.file || '').slice(0, 300), label: String(m.label || '').slice(0, 80), gain: clampN(m.gain, -24, 12, 0),
+        ...(Object.hasOwn(MUSIC_BEDS, m.bed) ? { bed: m.bed } : {}) }
       : null,
   };
 }
@@ -167,33 +173,38 @@ export function stepCard(P, ctx = {}) {
       const b = P.build, total = b?.total || 0, built = b?.built || 0;
       const n = b ? Math.min(total, built + 1) : 0;
       const left = b && built && P.runningAt ? Math.round(((Date.now() - P.runningAt) / built) * (total - built) / 60000) : null;
-      return { ...card, title: 'Building your video…', lines: [total ? `Scene ${n} of ${total}` : 'Working through the scenes.',
+      // Roto inside Build (V1 §7): "Cutting you out for scene 2…" while a flagged scene is separated, and one note per
+      // scene built without its cutout (web/cutout.js).
+      const cut = buildCutouts(P);
+      return { ...card, title: 'Building your video…', lines: [cut.line || (total ? `Scene ${n} of ${total}` : 'Working through the scenes.'),
         left == null ? 'You can watch the finished scenes already.' : `${left <= 1 ? 'About a minute' : `About ${left} minutes`} left. You can watch the finished scenes already.`],
-      busy: true, progress: total ? built / total : null, extra: 'build' };
+      busy: true, progress: total ? built / total : null, extra: 'build', notes: cut.notes };
     }
-    return { ...card, title: 'The plan is approved.', lines: ['I’ll build each scene and put the video together.'], buttons: [{ a: 'build', label: 'Build it', kind: 'primary' }] };
+    return { ...card, title: 'The plan is approved.', lines: ['I’ll build each scene and put the video together.'], buttons: [{ a: 'build', label: 'Build it', kind: 'primary' }], notes: buildCutouts(P).notes };
   }
+  // After Build the fallback notes stay with the next cards (Thumbnail, Download) until the video is made again.
+  const after = (c) => (audio ? c : { ...c, notes: buildCutouts(P).notes });
   if (step === 'thumbnail') {
     const t = ctx.thumbs || { state: 'none' };
     const what = audio ? 'a podcast cover' : 'a thumbnail';
     const lead = audio ? 'Your audio is clean.' : 'Your video is built.';
-    if (t.state === 'running') return { ...card, title: `Making six ${audio ? 'covers' : 'thumbnails'}…`, lines: ['Codex is drawing them from your video and title.'], busy: true, buttons: [{ a: 'skip-thumb', label: 'Skip' }] };
-    if (t.state === 'ready') return { ...card, title: 'Pick the one you like.', lines: ['I can tweak it: “bigger face”, “yellow text”.'], extra: 'thumbs',
-      buttons: [{ a: 'use-thumb', label: 'Use this one', kind: 'primary', disabled: !t.picked }, { a: 'skip-thumb', label: 'Skip' }] };
-    if (t.state === 'failed') return { ...card, error: true, title: t.error || 'The thumbnails didn’t come.', buttons: [{ a: 'make-thumbs', label: 'Try again', kind: 'primary' }, { a: 'skip-thumb', label: 'Skip' }] };
-    return { ...card, say: audio && stepOf(P, 'lock')?.done ? [roughLine()] : [], title: `${lead} Want ${what}?`, lines: [`I’ll make six from your ${audio ? 'audio' : 'video'} and its title.`],
-      buttons: [{ a: 'make-thumbs', label: 'Make six', kind: 'primary' }, { a: 'skip-thumb', label: 'Skip' }] };
+    if (t.state === 'running') return after({ ...card, title: `Making six ${audio ? 'covers' : 'thumbnails'}…`, lines: ['Codex is drawing them from your video and title.'], busy: true, buttons: [{ a: 'skip-thumb', label: 'Skip' }] });
+    if (t.state === 'ready') return after({ ...card, title: 'Pick the one you like.', lines: ['I can tweak it: “bigger face”, “yellow text”.'], extra: 'thumbs',
+      buttons: [{ a: 'use-thumb', label: 'Use this one', kind: 'primary', disabled: !t.picked }, { a: 'skip-thumb', label: 'Skip' }] });
+    if (t.state === 'failed') return after({ ...card, error: true, title: t.error || 'The thumbnails didn’t come.', buttons: [{ a: 'make-thumbs', label: 'Try again', kind: 'primary' }, { a: 'skip-thumb', label: 'Skip' }] });
+    return after({ ...card, say: audio && stepOf(P, 'lock')?.done ? [roughLine()] : [], title: `${lead} Want ${what}?`, lines: [`I’ll make six from your ${audio ? 'audio' : 'video'} and its title.`],
+      buttons: [{ a: 'make-thumbs', label: 'Make six', kind: 'primary' }, { a: 'skip-thumb', label: 'Skip' }] });
   }
   // download
   const tgt = downloadTarget(P);
-  if (ctx.exporting) return { ...card, title: audio ? 'Getting your audio ready…' : 'Making your video…', lines: [audio ? 'The cleaned audio and the transcript.' : 'MP4 · 1080p, from your original recording.'], busy: true, progress: ctx.exporting.progress ?? null };
-  if (!tgt.ready) return { ...card, title: audio ? 'Your audio is clean.' : 'Your video is built.', lines: [audio ? 'I’ll make the WAV, an MP3 and the transcript.' : 'I’ll make the final MP4, 1080p, from your original recording.'], buttons: [{ a: 'export', label: audio ? 'Get the audio' : 'Make the video', kind: 'primary' }] };
+  if (ctx.exporting) return after({ ...card, title: audio ? 'Getting your audio ready…' : 'Making your video…', lines: [audio ? 'The cleaned audio and the transcript.' : 'MP4 · 1080p, from your original recording.'], busy: true, progress: ctx.exporting.progress ?? null });
+  if (!tgt.ready) return after({ ...card, title: audio ? 'Your audio is clean.' : 'Your video is built.', lines: [audio ? 'I’ll make the WAV, an MP3 and the transcript.' : 'I’ll make the final MP4, 1080p, from your original recording.'], buttons: [{ a: 'export', label: audio ? 'Get the audio' : 'Make the video', kind: 'primary' }] });
   const v = finalVideo(P), len = audio ? audioFiles(P).audio?.duration : v?.duration;
-  return { ...card, title: `Your ${audio ? 'audio' : 'video'} is ready${len ? `: ${mmss(len)}` : ''}.`, extra: 'download',
+  return after({ ...card, title: `Your ${audio ? 'audio' : 'video'} is ready${len ? `: ${mmss(len)}` : ''}.`, extra: 'download',
     lines: [audio ? 'WAV and MP3, with the transcript.' : 'MP4 · 1080p, ready for YouTube.'],
     post: !audio && !ctx.postDone ? (ctx.posting ? 'writing' : 'offer') : null,
     buttons: [{ a: 'export', label: 'Make it again' }],
-    foot: 'Not quite right? Just tell me what to change, then Make it again.' };
+    foot: 'Not quite right? Just tell me what to change, then Make it again.' });
 }
 const lower = (s) => String(s || '').replace(/^[A-Z](?![A-Z])/, (c) => c.toLowerCase());
 

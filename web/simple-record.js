@@ -37,7 +37,7 @@ export function makeRecordPage({ id, getP, onRecord, onAskScript, onFile }) {
     <div class="sx-rec-row">
       <div class="seg sx-src" role="radiogroup" aria-label="What to record">${Object.entries(SOURCE_LABELS).map(([k, v]) => `<button type="button" role="radio" data-src="${k}">${v}</button>`).join('')}</div>
       <span class="sx-count sub" aria-live="polite"></span><span class="gap"></span>
-      <button type="button" class="btn primary big sx-recbtn" data-a="record"><span class="rec-dot" aria-hidden="true"></span>Record</button>
+      <button type="button" class="btn primary big sx-recbtn" data-a="record" title="Record (${esc(HOTKEY)})"><span class="rec-dot" aria-hidden="true"></span>Record</button>
     </div>
     <p class="sub sx-rec-foot">No script? Just press Record and talk. Already recorded? <button type="button" class="linkish" data-a="file">Drop a file</button>.<input type="file" hidden accept="video/*,audio/*,.mov,.mp4,.m4v,.mkv,.webm,.wav,.m4a,.mp3,.aif,.aiff,.caf,.flac"></p>
   </section>`);

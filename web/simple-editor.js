@@ -14,8 +14,10 @@
 import { $, esc, h, api, toast } from './ui.js';
 import * as rec from './recorder.js';
 import { stepCard, roughCutState, simpleStepNow, progressLine, downloadTarget, exportOptions, toolsOf, isAudio, mmss,
-  CAPTION_LOOKS, INTENSITY } from './simple-flow.js';
+  CAPTION_LOOKS, INTENSITY, MUSIC_BEDS, BED_GAIN } from './simple-flow.js';
 import { simpleSteps } from './simple.js';
+import { cutoutNotesHTML } from './cutout.js';
+import { dropKind, SIMPLE_KINDS } from './resource-kinds.js';
 import { makeCutModel, makeWave, makeTranscript, cutRange, restoreRange, isKept } from './simple-wave.js';
 import { makeRecordPage, openTeleprompter, listTakes, deleteTake, restoreTake, useTake, sourcesFor } from './simple-record.js';
 
@@ -135,6 +137,8 @@ export function mountSimpleEditor(ctx) {
       if (post && st.postDone) extra += `<p class="sx-say">The title and description are written: ask ${esc(who())} to show them, or to change anything.</p>`;
       if (c.post === 'writing') extra += `<p class="sx-say">${esc(who())} is writing the title and description in the chat below.</p>`;
     }
+    // Scenes built without their cutout (roto inside Build): "Scene 2: Built without the cutout · Set up".
+    if (c.notes?.length) extra += `<div class="sx-notes">${cutoutNotesHTML(c.notes, esc)}</div>`;
     const lines = c.extra === 'download' ? [] : c.lines;
     const prog = c.progress != null ? `<div class="sx-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(c.progress * 100)}"><i style="width:${Math.round(c.progress * 100)}%"></i></div>` : '';
     const body = c.title || lines.length || btns || extra ? `<div class="sx-card${c.error ? ' err' : ''}${c.busy ? ' busy' : ''}" data-step="${c.step}">
@@ -280,6 +284,19 @@ export function mountSimpleEditor(ctx) {
     if (S.phase === 'idle' && S.landed) { setFlag('kept', false); setFlag('chain', false); setFlag('listened', false); loadTakesSoon(); }
     update();
   });
+  // ⌥⌘R (Ctrl+Alt+R): in Simple it starts a take too, on the Record step (the Record page, or Record again after Stop),
+  // with the sources and script on the page. While recording, app.js's handler stops it, as in Advanced. Later steps
+  // don't start a take from the keyboard: a new take there would replace the one the cut was made from.
+  const onRecKey = (e) => {
+    if (!rec.isHotkey(e) || e.repeat) return;
+    const S = rec.session();
+    if (S.phase !== 'idle' || rec.panelIsOpen() || document.querySelector('.vt')) return;
+    e.preventDefault();
+    if (card().step !== 'record') return toast('Recording is the first step. To record again, tell Claude, or start a new video.');
+    st.deleted = null;
+    record(sourcesFor(id, getP()), recPage.text());
+  };
+  document.addEventListener('keydown', onRecKey);
   async function askScript() {
     try { await ctx.chat.send('Write a script for this video and save it as script.md in the project folder: plain paragraphs I can read aloud, no headings. Ask me what the video is about first if you need to.'); }
     catch (e) { toast(e.message); }
@@ -441,13 +458,30 @@ export function mountSimpleEditor(ctx) {
         if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
         const last = $('.sx-drop-last', drop);
         last.hidden = false;
-        last.innerHTML = `${esc(j.file.split('/').pop())} is with the project. <a href="#/resources" class="linkish">Also add to Resources</a>`;
+        const kind = dropKind(j.file);
+        last.innerHTML = `${esc(j.file.split('/').pop())} is with the project.${kind ? ` <button type="button" class="linkish" data-res="${esc(j.file)}" data-kind="${kind}">Also add to Resources</button>` : ''}`;
         await ctx.chat.send(`I dropped ${j.file} into this project. In one line, tell me what it is and where you'll use it in this video (a time and the words I say there, if it fits). Don't change anything yet.`).catch(() => {});
       } catch (e) { toast(`${f.name} didn’t come in: ${e.message}`); }
     }
   }
   const pick = $('input[type=file]', drop);
-  drop.addEventListener('click', (e) => { if (!e.target.closest('a')) pick.click(); });
+  // "Also add to Resources": the dropped file joins Resources too (one copy in the file store; the same bytes twice
+  // stay one tile), as the kind dropKind gives it; Use as on the Resources page changes it.
+  async function addToResources(b) {
+    b.disabled = true;
+    const last = $('.sx-drop-last', drop), name = b.dataset.res.split('/').pop();
+    try {
+      const r = await api(`/api/simple-resources/upload?project=${encodeURIComponent(id)}&file=${encodeURIComponent(b.dataset.res)}&kind=${encodeURIComponent(b.dataset.kind)}`, {});
+      const what = SIMPLE_KINDS[r.kind]?.label.toLowerCase() || 'a file';
+      last.innerHTML = r.already ? `${esc(name)} is in Resources already. <a href="#/resources" class="linkish">Open Resources</a>`
+        : `${esc(name)} is in Resources too, as ${r.kind === 'photo' ? 'a photo of you' : `your ${esc(what)}`}. <a href="#/resources" class="linkish">Open Resources</a>`;
+    } catch (e) { b.disabled = false; toast(`Couldn’t add it to Resources: ${e.message}`); }
+  }
+  drop.addEventListener('click', (e) => {
+    const res = e.target.closest('[data-res]');
+    if (res) { e.stopPropagation(); return addToResources(res); }
+    if (!e.target.closest('a,button')) pick.click();
+  });
   drop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick.click(); } });
   pick.onchange = () => { handleFiles(pick.files); pick.value = ''; };
   const onDragOver = (e) => { if (![...(e.dataTransfer?.types || [])].includes('Files')) return; e.preventDefault(); document.body.classList.add('sx-dragging'); };
@@ -488,12 +522,15 @@ export function mountSimpleEditor(ctx) {
       panel.innerHTML = '<h3 class="sx-h">Music</h3><p class="sub">Loading your sound library…</p>';
       if (!sounds) { try { sounds = (await api(`${base}/sound`)).sounds || []; } catch { sounds = []; } }
       if (toolOpen !== 'music') return;
-      const cur = t.music;
-      panel.innerHTML = `<h3 class="sx-h">Music</h3>${sounds.length ? `<div class="sx-list" role="radiogroup" aria-label="Music bed">
+      const cur = t.music, on = (f) => cur?.file === f;
+      // The three beds made here (no library needed), then the library's approved sounds, if any.
+      const opts = [...Object.entries(MUSIC_BEDS).map(([k, v]) => ({ bed: k, name: v, on: Boolean(cur && cur.bed === k) })),
+        ...sounds.slice(0, 9).map((x) => ({ file: x.file, name: x.name, on: on(x.file) && !cur?.bed }))];
+      panel.innerHTML = `<h3 class="sx-h">Music</h3><div class="sx-list" role="radiogroup" aria-label="Music bed">
         <button type="button" role="radio" data-bed="" class="${cur ? '' : 'on'}" aria-checked="${!cur}">None</button>
-        ${sounds.slice(0, 12).map((x) => `<button type="button" role="radio" data-bed="${esc(x.file)}" data-name="${esc(x.name)}" class="${cur?.file === x.file ? 'on' : ''}" aria-checked="${cur?.file === x.file}">${esc(x.name)}</button>`).join('')}</div>
-        <label class="sx-row"><span>Volume</span><input type="range" min="-24" max="12" step="1" value="${cur?.gain ?? 0}" data-k="gain" aria-label="Music volume"${cur ? '' : ' disabled'}></label>`
-        : '<p class="sub">Your sound library has no sounds yet.</p>'}${askLine('Add calm music under my voice')}`;
+        ${opts.map((o) => `<button type="button" role="radio" ${o.bed ? `data-gen="${o.bed}"` : `data-bed="${esc(o.file)}"`} data-name="${esc(o.name)}" class="${o.on ? 'on' : ''}" aria-checked="${o.on}">${esc(o.name)}</button>`).join('')}</div>
+        <label class="sx-row"><span>Volume</span><input type="range" min="-24" max="12" step="1" value="${cur?.gain ?? BED_GAIN}" data-k="gain" aria-label="Music volume"${cur ? '' : ' disabled'}></label>
+        <p class="sub">Plays under your voice for the whole video. Made on this computer, free to use.</p>${askLine('Add calm music under my voice')}`;
     } else if (toolOpen === 'text') {
       const at = model.ready ? mmss(cutTime(player.time())) : mmss(player.time());
       panel.innerHTML = `<h3 class="sx-h">Text</h3><label class="vh" for="sxTitle">Title text</label><input class="field" id="sxTitle" maxlength="80" placeholder="A title, e.g. “Three steps”">
@@ -524,14 +561,24 @@ export function mountSimpleEditor(ctx) {
     if (b.dataset.ask) { if (input) { input.value = b.dataset.ask; input.focus(); input.dispatchEvent(new Event('input')); } return; }
     if (b.dataset.look) await saveTools({ captions: { ...t.captions, look: b.dataset.look } });
     if (b.dataset.int) await saveTools({ effects: { ...t.effects, intensity: Number(b.dataset.int) } });
-    if ('bed' in b.dataset) {
-      if (t.music?.cue) { try { await api(`${base}/sfx`, { op: 'remove', id: t.music.cue }); } catch {} }
-      if (!b.dataset.bed) return saveTools({ music: null });
+    if ('bed' in b.dataset || b.dataset.gen) {
+      if (b.classList.contains('on')) return;
+      panel.querySelectorAll('[role=radio]').forEach((x) => { x.disabled = true; });
+      const gain = t.music?.gain ?? BED_GAIN;
       try {
+        // A made bed: ffmpeg synthesises it for this video's length first (a few seconds for a long take).
+        let file = b.dataset.bed, from = 'library';
+        if (b.dataset.gen) {
+          b.textContent = `${b.dataset.name} · making it…`;
+          file = (await api(`${base}/simple-music`, { bed: b.dataset.gen, seconds: Math.ceil(player.duration() || getP().export?.duration || 60) })).file;
+          from = 'project';
+        }
+        if (t.music?.cue) { try { await api(`${base}/sfx`, { op: 'remove', id: t.music.cue }); } catch {} }
+        if (!file) return saveTools({ music: null });
         const at = model.ready && model.segs.length ? model.segs[0][0] : 0;
-        const r = await api(`${base}/sfx`, { op: 'add', file: b.dataset.bed, from: 'library', t: at, gain: t.music?.gain ?? 0, label: `Music: ${b.dataset.name}` });
-        await saveTools({ music: { cue: r.id, file: b.dataset.bed, label: b.dataset.name, gain: t.music?.gain ?? 0 } });
-      } catch (err) { toast(err.message); }
+        const r = await api(`${base}/sfx`, { op: 'add', file, from, t: at, gain, label: `Music: ${b.dataset.name}` });
+        await saveTools({ music: { cue: r.id, file, label: b.dataset.name, gain, ...(b.dataset.gen ? { bed: b.dataset.gen } : {}) } });
+      } catch (err) { toast(err.message); paintTool(); }
     }
     if (b.dataset.k === 'add-title') {
       const text = $('#sxTitle', panel)?.value.trim();
@@ -585,7 +632,7 @@ export function mountSimpleEditor(ctx) {
     destroy() {
       offRec(); cancelAnimationFrame(capRaf); clearTimeout(thumbPoll); clearTimeout(takesT);
       document.removeEventListener('dragover', onDragOver); document.removeEventListener('dragleave', onDragLeave); document.removeEventListener('drop', onDrop);
-      document.removeEventListener('pointerdown', onDocDown, true);
+      document.removeEventListener('pointerdown', onDocDown, true); document.removeEventListener('keydown', onRecKey);
       wave.destroy(); transcript.destroy(); recPage.destroy(); prog.remove(); dl.remove();
       document.body.classList.remove('simple-editor', 'sx-dragging');
     },

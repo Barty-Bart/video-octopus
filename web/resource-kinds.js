@@ -32,6 +32,15 @@ export function guessKind(name = '') {
   return null;
 }
 
+// A file dropped for Claude in a video, added to Resources too ("Also add to Resources", V1 §6): the kind it is stored
+// as without asking. Fonts, clips and logos are known by name; any other picture is most likely a product shot or a
+// screenshot (product; "Use as" on the Resources page changes it). null: Resources doesn't keep this kind of file
+// (sound, PDF, text), so the link isn't offered.
+export function dropKind(name = '') {
+  const k = guessKind(name);
+  return k === 'unsupported' ? null : k || 'product';
+}
+
 // A resource's Simple kind (logo | font | photo | product | clip), or null for anything else at that level (an image
 // or reference thumbnail added from a Simple video's Packaging tab, a style note). A photo of someone else is not "of
 // you": it shows as null too.

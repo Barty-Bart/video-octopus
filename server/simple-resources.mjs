@@ -19,6 +19,9 @@
 //   GET  /api/simple-resources/<id>/file               → the file, with ranges (previews: images, fonts, clips)
 //   POST /api/simple-resources/profile                 → { profileId } (made the first time, for brand research)
 //   POST /api/simple-resources/upload?name=&kind=      → the new file (raw body; checked against its extension)
+//   POST /api/simple-resources/upload?project=&file=&kind= → a file already in a video (Drop for Claude's "Also add to
+//                                                        Resources"): no body; the project's copy is stored (a clone)
+//                                                        and the same bytes already in Resources come back as they are
 //   POST /api/simple-resources/<id> { name?, kind?, expected } → renamed / another kind
 //   POST /api/simple-resources/<id>/remove { expected } → { trash, file }
 //   POST /api/simple-resources/restore { trash }       → the file again (Undo)
@@ -31,16 +34,16 @@ import { pipeline } from 'node:stream/promises';
 import { Transform } from 'node:stream';
 import { PackagingStore } from './packaging-store.mjs';
 import { cleanBrand } from './profile-store.mjs';
-import { settings, readJSON } from './util.mjs';
+import { settings, readJSON, inside } from './util.mjs';
 import { settingsChanged } from './settings.mjs';
 import { listProjects, projectDir, projectMeta, saveProjectMeta, appendWorklog } from './studio.mjs';
 import { addResource, updateResource, archiveResource, getResource, listResources, maxBytesFor } from './resource-store.mjs';
-import { mimeOf } from './file-store.mjs';
+import { mimeOf, hashFile } from './file-store.mjs';
 import { sniff } from './brand.mjs';
 import { trashRoot, TRASH_NAME, newTrashEntry } from './browser-recorder.mjs';
 import { projectBuilt } from './profiles.mjs';
 import { BUILTIN } from './learning-store.mjs';
-import { SIMPLE_KINDS, simpleKindOf, resourceFields, fitsKind, renamed, lookColors } from '../web/resource-kinds.js';
+import { SIMPLE_KINDS, simpleKindOf, resourceFields, fitsKind, renamed, lookColors, dropKind } from '../web/resource-kinds.js';
 
 export const TRASH_KIND = 'resource-removed';
 const fail = (message, status = 400) => { throw Object.assign(new Error(message), { status }); };
@@ -166,6 +169,28 @@ export function addFile(s, { tempPath, name, kind }) {
   const r = addResource(s, { scope: scopeOf(p.id), tempPath, name, ...resourceFields(kind), note: '', source: { via: 'resources-page' } });
   changed(s, p.id);
   return tile(r);
+}
+
+// Drop for Claude's "Also add to Resources" (V1 §6): a file the creator dropped into a video (its source/ folder) joins
+// Resources too, as the kind dropKind gives it. The file store keeps one copy per content (sha256), and when the same
+// bytes are in Resources already that file comes back (already: true), so a second click doesn't make a second tile.
+export function addFromProject(s, { project, file, kind }) {
+  const dir = projectDir(String(project || '')) || fail('That video isn’t in the studio.', 404);
+  const rel = String(file || '');
+  if (!/^source\/[^/\\]+$/.test(rel)) fail('Only a file dropped into the video can be added.');
+  const path = inside(dir, rel);
+  if (!path || !existsSync(path) || !statSync(path).isFile()) fail('That file isn’t in the video any more.', 404);
+  const name = rel.slice('source/'.length), k = kind || dropKind(name);
+  if (!k || !SIMPLE_KINDS[k]) fail('Resources keeps logos, fonts, pictures and video clips.');
+  const p = builtin(s);
+  if (p) {
+    const hash = hashFile(path);
+    const same = listResources(s, [scopeOf(p.id)]).find((r) => r.hash === hash);
+    if (same) return { ...tile(same), already: true };
+  }
+  const r = addFile(s, { tempPath: path, name, kind: k });
+  appendWorklog(dir, `Added ${name} to Resources (${SIMPLE_KINDS[k].label.toLowerCase()})`);
+  return r;
 }
 
 export function editFile(s, id, { name, kind, expected } = {}) {
@@ -303,6 +328,7 @@ export async function simpleResourcesRoute(req, res, url, { send, body }) {
     if (req.method !== 'POST') return reply({ error: 'POST required.' }, 405);
     if (parts[0] === 'upload') {
       const q = Object.fromEntries(url.searchParams);
+      if (q.project) return reply(use((s) => addFromProject(s, q)));
       if (!SIMPLE_KINDS[q.kind]) fail('Choose what this is: logo, font, photo of you, product or clip.');
       const studio = settings().studio || fail('Choose a studio folder first.');
       const tmp = join(studio, '.studio', 'resources-tmp', randomUUID());

@@ -79,6 +79,8 @@ body.simple-editor #exportBtn,
 .sx-drop b { font-weight: 500; }
 .sx-drop .sub { font-size: 12px; }
 .sx-drop-last { font-size: 12px; color: var(--text-2); margin-top: 4px; }
+.sx-notes .cut-fb { margin: 0; font-size: 12.5px; color: var(--text-2); }
+.sx-notes .cut-fb + .cut-fb { margin-top: 2px; }
 body.sx-dragging .sx-drop { border-color: var(--accent); background: var(--accent-soft); }
 .sx-drop:focus-visible { outline: 2px solid var(--focus-ring, var(--accent)); }
 

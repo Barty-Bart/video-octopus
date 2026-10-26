@@ -2655,6 +2655,9 @@ body.in-project .bar .sp-sub { display: none; }
 .dk-name { flex: 1 1 auto; min-width: 0; margin: 0 2px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .dk-name b { font-size: 13.5px; font-weight: 700; color: var(--text); }
 .dk-sub { font-size: 12px; color: var(--muted); }
+/* The cutting line ("Cutting you out for scene 2…", V1 §7) is longer than a scene count: it gets its own line. */
+.dk-name.two { white-space: normal; line-height: 1.2; }
+.dk-name.two .dk-sub { display: block; }
 .dk-info { flex: none; width: 28px; height: 30px; display: grid; place-items: center; border: 0; border-radius: calc(var(--ctl-radius) * 8 / 9); background: transparent; color: var(--muted); cursor: pointer; }
 .dk-info:hover, .dk-info.on { background: var(--panel); color: var(--text); }
 .dk-info.on { box-shadow: inset 0 0 0 1px var(--line-2); }

@@ -520,11 +520,12 @@ export function makeRail({ root, id, getP, hooks }) {
       const subs = rs.subs || [], k = subs.findIndex((x) => !x.done), bt = buildText(P.build);
       // Build with per-scene progress (B5b): "Build the intro · scene 3 of 10", one segment per scene.
       const sub = subs.length ? (k < 0 ? 'finishing' : `${subs[k].label}, ${k + 1} of ${subs.length}`) : bt || '';
+      const two = Boolean(P.build?.current?.cutting && !subs.length); // the cutting line on its own line (V1 §7)
       const prog = subs.length ? `<span class="dk-prog" aria-hidden="true">${subs.map((x, i) => `<i class="${x.done ? 'd' : i === k ? 'r' : ''}"></i>`).join('')}</span>`
         : bt ? buildProg(P.build)
         : P.runningAt ? `<span class="dk-time" aria-hidden="true" title="How long it has been running">${elapsed()}</span>` : '';
       html = `<div class="dk-strip run${sheetOpen ? ' open' : ''}"><span class="dk-pill run"><span class="spin" aria-hidden="true"></span><span class="dk-pt">Running</span></span>
-        <span class="dk-name"><span class="vh">Running: </span><b>${esc(rs.name)}</b>${sub ? `<span class="dk-sub"> · ${esc(sub)}</span>` : ''}</span>
+        <span class="dk-name${two ? ' two' : ''}"><span class="vh">Running: </span><b>${esc(rs.name)}</b>${sub ? `<span class="dk-sub">${two ? '<span class="vh"> · </span>' : ' · '}${esc(sub)}</span>` : ''}</span>
         ${prog}${infoBtn(rs.name)}${sheetOpen ? sheet(rs) : ''}</div>`;
     } else if (mode === 'next') {
       const pre = !cur.optional ? before(cur) : null;

@@ -48,6 +48,7 @@ import { mediaRoute, importedRecordings } from './media.mjs';
 import { playSource, playbackView, playbackMode, PLAYBACK_MODES, copiesSummary, deleteCopies, allCopies, deleteAllCopies } from './playback.mjs';
 import { trashRoute, binEntry } from './trash.mjs';
 import { simpleResourcesRoute, resourcesForNewVideo } from './simple-resources.mjs';
+import { makeBed } from './simple-music.mjs';
 import { agentChoice, setAgentChoice, choiceView, codexModels } from './agent-choices.mjs';
 import { ccSource } from './claude-source.mjs';
 import { codexSource } from './codex.mjs';
@@ -1155,6 +1156,11 @@ async function route(req, res) {
   // Simple mode's tools (Captions, Music, Effects): kept in project.json, sent with Simple's Download export.
   if (action === '/simple-tools') {
     try { return send(res, 200, { simpleTools: saveSimpleTools(dir, b) }); }
+    catch (e) { return send(res, 400, { error: e.message }); }
+  }
+  // Simple's Music tool: a bed ffmpeg synthesises here (server/simple-music.mjs), then placed as a project sound cue.
+  if (action === '/simple-music') {
+    try { return send(res, 200, await makeBed(dir, String(b.bed || ''), b.seconds)); }
     catch (e) { return send(res, 400, { error: e.message }); }
   }
   if (action === '/final') {
