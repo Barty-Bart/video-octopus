@@ -658,9 +658,10 @@ export function doneLine(dir, step, worklog = '') {
     // A build step, or a studio's own step: the video it made and how long it is, else the file or the worklog line.
     const d = step.done || {};
     const f = (d.files || []).map((x) => newestMatch(dir, x)).find(Boolean);
-    if (f && (RENDERED[step.id] || /\.(mp4|mov|m4v)$/i.test(f))) {
+    const what = step.rendered || RENDERED[step.id];
+    if (f && (what || /\.(mp4|mov|m4v)$/i.test(f))) {
       const dur = probeFile(join(dir, f))?.duration;
-      return `${RENDERED[step.id] || basename(f)} rendered${dur ? `: ${two(dur)}` : ''}`;
+      return `${what || basename(f)} rendered${dur ? `: ${two(dur)}` : ''}`;
     }
     if (f) return `Made ${f}`;
     if (d.worklog) { const ln = worklog.split('\n').reverse().find((x) => x.includes(d.worklog)); if (ln) return ln.replace(/^[-*]\s*(\d{4}-\d\d-\d\d:\s*)?/, '').slice(0, 100); }
