@@ -82,6 +82,27 @@ test('⌥⌘R in Simple starts a take on the Record step (and only there); stopp
   assert.match(src('web/app.js'), /if \(S\.phase === 'recording'\) rec\.stop\(\);/);
 });
 
+// ---------- found in the walkthrough ----------
+test('Record again: while the new take saves, the card waits instead of offering Keep on the old take', () => {
+  const c = stepCard(view('tutorial'), { recording: true, saving: true });
+  assert.equal(c.step, 'record');
+  assert.equal(c.title, 'Saving your take…');
+  assert.deepEqual(c.buttons, []);
+  assert.equal(stepCard(view('tutorial')).buttons[0].a, 'keep');
+  assert.match(src('web/simple-editor.js'), /const saving = \['stopping', 'saving'\]\.includes\(S\.phase\) && mine;/);
+});
+
+test('Download gives the chosen thumbnail next to the video; the progress line folds to dots below 1280 px', () => {
+  const ed = src('web/simple-editor.js');
+  assert.match(ed, /\/api\/packaging\/\$\{encodeURIComponent\(id\)\}\/item\/\$\{encodeURIComponent\(st\.mainThumb\.id\)\}/);
+  assert.match(ed, /Download the thumbnail/);
+  assert.match(ed, /x\.id === v\.board\?\.main/);
+  assert.match(src('web/simple.css'), /@media \(max-width: 1279px\) \{\n  \.sx-prog \.sx-st:not\(\.current\) \{ font-size: 0; gap: 0; \}/);
+  // the dock's two-line cutting row uses its own class (style.css has a generic .two grid)
+  assert.match(src('web/rail.js'), /dk-two/);
+  assert.match(src('web/style.css'), /\.dk-name\.dk-two \.dk-sub \{ display: block; \}/);
+});
+
 // ---------- Drop for Claude → Also add to Resources ----------
 test('dropKind: the kind a dropped file joins Resources as', () => {
   assert.equal(dropKind('source/app shot.png'), 'product');
